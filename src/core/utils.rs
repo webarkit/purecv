@@ -59,43 +59,6 @@ impl Range {
     }
 }
 
-/// Template class for a 4-element vector.
-#[derive(Debug, Default, Copy, Clone, PartialEq)]
-pub struct Scalar<T> {
-    pub values: [T; 4],
-}
-
-impl<T: Default + Copy> Scalar<T> {
-    pub fn new(v0: T, v1: T, v2: T, v3: T) -> Self {
-        Self { values: [v0, v1, v2, v3] }
-    }
-
-    pub fn all(v: T) -> Self {
-        Self { values: [v, v, v, v] }
-    }
-}
-
-/// Termination criteria for iterative algorithms.
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct TermCriteria {
-    pub criteria_type: i32,
-    pub max_count: i32,
-    pub epsilon: f64,
-}
-
-impl TermCriteria {
-    pub const COUNT: i32 = 1;
-    pub const EPS: i32 = 2;
-
-    pub fn new(criteria_type: i32, max_count: i32, epsilon: f64) -> Self {
-        Self {
-            criteria_type,
-            max_count,
-            epsilon,
-        }
-    }
-}
-
 /// Sets the global log level.
 /// This is a wrapper around the `log` crate's level filter.
 pub fn set_log_level(level: log::LevelFilter) {

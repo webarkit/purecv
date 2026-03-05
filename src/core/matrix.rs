@@ -59,6 +59,22 @@ impl<T: Default + Clone> Matrix<T> {
         }
     }
 
+    /// Creates a new `Matrix` from an existing `Vec<T>`.
+    pub fn from_vec(rows: usize, cols: usize, channels: usize, data: Vec<T>) -> Self {
+        assert_eq!(data.len(), rows * cols * channels, "Data length mismatch");
+        Self {
+            rows,
+            cols,
+            channels,
+            data,
+        }
+    }
+
+    /// Checks if this matrix has the same dimensions and channels as another.
+    pub fn dims_match<U>(&self, other: &Matrix<U>) -> bool {
+        self.rows == other.rows && self.cols == other.cols && self.channels == other.channels
+    }
+
     /// Calculates the 1D flat index for a 2D coordinate and channel.
     /// Marked as `#[inline]` to ensure zero-cost abstraction in loops.
     #[inline(always)]

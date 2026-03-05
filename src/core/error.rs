@@ -42,6 +42,7 @@ pub enum PureCvError {
     InvalidDimensions(String),
     IncompatibleChannels(String),
     OutOfBounds(String),
+    InvalidInput(String),
     InternalError(String),
     NotImplemented(String),
 }
@@ -52,6 +53,7 @@ impl fmt::Display for PureCvError {
             PureCvError::InvalidDimensions(msg) => write!(f, "Invalid dimensions: {}", msg),
             PureCvError::IncompatibleChannels(msg) => write!(f, "Incompatible channels: {}", msg),
             PureCvError::OutOfBounds(msg) => write!(f, "Out of bounds: {}", msg),
+            PureCvError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             PureCvError::InternalError(msg) => write!(f, "Internal error: {}", msg),
             PureCvError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
         }

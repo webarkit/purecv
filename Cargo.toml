@@ -21,7 +21,7 @@ rayon = { version="1.10", optional = true}
 num-traits = "0.2"
 
 # SIMD: For manual vectorization of imgproc hot paths
-pulp = "0.18" # Excellent for portable SIMD across x86 and ARM
+pulp = { version = "0.18", optional = true } # Excellent for portable SIMD across x86 and ARM
 
 # Logging/Tracing for debugging algorithms
 log = "0.4"
@@ -34,12 +34,13 @@ criterion = "0.5"
 default = ["std", "parallel"]
 std = []
 parallel = ["rayon"]
+simd = ["dep:pulp"]
 # Feature for WASM specific optimizations
 wasm = []
 
-#[[bench]]
-#name = "imgproc_benchmarks"
-#harness = false
+[[bench]]
+name = "arithm_bench"
+harness = false
 
 [profile.release]
 opt-level = 3

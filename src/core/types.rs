@@ -34,7 +34,7 @@
  *
  */
 
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, Mul, Sub};
 
 /// Template class for 2D points specified by its coordinates `x` and `y`.
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
@@ -110,6 +110,55 @@ pub type Size2i = Size<i32>;
 pub type Size2f = Size<f32>;
 pub type Size2d = Size<f64>;
 
+//// Scalar represents a 4-element vector.
+///
+/// It is widely used in OpenCV to pass pixel values and for range checks.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Scalar<T> {
+    pub v: [T; 4],
+}
+
+impl<T> Scalar<T>
+where
+    T: Copy + Default,
+{
+    pub fn new(v0: T, v1: T, v2: T, v3: T) -> Self {
+        Self { v: [v0, v1, v2, v3] }
+    }
+
+    pub fn from_value(v: T) -> Self {
+        Self { v: [v, T::default(), T::default(), T::default()] }
+    }
+
+    pub fn all(v: T) -> Self {
+        Self { v: [v, v, v, v] }
+    }
+}
+
+/// TermCriteria defines termination criteria for iterative algorithms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TermType {
+    Count = 1,
+    Eps = 2,
+    Both = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TermCriteria {
+    pub type_: TermType,
+    pub max_count: i32,
+    pub epsilon: f64,
+}
+
+impl TermCriteria {
+    pub fn new(type_: TermType, max_count: i32, epsilon: f64) -> Self {
+        Self {
+            type_,
+            max_count,
+            epsilon,
+        }
+    }
+}
 /// Template class for 2D rectangles.
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub struct Rect<T> {
