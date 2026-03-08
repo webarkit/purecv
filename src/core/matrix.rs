@@ -115,6 +115,15 @@ impl<T: Default + Clone> Matrix<T> {
         self.get_mut(row as usize, col as usize, channel)
     }
 
+    /// Sets a pixel's channel value using usize indices.
+    #[inline]
+    pub fn set(&mut self, row: usize, col: usize, channel: usize, value: T) {
+        let idx = self.flat_index(row, col, channel);
+        if let Some(p) = self.data.get_mut(idx) {
+            *p = value;
+        }
+    }
+
 
     /// Returns the underlying buffer as an immutable slice.
     /// Perfect for Rayon's `par_iter()` or sequential iterators.

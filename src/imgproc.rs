@@ -36,6 +36,8 @@
 
 pub mod color;
 pub mod filter;
+pub mod derivatives;
+pub mod edge;
 
 #[cfg(test)]
 mod tests;
@@ -43,3 +45,5 @@ mod tests;
 // Re-export common conversions: purecv::imgproc::cvt_color_rgb_to_gray
 pub use color::cvt_color_rgb_to_gray;
 pub use filter::*;
+pub use derivatives::*;
+pub use edge::*;

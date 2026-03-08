@@ -100,4 +100,87 @@ mod tests {
         assert!(val_at_2_2 < 50);
         assert!(val_at_2_3 > 200);
     }
+
+    #[test]
+    fn test_sobel() {
+        // Vertical edge: left half 0, right half 255
+        let mut data = vec![0u8; 100];
+        for x in 5..10 {
+            for y in 0..10 {
+                data[y * 10 + x] = 255;
+            }
+        }
+        let src = Matrix::from_vec(10, 10, 1, data);
+        
+        // Sobel dx=1, dy=0 should detect the vertical edge (x direction derivative)
+        // With ksize=3, scale=1.0, delta=0.0
+        let _res = sobel(&src, 1, 0, 3, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
+        
+        // At the edge (x=4 to x=5), the derivative should be high.
+        // Neighbors: x=4 (0), x=6 (255) -> 255 - 0 = 255.
+        // Sobel dx=1: [-1, 0, 1] smoothed by [1, 2, 1] vertically.
+        // Total weight is 4. Result should be around 255 * 4 = 1020, 
+        // but it's cast back to u8 if T is u8.
+        // Let's use f32 to avoid overflow for testing.
+        
+        let src_f32: Matrix<f32> = Matrix::from_vec(10, 10, 1, src.data.iter().map(|&v| v as f32).collect());
+        let res_f32 = sobel(&src_f32, 1, 0, 3, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
+        
+        let edge_val = *res_f32.at(5, 5, 0).unwrap();
+        assert!(edge_val > 500.0); // 255 * 4 = 1020 expected for Sobel ksize=3
+    }
+
+    #[test]
+    fn test_scharr() {
+        let mut data = vec![0u8; 100];
+        for x in 5..10 {
+            for y in 0..10 {
+                data[y * 10 + x] = 255;
+            }
+        }
+        let src = Matrix::<f32>::from_vec(10, 10, 1, data.iter().map(|&v| v as f32).collect());
+        
+        let res = scharr(&src, 1, 0, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
+        let edge_val = *res.at(5, 5, 0).unwrap();
+        // Scharr weight for center row is 10, total 3+10+3 = 16.
+        // Expected: 255 * 16 = 4080
+        assert!(edge_val > 2000.0);
+    }
+
+    #[test]
+    fn test_laplacian() {
+        // Uniform image
+        let src = Matrix::<f32>::from_vec(5, 5, 1, vec![100.0; 25]);
+        let res = laplacian(&src, 1, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
+        
+        // Laplacian of a uniform field should be 0
+        for &val in &res.data {
+            assert!(val.abs() < 1e-5);
+        }
+        
+        // Image with a peak at (2, 2)
+        let mut src_peak = Matrix::<f64>::new(5, 5, 1);
+        src_peak.set(2, 2, 0, 255.0);
+        let res_peak = laplacian(&src_peak, 1, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
+        // Laplacian [0, 1, 0; 1, -4, 1; 0, 1, 0] * 255 = [..., -4*255, ...] = -1020
+        assert!(((*res_peak.at(2, 2, 0).unwrap() + 1020.0f64).abs()) < 1e-5);
+    }
+
+    #[test]
+    fn test_canny() {
+        let mut data = vec![0u8; 100];
+        for x in 4..7 {
+            for y in 0..10 {
+                data[y * 10 + x] = 255;
+            }
+        }
+        let src = Matrix::from_vec(10, 10, 1, data);
+        
+        // Edge should be at x=4 and x=7
+        let edges = canny(&src, 50.0, 150.0, 3, false).unwrap();
+        
+        assert_eq!(*edges.at(5, 4, 0).unwrap(), 255);
+        assert_eq!(*edges.at(5, 7, 0).unwrap(), 255);
+        assert_eq!(*edges.at(5, 0, 0).unwrap(), 0);
+    }
 }

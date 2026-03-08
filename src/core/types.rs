@@ -220,6 +220,7 @@ impl RotatedRect {
 /// Various border interpolation methods.
 /// See OpenCV's BorderTypes.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
 #[repr(i32)]
 pub enum BorderTypes {
     CONSTANT = 0,
@@ -236,4 +237,3 @@ impl Default for BorderTypes {
         BorderTypes::REFLECT_101
     }
 }
-
