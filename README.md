@@ -26,4 +26,20 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-purecv = { git = "[https://github.com/webarki/purecv](https://github.com/webarkit/purecv)" }
+purecv = { git = "https://github.com/webarkit/purecv" }
+```
+
+### Running Examples
+
+Explore the capabilities of PureCV by running the provided examples:
+
+```bash
+# Basic matrix arithmetic
+cargo run --example arithmetic
+
+# Structural operations (flip, rotate, split/merge)
+cargo run --example structural_ops
+
+# Color conversion (RGB to Grayscale)
+cargo run --example color_conversion
+```
