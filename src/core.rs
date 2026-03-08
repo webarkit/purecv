@@ -39,6 +39,7 @@ pub mod arithm;
 pub mod types;
 pub mod utils;
 pub mod structural;
+pub mod norm;
 pub mod error;
 
 #[cfg(test)]
@@ -49,4 +50,5 @@ pub use matrix::Matrix;
 pub use types::*;
 pub use utils::*;
 pub use structural::*;
+pub use norm::*;
 pub use error::{PureCvError, Result};

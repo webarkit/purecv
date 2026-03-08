@@ -35,10 +35,11 @@
  */
 
 pub mod color;
+pub mod filter;
+
+#[cfg(test)]
+mod tests;
 
 // Re-export common conversions: purecv::imgproc::cvt_color_rgb_to_gray
 pub use color::cvt_color_rgb_to_gray;
-
-// You can later add more modules here:
-// pub mod filters;
-// pub mod geometric;
+pub use filter::*;

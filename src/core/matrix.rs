@@ -90,12 +90,31 @@ impl<T: Default + Clone> Matrix<T> {
         self.data.get(idx)
     }
 
+    /// Safely retrieves a reference to a specific pixel's channel value using i32 indices.
+    #[inline]
+    pub fn at(&self, row: i32, col: i32, channel: usize) -> Option<&T> {
+        if row < 0 || col < 0 {
+            return None;
+        }
+        self.get(row as usize, col as usize, channel)
+    }
+
     /// Safely retrieves a mutable reference to a specific pixel's channel value.
     #[inline]
     pub fn get_mut(&mut self, row: usize, col: usize, channel: usize) -> Option<&mut T> {
         let idx = self.flat_index(row, col, channel);
         self.data.get_mut(idx)
     }
+
+    /// Safely retrieves a mutable reference to a specific pixel's channel value using i32 indices.
+    #[inline]
+    pub fn at_mut(&mut self, row: i32, col: i32, channel: usize) -> Option<&mut T> {
+        if row < 0 || col < 0 {
+            return None;
+        }
+        self.get_mut(row as usize, col as usize, channel)
+    }
+
 
     /// Returns the underlying buffer as an immutable slice.
     /// Perfect for Rayon's `par_iter()` or sequential iterators.
@@ -109,5 +128,24 @@ impl<T: Default + Clone> Matrix<T> {
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.data
+    }
+
+    /// Converts the matrix elements to a different type `U`.
+    /// Similar to OpenCV's `Mat::convertTo`.
+    /// 
+    /// Note: This version currently performs basic casting.
+    pub fn convert_to<U>(&self) -> crate::core::error::Result<Matrix<U>>
+    where
+        U: Default + Clone + num_traits::NumCast,
+        T: num_traits::ToPrimitive + Copy,
+    {
+        let out_data: Vec<U> = self.data
+            .iter()
+            .map(|&x| {
+                U::from(x).ok_or_else(|| crate::core::error::PureCvError::InvalidInput("Conversion failed".into()))
+            })
+            .collect::<Result<Vec<U>, _>>()?;
+
+        Ok(Matrix::from_vec(self.rows, self.cols, self.channels, out_data))
     }
 }

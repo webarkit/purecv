@@ -256,4 +256,33 @@ mod tests {
         let p = pow(&m4, 2.0).unwrap();
         assert_eq!(p.data, vec![4.0, 9.0]);
     }
+
+    #[test]
+    fn test_convert_to() {
+        let m = Matrix::from_vec(2, 2, 1, vec![1u8, 2u8, 3u8, 4u8]);
+        let m_f32 = m.convert_to::<f32>().unwrap();
+        assert_eq!(m_f32.data, vec![1.0f32, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_norm_normalize() {
+        use crate::core::norm::*;
+        let m = Matrix::from_vec(1, 3, 1, vec![1.0f64, 2.0, 3.0]);
+        
+        // Norms
+        assert_eq!(norm(&m, NormTypes::INF), 3.0);
+        assert_eq!(norm(&m, NormTypes::L1), 6.0);
+        assert_eq!(norm(&m, NormTypes::L2), (1.0f64 + 4.0 + 9.0).sqrt());
+
+        // Normalize MINMAX to [0, 1]
+        let m_minmax = normalize(&m, 0.0, 1.0, NormTypes::MINMAX).unwrap();
+        assert_eq!(m_minmax.data[0], 0.0);
+        assert_eq!(m_minmax.data[2], 1.0);
+        assert!((m_minmax.data[1] - 0.5).abs() < 1e-6);
+
+        // Normalize L2 to norm 1
+        let m_l2 = normalize(&m, 1.0, 0.0, NormTypes::L2).unwrap();
+        let n_l2 = norm(&m_l2, NormTypes::L2);
+        assert!((n_l2 - 1.0).abs() < 1e-6);
+    }
 }

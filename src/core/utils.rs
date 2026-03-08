@@ -69,3 +69,65 @@ pub fn set_log_level(level: log::LevelFilter) {
 pub fn get_log_level() -> log::LevelFilter {
     log::max_level()
 }
+
+/// Border interpolation helper.
+/// Returns the index of a pixel that would be at the given position `p`
+/// in a sequence of length `len` if a specified border logic is applied.
+pub fn border_interpolate(p: i32, len: i32, border_type: crate::core::types::BorderTypes) -> i32 {
+    if p >= 0 && (p as i32) < len {
+        return p;
+    }
+
+    use crate::core::types::BorderTypes;
+    match border_type {
+        BorderTypes::REPLICATE => {
+            if p < 0 {
+                0
+            } else {
+                len - 1
+            }
+        }
+        BorderTypes::REFLECT => {
+            let mut p = p;
+            if len == 1 {
+                return 0;
+            }
+            loop {
+                if p < 0 {
+                    p = -p - 1;
+                } else if p >= len {
+                    p = 2 * len - p - 1;
+                } else {
+                    break;
+                }
+            }
+            p
+        }
+        BorderTypes::REFLECT_101 => {
+            let mut p = p;
+            if len == 1 {
+                return 0;
+            }
+            loop {
+                if p < 0 {
+                    p = -p;
+                } else if p >= len {
+                    p = 2 * len - p - 2;
+                } else {
+                    break;
+                }
+            }
+            p
+        }
+        BorderTypes::WRAP => {
+            if p < 0 {
+                (p % len + len) % len
+            } else {
+                p % len
+            }
+        }
+        BorderTypes::CONSTANT => -1,
+        _ => -1,
+    }
+}
+

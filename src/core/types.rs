@@ -216,3 +216,24 @@ impl RotatedRect {
         }
     }
 }
+
+/// Various border interpolation methods.
+/// See OpenCV's BorderTypes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(i32)]
+pub enum BorderTypes {
+    CONSTANT = 0,
+    REPLICATE = 1,
+    REFLECT = 2,
+    WRAP = 3,
+    REFLECT_101 = 4,
+    TRANSPARENT = 5,
+    ISOLATED = 16,
+}
+
+impl Default for BorderTypes {
+    fn default() -> Self {
+        BorderTypes::REFLECT_101
+    }
+}
+
