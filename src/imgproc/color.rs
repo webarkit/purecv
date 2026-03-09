@@ -65,10 +65,10 @@ pub fn cvt_color_rgb_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
                 // Process each pixel in the row
-                for (x, out_pixel) in out_row.iter_mut().enumerate() {
-                    let r = in_row[x * 3] as f32;
-                    let g = in_row[x * 3 + 1] as f32;
-                    let b = in_row[x * 3 + 2] as f32;
+                for (out_pixel, in_rgb) in out_row.iter_mut().zip(in_row.chunks_exact(3)) {
+                    let r = in_rgb[0] as f32;
+                    let g = in_rgb[1] as f32;
+                    let b = in_rgb[2] as f32;
 
                     // Apply luminosity formula and safely cast back to u8
                     *out_pixel = (0.299 * r + 0.587 * g + 0.114 * b).round() as u8;
@@ -83,10 +83,10 @@ pub fn cvt_color_rgb_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
                 // Process each pixel in the row
-                for (x, out_pixel) in out_row.iter_mut().enumerate() {
-                    let r = in_row[x * 3] as f32;
-                    let g = in_row[x * 3 + 1] as f32;
-                    let b = in_row[x * 3 + 2] as f32;
+                for (out_pixel, in_rgb) in out_row.iter_mut().zip(in_row.chunks_exact(3)) {
+                    let r = in_rgb[0] as f32;
+                    let g = in_rgb[1] as f32;
+                    let b = in_rgb[2] as f32;
 
                     // Apply luminosity formula and safely cast back to u8
                     *out_pixel = (0.299 * r + 0.587 * g + 0.114 * b).round() as u8;

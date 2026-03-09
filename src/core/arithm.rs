@@ -42,72 +42,34 @@ use std::ops::{BitAnd, BitOr, BitXor, Not};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "simd")]
-use pulp::Arch;
-
 /// Internal macro to handle feature-gated loop execution for binary operations.
-/// Handles Parallel + SIMD, Parallel only, SIMD only, and Sequential.
+/// Handles Parallel auto-vectorized, and Sequential auto-vectorized loops.
 macro_rules! binary_op {
     ($dst:expr, $src1:expr, $src2:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s1:ident, $s2:ident| $body:expr) => {
         #[cfg(feature = "parallel")]
         {
-            #[cfg(feature = "simd")]
-            {
-                let arch = Arch::new();
-                $dst.data.par_chunks_mut(1024)
-                    .zip($src1.data.par_chunks(1024))
-                    .zip($src2.data.par_chunks(1024))
-                    .for_each(|((d_raw, s1_raw), s2_raw)| {
-                        arch.dispatch(|| {
-                            for ((d_inner, &s1_inner), &s2_inner) in d_raw.iter_mut().zip(s1_raw).zip(s2_raw) {
-                                let $d: &mut $t_dst = d_inner;
-                                let $s1: $t_src = s1_inner;
-                                let $s2: $t_src = s2_inner;
-                                $body
-                            }
-                        });
-                    });
-            }
-            #[cfg(not(feature = "simd"))]
-            {
-                $dst.data.par_iter_mut()
-                    .zip($src1.data.par_iter())
-                    .zip($src2.data.par_iter())
-                    .for_each(|((d_raw, &s1_raw), &s2_raw)| {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s1: $t_src = s1_raw;
-                        let $s2: $t_src = s2_raw;
-                        $body
-                    });
-            }
+            $dst.data.par_iter_mut()
+                .zip($src1.data.par_iter())
+                .zip($src2.data.par_iter())
+                .for_each(|((d_raw, &s1_raw), &s2_raw)| {
+                    let $d: &mut $t_dst = d_raw;
+                    let $s1: $t_src = s1_raw;
+                    let $s2: $t_src = s2_raw;
+                    $body
+                });
         }
 
         #[cfg(not(feature = "parallel"))]
         {
-            #[cfg(feature = "simd")]
-            {
-                let arch = Arch::new();
-                arch.dispatch(|| {
-                    for ((d_raw, &s1_raw), &s2_raw) in $dst.data.iter_mut().zip(&$src1.data).zip(&$src2.data) {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s1: $t_src = s1_raw;
-                        let $s2: $t_src = s2_raw;
-                        $body
-                    }
+            $dst.data.iter_mut()
+                .zip($src1.data.iter())
+                .zip($src2.data.iter())
+                .for_each(|((d_raw, &s1_raw), &s2_raw)| {
+                    let $d: &mut $t_dst = d_raw;
+                    let $s1: $t_src = s1_raw;
+                    let $s2: $t_src = s2_raw;
+                    $body
                 });
-            }
-            #[cfg(not(feature = "simd"))]
-            {
-                $dst.data.iter_mut()
-                    .zip($src1.data.iter())
-                    .zip($src2.data.iter())
-                    .for_each(|((d_raw, &s1_raw), &s2_raw)| {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s1: $t_src = s1_raw;
-                        let $s2: $t_src = s2_raw;
-                        $body
-                    });
-            }
         }
     };
 }
@@ -117,56 +79,24 @@ macro_rules! unary_op {
     ($dst:expr, $src:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s:ident| $body:expr) => {
         #[cfg(feature = "parallel")]
         {
-            #[cfg(feature = "simd")]
-            {
-                let arch = Arch::new();
-                $dst.data.par_chunks_mut(1024)
-                    .zip($src.data.par_chunks(1024))
-                    .for_each(|(d_raw, s_raw)| {
-                        arch.dispatch(|| {
-                            for (d_inner, &s_inner) in d_raw.iter_mut().zip(s_raw) {
-                                let $d: &mut $t_dst = d_inner;
-                                let $s: $t_src = s_inner;
-                                $body
-                            }
-                        });
-                    });
-            }
-            #[cfg(not(feature = "simd"))]
-            {
-                $dst.data.par_iter_mut()
-                    .zip($src.data.par_iter())
-                    .for_each(|(d_raw, &s_raw)| {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s: $t_src = s_raw;
-                        $body
-                    });
-            }
+            $dst.data.par_iter_mut()
+                .zip($src.data.par_iter())
+                .for_each(|(d_raw, &s_raw)| {
+                    let $d: &mut $t_dst = d_raw;
+                    let $s: $t_src = s_raw;
+                    $body
+                });
         }
 
         #[cfg(not(feature = "parallel"))]
         {
-            #[cfg(feature = "simd")]
-            {
-                let arch = Arch::new();
-                arch.dispatch(|| {
-                    for (d_raw, &s_raw) in $dst.data.iter_mut().zip(&$src.data) {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s: $t_src = s_raw;
-                        $body
-                    }
+            $dst.data.iter_mut()
+                .zip($src.data.iter())
+                .for_each(|(d_raw, &s_raw)| {
+                    let $d: &mut $t_dst = d_raw;
+                    let $s: $t_src = s_raw;
+                    $body
                 });
-            }
-            #[cfg(not(feature = "simd"))]
-            {
-                $dst.data.iter_mut()
-                    .zip($src.data.iter())
-                    .for_each(|(d_raw, &s_raw)| {
-                        let $d: &mut $t_dst = d_raw;
-                        let $s: $t_src = s_raw;
-                        $body
-                    });
-            }
         }
     };
 }

@@ -36,17 +36,33 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use purecv::core::Matrix;
-use purecv::core::arithm::add;
+use purecv::core::arithm::{add, subtract, multiply, divide};
 
-fn bench_add(c: &Criterion) {
+fn bench_arithm(c: &mut Criterion) {
     let size = 1024;
-    let m1 = Matrix::<u8>::new(size, size, 3);
-    let m2 = Matrix::<u8>::new(size, size, 3);
+    let mut m1 = Matrix::<f32>::new(size, size, 3);
+    let mut m2 = Matrix::<f32>::new(size, size, 3);
+    
+    // Fill with some data
+    m1.data.fill(2.0);
+    m2.data.fill(1.5);
 
-    c.bench_function("matrix_add_1024x1024x3", |b| {
+    c.bench_function("matrix_add_1024x1024x3_f32", |b| {
         b.iter(|| add(black_box(&m1), black_box(&m2)).unwrap())
+    });
+    
+    c.bench_function("matrix_sub_1024x1024x3_f32", |b| {
+        b.iter(|| subtract(black_box(&m1), black_box(&m2)).unwrap())
+    });
+
+    c.bench_function("matrix_mul_1024x1024x3_f32", |b| {
+        b.iter(|| multiply(black_box(&m1), black_box(&m2)).unwrap())
+    });
+
+    c.bench_function("matrix_div_1024x1024x3_f32", |b| {
+        b.iter(|| divide(black_box(&m1), black_box(&m2)).unwrap())
     });
 }
 
-criterion_group!(benches, bench_add);
+criterion_group!(benches, bench_arithm);
 criterion_main!(benches);

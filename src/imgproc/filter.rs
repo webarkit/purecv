@@ -93,9 +93,9 @@ where
     temp_data.par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for kx in 0..ksize.width {
                         let src_x = border_interpolate(x_i32 + kx - anchor_x, cols_i32, border_type);
@@ -105,7 +105,7 @@ where
                             }
                         }
                     }
-                    row_data[x * channels + c] = sum;
+                    *comp = sum;
                 }
             }
         });
@@ -118,8 +118,8 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
-                for c in 0..channels {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for ky in 0..ksize.height {
                         let src_y = border_interpolate(y_i32 + ky - anchor_y, rows_i32, border_type);
@@ -130,7 +130,7 @@ where
                         }
                     }
                     let final_val = sum * inv_area;
-                    row_data[x * channels + c] = T::from(final_val).unwrap_or_default();
+                    *comp = T::from(final_val).unwrap_or_default();
                 }
             }
         });
@@ -211,9 +211,9 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for k in 0..ksize.width {
                         let src_x = border_interpolate(x_i32 + k - radius_x, cols_i32, border_type);
@@ -223,7 +223,7 @@ where
                             }
                         }
                     }
-                    row_data[x * channels + c] = sum;
+                    *comp = sum;
                 }
             }
         });
@@ -236,9 +236,9 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for k in 0..ksize.height {
                         let src_y = border_interpolate(y_i32 + k - radius_y, rows_i32, border_type);
@@ -248,7 +248,7 @@ where
                             }
                         }
                     }
-                    row_data[x * channels + c] = T::from(sum).unwrap_or_default();
+                    *comp = T::from(sum).unwrap_or_default();
                 }
             }
         });
@@ -287,9 +287,9 @@ where
             let y_i32 = y as i32;
             let mut neighbors = Vec::with_capacity((ksize * ksize) as usize);
 
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     neighbors.clear();
                     for ky in 0..ksize {
                         for kx in 0..ksize {
@@ -304,7 +304,7 @@ where
                     // Sort to find median
                     neighbors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let median = neighbors[neighbors.len() / 2];
-                    row_data[x * channels + c] = median;
+                    *comp = median;
                 }
             }
         });
@@ -350,7 +350,7 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
                 
                 let center_vals: Vec<f64> = (0..channels)
@@ -386,11 +386,11 @@ where
                     }
                 }
 
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     if w_sum > 0.0 {
-                        row_data[x * channels + c] = T::from_f64(sums[c] / w_sum).unwrap_or_default();
+                        *comp = T::from_f64(sums[c] / w_sum).unwrap_or_default();
                     } else {
-                        row_data[x * channels + c] = T::from_f64(center_vals[c]).unwrap_or_default();
+                        *comp = T::from_f64(center_vals[c]).unwrap_or_default();
                     }
                 }
             }

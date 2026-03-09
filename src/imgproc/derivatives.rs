@@ -201,9 +201,9 @@ where
     temp.data.par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for i in 0..kx_len {
                         let src_x = border_interpolate(x_i32 + i - anchor_x, cols_i32, border_type);
@@ -211,7 +211,7 @@ where
                             sum += ToPrimitive::to_f64(val).unwrap_or(0.0) * kx[i as usize];
                         }
                     }
-                    row_data[x * channels + c] = sum;
+                    *comp = sum;
                 }
             }
         });
@@ -222,8 +222,8 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
-                for c in 0..channels {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for i in 0..ky_len {
                         let src_y = border_interpolate(y_i32 + i - anchor_y, rows_i32, border_type);
@@ -232,7 +232,7 @@ where
                         }
                     }
                     let final_val = sum * scale + delta;
-                    row_data[x * channels + c] = T::from(final_val).unwrap_or_default();
+                    *comp = T::from(final_val).unwrap_or_default();
                 }
             }
         });
@@ -268,9 +268,9 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
-            for x in 0..cols {
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                for c in 0..channels {
+                for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for ky in 0..kh {
                         let src_y = border_interpolate(y_i32 + ky - anchor_y, rows_i32, border_type);
@@ -282,7 +282,7 @@ where
                         }
                     }
                     let final_val = sum * scale + delta;
-                    row_data[x * channels + c] = T::from(final_val).unwrap_or_default();
+                    *comp = T::from(final_val).unwrap_or_default();
                 }
             }
         });
