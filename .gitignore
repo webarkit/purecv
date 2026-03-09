@@ -1,22 +1,18 @@
 # Rust
-
 target/
 Cargo.lock
 
 # IDEs
-
 .vscode/
 .idea/
 *.swp
 *.swo
 
 # OS
-
 .DS_Store
 Thumbs.db
 
 # Antigravity
-
 .antigravity/logs/
 
 # C code
@@ -24,3 +20,6 @@ cpp_ref/opencv
 
 # AI
 .agents/
+
+# Examples
+examples/data/out/
