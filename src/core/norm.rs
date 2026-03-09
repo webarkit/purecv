@@ -35,10 +35,15 @@
  */
 
 use crate::core::Matrix;
-use crate::core::error::{Result, PureCvError};
-use num_traits::{ToPrimitive, FromPrimitive, NumCast};
+use crate::core::error::Result;
+use crate::core::stats::min_max_loc;
+use num_traits::{ToPrimitive, FromPrimitive};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(i32)]
 pub enum NormTypes {
     INF = 1,
     L1 = 2,
@@ -50,38 +55,67 @@ pub enum NormTypes {
 /// Currently supports INF, L1, and L2 norms.
 pub fn norm<T>(src: &Matrix<T>, norm_type: NormTypes) -> f64
 where
-    T: ToPrimitive + Copy,
+    T: ToPrimitive + Copy + Sync + Send + Default + Clone + PartialOrd,
 {
     match norm_type {
         NormTypes::INF => {
-            src.data.iter()
-                .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                .fold(0.0, f64::max)
+            #[cfg(feature = "parallel")]
+            {
+                src.data.as_slice().par_iter()
+                    .map(|&x| x.to_f64().unwrap_or(0.0).abs())
+                    .reduce(|| 0.0, f64::max)
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                src.data.iter()
+                    .map(|&x| x.to_f64().unwrap_or(0.0).abs())
+                    .fold(0.0, f64::max)
+            }
         }
         NormTypes::L1 => {
-            src.data.iter()
-                .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                .sum()
+            #[cfg(feature = "parallel")]
+            {
+                src.data.as_slice().par_iter()
+                    .map(|&x| x.to_f64().unwrap_or(0.0).abs())
+                    .sum()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                src.data.iter()
+                    .map(|&x| x.to_f64().unwrap_or(0.0).abs())
+                    .sum()
+            }
         }
         NormTypes::L2 => {
-            let sum_sq: f64 = src.data.iter()
-                .map(|&x| {
-                    let v = x.to_f64().unwrap_or(0.0);
-                    v * v
-                })
-                .sum();
+            let sum_sq: f64;
+            #[cfg(feature = "parallel")]
+            {
+                sum_sq = src.data.as_slice().par_iter()
+                    .map(|&x| {
+                        let v = x.to_f64().unwrap_or(0.0);
+                        v * v
+                    })
+                    .sum();
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                sum_sq = src.data.iter()
+                    .map(|&x| {
+                        let v = x.to_f64().unwrap_or(0.0);
+                        v * v
+                    })
+                    .sum();
+            }
             sum_sq.sqrt()
         }
-        NormTypes::MINMAX => 0.0, // Should probably return an error or handle differently
+        NormTypes::MINMAX => {
+            // NormTypes::MINMAX is not valid for norm() in OpenCV, usually returns 0 or errors.
+            0.0
+        }
     }
 }
 
 /// Normalizes the matrix to a specified range or norm.
-/// 
-/// * `src` - Input matrix.
-/// * `alpha` - Lower bound or norm value.
-/// * `beta` - Upper bound (used in MINMAX).
-/// * `norm_type` - Type of normalization.
 pub fn normalize<T>(
     src: &Matrix<T>,
     alpha: f64,
@@ -89,49 +123,76 @@ pub fn normalize<T>(
     norm_type: NormTypes,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + ToPrimitive + FromPrimitive + NumCast + Copy,
+    T: ToPrimitive + FromPrimitive + Copy + Sync + Send + Default + Clone + PartialOrd,
 {
     let mut dst = Matrix::new(src.rows, src.cols, src.channels);
-    let data_len = src.data.len();
+    let channels = src.channels;
 
     match norm_type {
         NormTypes::MINMAX => {
-            let mut min_val = f64::MAX;
-            let mut max_val = f64::MIN;
+            let (min_vals, max_vals, _, _) = min_max_loc(src);
+            let global_min = min_vals.into_iter().fold(f64::MAX, f64::min);
+            let global_max = max_vals.into_iter().fold(f64::MIN, f64::max);
 
-            for &x in &src.data {
-                let v = x.to_f64().ok_or(PureCvError::InvalidInput("Invalid data".into()))?;
-                if v < min_val { min_val = v; }
-                if v > max_val { max_val = v; }
-            }
-
-            let range = max_val - min_val;
-            let target_range = beta - alpha;
-
-            if range.abs() < f64::EPSILON {
-                for i in 0..data_len {
-                    dst.data[i] = T::from(alpha).unwrap_or_default();
-                }
+            if global_max <= global_min {
+                #[cfg(feature = "parallel")]
+                dst.data.as_mut_slice().par_iter_mut().for_each(|x| *x = T::from_f64(alpha).unwrap_or(T::default()));
+                #[cfg(not(feature = "parallel"))]
+                for x in &mut dst.data { *x = T::from_f64(alpha).unwrap_or(T::default()); }
             } else {
-                let scale = target_range / range;
-                for i in 0..data_len {
-                    let v = src.data[i].to_f64().unwrap();
-                    let normalized = (v - min_val) * scale + alpha;
-                    dst.data[i] = T::from(normalized).unwrap_or_default();
+                let scale = (beta - alpha) / (global_max - global_min);
+                #[cfg(feature = "parallel")]
+                {
+                    dst.data.as_mut_slice().par_chunks_exact_mut(channels)
+                        .zip(src.data.as_slice().par_chunks_exact(channels))
+                        .for_each(|(dout, din)| {
+                            for i in 0..channels {
+                                let v = din[i].to_f64().unwrap_or(0.0);
+                                let normalized = (v - global_min) * scale + alpha;
+                                dout[i] = T::from_f64(normalized).unwrap_or(T::default());
+                            }
+                        });
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for (dout, din) in dst.data.chunks_exact_mut(channels).zip(src.data.chunks_exact(channels)) {
+                        for i in 0..channels {
+                            let v = din[i].to_f64().unwrap_or(0.0);
+                            let normalized = (v - global_min) * scale + alpha;
+                            dout[i] = T::from_f64(normalized).unwrap_or(T::default());
+                        }
+                    }
                 }
             }
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::INF => {
             let n = norm(src, norm_type);
             if n.abs() < f64::EPSILON {
-                for i in 0..data_len {
-                    dst.data[i] = T::default();
-                }
+                #[cfg(feature = "parallel")]
+                dst.data.as_mut_slice().par_iter_mut().for_each(|x| *x = T::default());
+                #[cfg(not(feature = "parallel"))]
+                for x in &mut dst.data { *x = T::default(); }
             } else {
                 let scale = alpha / n;
-                for i in 0..data_len {
-                    let v = src.data[i].to_f64().unwrap();
-                    dst.data[i] = T::from(v * scale).unwrap_or_default();
+                #[cfg(feature = "parallel")]
+                {
+                    dst.data.as_mut_slice().par_chunks_exact_mut(channels)
+                        .zip(src.data.as_slice().par_chunks_exact(channels))
+                        .for_each(|(dout, din)| {
+                            for i in 0..channels {
+                                let v = din[i].to_f64().unwrap_or(0.0);
+                                dout[i] = T::from_f64(v * scale).unwrap_or(T::default());
+                            }
+                        });
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for (dout, din) in dst.data.chunks_exact_mut(channels).zip(src.data.chunks_exact(channels)) {
+                        for i in 0..channels {
+                            let v = din[i].to_f64().unwrap_or(0.0);
+                            dout[i] = T::from_f64(v * scale).unwrap_or(T::default());
+                        }
+                    }
                 }
             }
         }

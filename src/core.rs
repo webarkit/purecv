@@ -40,6 +40,7 @@ pub mod types;
 pub mod utils;
 pub mod structural;
 pub mod norm;
+pub mod stats;
 pub mod error;
 
 #[cfg(test)]
@@ -51,4 +52,5 @@ pub use types::*;
 pub use utils::*;
 pub use structural::*;
 pub use norm::*;
+pub use stats::*;
 pub use error::{PureCvError, Result};

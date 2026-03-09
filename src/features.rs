@@ -1,5 +1,5 @@
 /*
- *  lib.rs
+ *  features.rs
  *  purecv
  *
  *  This file is part of purecv - OpenCV.
@@ -34,12 +34,8 @@
  *
  */
 
-// Global modules
-pub mod core;
-pub mod imgproc;
-pub mod features;
+//pub mod fast;
+//pub mod orb;
 
-/// Prelude to easily import common structures
-pub mod prelude {
-    pub use crate::core::Matrix;
-}
+//pub use fast::*;
+//pub use orb::*;

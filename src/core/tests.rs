@@ -285,4 +285,35 @@ mod tests {
         let n_l2 = norm(&m_l2, NormTypes::L2);
         assert!((n_l2 - 1.0).abs() < 1e-6);
     }
+
+    #[test]
+    fn test_stats() {
+        use crate::core::stats::*;
+        let m = Matrix::from_vec(2, 2, 1, vec![10.0f64, 20.0, 30.0, 40.0]);
+        
+        // Sum
+        let s = sum(&m);
+        assert_eq!(s[0], 100.0);
+
+        // Mean
+        let mn = mean(&m);
+        assert_eq!(mn[0], 25.0);
+
+        // MinMaxLoc
+        let (min_vals, max_vals, min_locs, max_locs) = min_max_loc(&m);
+        assert_eq!(min_vals[0], 10.0);
+        assert_eq!(max_vals[0], 40.0);
+        assert_eq!(min_locs[0].x, 0);
+        assert_eq!(min_locs[0].y, 0);
+        assert_eq!(max_locs[0].x, 1);
+        assert_eq!(max_locs[0].y, 1);
+
+        // MeanStdDev
+        let (mn2, sd) = mean_std_dev(&m);
+        assert_eq!(mn2[0], 25.0);
+        // Variance = ((10-25)^2 + (20-25)^2 + (30-25)^2 + (40-25)^2) / 4
+        // Variance = (225 + 25 + 25 + 225) / 4 = 500 / 4 = 125
+        // StdDev = sqrt(125)
+        assert!((sd[0] - 125.0f64.sqrt()).abs() < 1e-6);
+    }
 }
