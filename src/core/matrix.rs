@@ -59,6 +59,11 @@ impl<T: Default + Clone> Matrix<T> {
         }
     }
 
+    /// Creates a new `Matrix` from a Size
+    pub fn from_size<U: Into<usize>>(size: crate::core::Size<U>, channels: usize) -> Self {
+        Self::new(size.height.into(), size.width.into(), channels)
+    }
+
     /// Creates a new `Matrix` from an existing `Vec<T>`.
     pub fn from_vec(rows: usize, cols: usize, channels: usize, data: Vec<T>) -> Self {
         assert_eq!(data.len(), rows * cols * channels, "Data length mismatch");
@@ -156,5 +161,60 @@ impl<T: Default + Clone> Matrix<T> {
             .collect::<Result<Vec<U>, _>>()?;
 
         Ok(Matrix::from_vec(self.rows, self.cols, self.channels, out_data))
+    }
+}
+
+impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
+    /// Returns a zero array of the specified size and type.
+    pub fn zeros(rows: usize, cols: usize, channels: usize) -> Self {
+        Self {
+            rows,
+            cols,
+            channels,
+            data: vec![T::zero(); rows * cols * channels],
+        }
+    }
+
+    /// Returns a zero array of the specified size and type.
+    pub fn zeros_from_size<U: Into<usize>>(size: crate::core::Size<U>, channels: usize) -> Self {
+        Self::zeros(size.height.into(), size.width.into(), channels)
+    }
+
+    /// Returns an array of all 1's of the specified size and type.
+    pub fn ones(rows: usize, cols: usize, channels: usize) -> Self {
+        Self {
+            rows,
+            cols,
+            channels,
+            data: vec![T::one(); rows * cols * channels],
+        }
+    }
+
+    /// Returns an array of all 1's of the specified size and type.
+    pub fn ones_from_size<U: Into<usize>>(size: crate::core::Size<U>, channels: usize) -> Self {
+        Self::ones(size.height.into(), size.width.into(), channels)
+    }
+
+    /// Returns an identity matrix of the specified size and type.
+    /// Following OpenCV, the diagonal has value 1 and others are 0.
+    pub fn eye(rows: usize, cols: usize, channels: usize) -> Self {
+        let mut mat = Self::zeros(rows, cols, channels);
+        let min_dim = std::cmp::min(rows, cols);
+        for i in 0..min_dim {
+            for c in 0..channels {
+                mat.set(i, i, c, T::one());
+            }
+        }
+        mat
+    }
+
+    /// Returns a diagonal matrix from a 1D slice.
+    pub fn diag(diagonal: &[T]) -> Self {
+        let n = diagonal.len();
+        let mut mat = Self::zeros(n, n, 1);
+        for i in 0..n {
+            mat.set(i, i, 0, diagonal[i].clone());
+        }
+        mat
     }
 }

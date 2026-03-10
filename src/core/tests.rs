@@ -57,6 +57,17 @@ mod tests {
     }
 
     #[test]
+    fn test_matrix_from_size() {
+        let sz = crate::core::Size::new(100usize, 200usize);
+        let mat: Matrix<u8> = Matrix::from_size(sz, 3);
+        
+        assert_eq!(mat.cols, 100);
+        assert_eq!(mat.rows, 200);
+        assert_eq!(mat.channels, 3);
+        assert_eq!(mat.data.len(), 100 * 200 * 3);
+    }
+
+    #[test]
     fn test_rect_tl_br() {
         let r = Rect2i::new(10, 10, 100, 50);
         assert_eq!(r.tl(), Point2i::new(10, 10));
@@ -315,5 +326,37 @@ mod tests {
         // Variance = (225 + 25 + 25 + 225) / 4 = 500 / 4 = 125
         // StdDev = sqrt(125)
         assert!((sd[0] - 125.0f64.sqrt()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_matrix_factories() {
+        // zeros
+        let m_zeros = Matrix::<u8>::zeros(2, 2, 1);
+        assert_eq!(m_zeros.data, vec![0, 0, 0, 0]);
+
+        // ones
+        let m_ones = Matrix::<f32>::ones(1, 4, 1);
+        assert_eq!(m_ones.data, vec![1.0, 1.0, 1.0, 1.0]);
+
+        // eye
+        let m_eye = Matrix::<i32>::eye(3, 3, 1);
+        let expected_eye = vec![
+            1, 0, 0,
+            0, 1, 0,
+            0, 0, 1,
+        ];
+        assert_eq!(m_eye.data, expected_eye);
+
+        // diag
+        let diag_vals = vec![1.0, 2.0, 3.0];
+        let m_diag = Matrix::diag(&diag_vals);
+        assert_eq!(m_diag.rows, 3);
+        assert_eq!(m_diag.cols, 3);
+        let expected_diag = vec![
+            1.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 3.0,
+        ];
+        assert_eq!(m_diag.data, expected_diag);
     }
 }
