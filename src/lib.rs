@@ -36,8 +36,8 @@
 
 // Global modules
 pub mod core;
-pub mod imgproc;
 pub mod features;
+pub mod imgproc;
 
 /// Prelude to easily import common structures
 pub mod prelude {

@@ -35,14 +35,14 @@
  */
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use purecv::core::arithm::{add, divide, multiply, subtract};
 use purecv::core::Matrix;
-use purecv::core::arithm::{add, subtract, multiply, divide};
 
 fn bench_arithm(c: &mut Criterion) {
     let size = 1024;
     let mut m1 = Matrix::<f32>::new(size, size, 3);
     let mut m2 = Matrix::<f32>::new(size, size, 3);
-    
+
     // Fill with some data
     m1.data.fill(2.0);
     m2.data.fill(1.5);
@@ -50,7 +50,7 @@ fn bench_arithm(c: &mut Criterion) {
     c.bench_function("matrix_add_1024x1024x3_f32", |b| {
         b.iter(|| add(black_box(&m1), black_box(&m2)).unwrap())
     });
-    
+
     c.bench_function("matrix_sub_1024x1024x3_f32", |b| {
         b.iter(|| subtract(black_box(&m1), black_box(&m2)).unwrap())
     });

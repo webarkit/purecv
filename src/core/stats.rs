@@ -34,8 +34,8 @@
  *
  */
 
-use crate::core::Matrix;
 use crate::core::types::Point2i;
+use crate::core::Matrix;
 use num_traits::ToPrimitive;
 
 #[cfg(feature = "parallel")]
@@ -51,20 +51,28 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        channel_sums = src.data.as_slice()
+        channel_sums = src
+            .data
+            .as_slice()
             .par_chunks_exact(channels)
-            .fold(|| vec![0.0; channels], |mut acc, chunk| {
-                for (i, &val) in chunk.iter().enumerate() {
-                    acc[i] += val.to_f64().unwrap_or(0.0);
-                }
-                acc
-            })
-            .reduce(|| vec![0.0; channels], |mut acc1, acc2| {
-                for (i, v) in acc2.iter().enumerate() {
-                    acc1[i] += v;
-                }
-                acc1
-            });
+            .fold(
+                || vec![0.0; channels],
+                |mut acc, chunk| {
+                    for (i, &val) in chunk.iter().enumerate() {
+                        acc[i] += val.to_f64().unwrap_or(0.0);
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || vec![0.0; channels],
+                |mut acc1, acc2| {
+                    for (i, v) in acc2.iter().enumerate() {
+                        acc1[i] += v;
+                    }
+                    acc1
+                },
+            );
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -140,22 +148,30 @@ where
 
         #[cfg(feature = "parallel")]
         {
-            sq_diff_sums = src.data.as_slice()
+            sq_diff_sums = src
+                .data
+                .as_slice()
                 .par_chunks_exact(channels)
-                .fold(|| vec![0.0; channels], |mut acc, chunk| {
-                    for (ch, &val) in chunk.iter().enumerate() {
-                        let v = val.to_f64().unwrap_or(0.0);
-                        let diff = v - means[ch];
-                        acc[ch] += diff * diff;
-                    }
-                    acc
-                })
-                .reduce(|| vec![0.0; channels], |mut acc1, acc2| {
-                    for (i, v) in acc2.iter().enumerate() {
-                        acc1[i] += v;
-                    }
-                    acc1
-                });
+                .fold(
+                    || vec![0.0; channels],
+                    |mut acc, chunk| {
+                        for (ch, &val) in chunk.iter().enumerate() {
+                            let v = val.to_f64().unwrap_or(0.0);
+                            let diff = v - means[ch];
+                            acc[ch] += diff * diff;
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || vec![0.0; channels],
+                    |mut acc1, acc2| {
+                        for (i, v) in acc2.iter().enumerate() {
+                            acc1[i] += v;
+                        }
+                        acc1
+                    },
+                );
         }
 
         #[cfg(not(feature = "parallel"))]

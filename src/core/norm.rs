@@ -34,15 +34,15 @@
  *
  */
 
-use crate::core::Matrix;
 use crate::core::error::Result;
 use crate::core::stats::min_max_loc;
-use num_traits::{ToPrimitive, FromPrimitive};
+use crate::core::Matrix;
+use num_traits::{FromPrimitive, ToPrimitive};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(not(feature = "parallel"))]
 use crate::core::utils::ParIterFallback;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(i32)]
@@ -63,13 +63,16 @@ where
         NormTypes::INF => {
             #[cfg(feature = "parallel")]
             {
-                src.data.as_slice().par_iter()
+                src.data
+                    .as_slice()
+                    .par_iter()
                     .map(|&x| x.to_f64().unwrap_or(0.0).abs())
                     .reduce(|| 0.0, f64::max)
             }
             #[cfg(not(feature = "parallel"))]
             {
-                src.data.iter()
+                src.data
+                    .iter()
                     .map(|&x| x.to_f64().unwrap_or(0.0).abs())
                     .fold(0.0, f64::max)
             }
@@ -77,13 +80,16 @@ where
         NormTypes::L1 => {
             #[cfg(feature = "parallel")]
             {
-                src.data.as_slice().par_iter()
+                src.data
+                    .as_slice()
+                    .par_iter()
                     .map(|&x| x.to_f64().unwrap_or(0.0).abs())
                     .sum()
             }
             #[cfg(not(feature = "parallel"))]
             {
-                src.data.iter()
+                src.data
+                    .iter()
                     .map(|&x| x.to_f64().unwrap_or(0.0).abs())
                     .sum()
             }
@@ -92,7 +98,10 @@ where
             let sum_sq: f64;
             #[cfg(feature = "parallel")]
             {
-                sum_sq = src.data.as_slice().par_iter()
+                sum_sq = src
+                    .data
+                    .as_slice()
+                    .par_iter()
                     .map(|&x| {
                         let v = x.to_f64().unwrap_or(0.0);
                         v * v
@@ -101,7 +110,9 @@ where
             }
             #[cfg(not(feature = "parallel"))]
             {
-                sum_sq = src.data.iter()
+                sum_sq = src
+                    .data
+                    .iter()
                     .map(|&x| {
                         let v = x.to_f64().unwrap_or(0.0);
                         v * v
@@ -138,14 +149,21 @@ where
 
             if global_max <= global_min {
                 #[cfg(feature = "parallel")]
-                dst.data.as_mut_slice().par_iter_mut().for_each(|x| *x = T::from_f64(alpha).unwrap_or(T::default()));
+                dst.data
+                    .as_mut_slice()
+                    .par_iter_mut()
+                    .for_each(|x| *x = T::from_f64(alpha).unwrap_or(T::default()));
                 #[cfg(not(feature = "parallel"))]
-                for x in &mut dst.data { *x = T::from_f64(alpha).unwrap_or(T::default()); }
+                for x in &mut dst.data {
+                    *x = T::from_f64(alpha).unwrap_or(T::default());
+                }
             } else {
                 let scale = (beta - alpha) / (global_max - global_min);
                 #[cfg(feature = "parallel")]
                 {
-                    dst.data.as_mut_slice().par_chunks_exact_mut(channels)
+                    dst.data
+                        .as_mut_slice()
+                        .par_chunks_exact_mut(channels)
                         .zip(src.data.as_slice().par_chunks_exact(channels))
                         .for_each(|(dout, din)| {
                             for i in 0..channels {
@@ -157,7 +175,11 @@ where
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
-                    for (dout, din) in dst.data.chunks_exact_mut(channels).zip(src.data.chunks_exact(channels)) {
+                    for (dout, din) in dst
+                        .data
+                        .chunks_exact_mut(channels)
+                        .zip(src.data.chunks_exact(channels))
+                    {
                         for i in 0..channels {
                             let v = din[i].to_f64().unwrap_or(0.0);
                             let normalized = (v - global_min) * scale + alpha;
@@ -171,14 +193,21 @@ where
             let n = norm(src, norm_type);
             if n.abs() < f64::EPSILON {
                 #[cfg(feature = "parallel")]
-                dst.data.as_mut_slice().par_iter_mut().for_each(|x| *x = T::default());
+                dst.data
+                    .as_mut_slice()
+                    .par_iter_mut()
+                    .for_each(|x| *x = T::default());
                 #[cfg(not(feature = "parallel"))]
-                for x in &mut dst.data { *x = T::default(); }
+                for x in &mut dst.data {
+                    *x = T::default();
+                }
             } else {
                 let scale = alpha / n;
                 #[cfg(feature = "parallel")]
                 {
-                    dst.data.as_mut_slice().par_chunks_exact_mut(channels)
+                    dst.data
+                        .as_mut_slice()
+                        .par_chunks_exact_mut(channels)
                         .zip(src.data.as_slice().par_chunks_exact(channels))
                         .for_each(|(dout, din)| {
                             for i in 0..channels {
@@ -189,7 +218,11 @@ where
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
-                    for (dout, din) in dst.data.chunks_exact_mut(channels).zip(src.data.chunks_exact(channels)) {
+                    for (dout, din) in dst
+                        .data
+                        .chunks_exact_mut(channels)
+                        .zip(src.data.chunks_exact(channels))
+                    {
                         for i in 0..channels {
                             let v = din[i].to_f64().unwrap_or(0.0);
                             dout[i] = T::from_f64(v * scale).unwrap_or(T::default());

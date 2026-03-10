@@ -41,11 +41,7 @@ mod tests {
 
     #[test]
     fn test_blur() {
-        let m = Matrix::from_vec(3, 3, 1, vec![
-            10u8, 10, 10,
-            10, 10, 10,
-            10, 10, 10,
-        ]);
+        let m = Matrix::from_vec(3, 3, 1, vec![10u8, 10, 10, 10, 10, 10, 10, 10, 10]);
         let ksize = Size2i::new(3, 3);
         let res = blur(&m, ksize, Point2i::new(-1, -1), BorderTypes::REFLECT_101).unwrap();
         assert_eq!(res.data, vec![10u8; 9]);
@@ -53,14 +49,17 @@ mod tests {
 
     #[test]
     fn test_box_filter() {
-        let m = Matrix::from_vec(3, 3, 1, vec![
-            1u8, 1, 1,
-            1, 1, 1,
-            1, 1, 1,
-        ]);
+        let m = Matrix::from_vec(3, 3, 1, vec![1u8, 1, 1, 1, 1, 1, 1, 1, 1]);
         let ksize = Size2i::new(3, 3);
         // Sum should be 9 for each pixel because of border reflection
-        let res = box_filter(&m, ksize, Point2i::new(-1, -1), false, BorderTypes::REFLECT_101).unwrap();
+        let res = box_filter(
+            &m,
+            ksize,
+            Point2i::new(-1, -1),
+            false,
+            BorderTypes::REFLECT_101,
+        )
+        .unwrap();
         for val in res.data {
             assert_eq!(val, 9u8);
         }
@@ -83,7 +82,7 @@ mod tests {
         let mut data = vec![10u8; 9];
         data[4] = 255; // Center is outlier
         let src = Matrix::from_vec(3, 3, 1, data);
-        
+
         // Median of [10, 10, 10, 10, 255, 10, 10, 10, 10] is 10
         let blur = median_blur(&src, 3).unwrap();
         assert_eq!(*blur.at(1, 1, 0).unwrap(), 10);
@@ -99,15 +98,15 @@ mod tests {
             }
         }
         let src = Matrix::from_vec(5, 5, 1, data);
-        
+
         let res = bilateral_filter(&src, 5, 50.0, 50.0, BorderTypes::REFLECT_101).unwrap();
-        
+
         // Edge should be preserved.
         // Row 2, Col 2 is x=2, y=2. Value is 0.
         // Row 2, Col 3 is x=3, y=2. Value is 255.
         let val_at_2_2 = *res.at(2, 2, 0).unwrap();
         let val_at_2_3 = *res.at(2, 3, 0).unwrap();
-        
+
         assert!(val_at_2_2 < 50);
         assert!(val_at_2_3 > 200);
     }
@@ -122,21 +121,22 @@ mod tests {
             }
         }
         let src = Matrix::from_vec(10, 10, 1, data);
-        
+
         // Sobel dx=1, dy=0 should detect the vertical edge (x direction derivative)
         // With ksize=3, scale=1.0, delta=0.0
         let _res = sobel(&src, 1, 0, 3, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
-        
+
         // At the edge (x=4 to x=5), the derivative should be high.
         // Neighbors: x=4 (0), x=6 (255) -> 255 - 0 = 255.
         // Sobel dx=1: [-1, 0, 1] smoothed by [1, 2, 1] vertically.
-        // Total weight is 4. Result should be around 255 * 4 = 1020, 
+        // Total weight is 4. Result should be around 255 * 4 = 1020,
         // but it's cast back to u8 if T is u8.
         // Let's use f32 to avoid overflow for testing.
-        
-        let src_f32: Matrix<f32> = Matrix::from_vec(10, 10, 1, src.data.iter().map(|&v| v as f32).collect());
+
+        let src_f32: Matrix<f32> =
+            Matrix::from_vec(10, 10, 1, src.data.iter().map(|&v| v as f32).collect());
         let res_f32 = sobel(&src_f32, 1, 0, 3, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
-        
+
         let edge_val = *res_f32.at(5, 5, 0).unwrap();
         assert!(edge_val > 500.0); // 255 * 4 = 1020 expected for Sobel ksize=3
     }
@@ -150,7 +150,7 @@ mod tests {
             }
         }
         let src = Matrix::<f32>::from_vec(10, 10, 1, data.iter().map(|&v| v as f32).collect());
-        
+
         let res = scharr(&src, 1, 0, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
         let edge_val = *res.at(5, 5, 0).unwrap();
         // Scharr weight for center row is 10, total 3+10+3 = 16.
@@ -163,12 +163,12 @@ mod tests {
         // Uniform image
         let src = Matrix::<f32>::from_vec(5, 5, 1, vec![100.0; 25]);
         let res = laplacian(&src, 1, 1.0, 0.0, BorderTypes::REFLECT_101).unwrap();
-        
+
         // Laplacian of a uniform field should be 0
         for &val in &res.data {
             assert!(val.abs() < 1e-5);
         }
-        
+
         // Image with a peak at (2, 2)
         let mut src_peak = Matrix::<f64>::new(5, 5, 1);
         src_peak.set(2, 2, 0, 255.0);
@@ -186,10 +186,10 @@ mod tests {
             }
         }
         let src = Matrix::from_vec(10, 10, 1, data);
-        
+
         // Edge should be at x=4 and x=7
         let edges = canny(&src, 50.0, 150.0, 3, false).unwrap();
-        
+
         assert_eq!(*edges.at(5, 4, 0).unwrap(), 255);
         assert_eq!(*edges.at(5, 7, 0).unwrap(), 255);
         assert_eq!(*edges.at(5, 0, 0).unwrap(), 0);
@@ -205,7 +205,7 @@ mod tests {
         let rgb_src = Matrix::from_vec(2, 2, 3, data);
 
         let gray = cvt_color(&rgb_src, ColorConversionCode::COLOR_RGB2GRAY).unwrap();
-        
+
         // 0.299 * 255 = 76.245 -> 76
         assert_eq!(*gray.at(0, 0, 0).unwrap(), 76);
         // 0.587 * 255 = 149.685 -> 150
@@ -242,7 +242,8 @@ mod tests {
         assert_eq!(res.data, vec![0, 0, 0, 255, 255, 255]);
 
         // Binary Inv threshold at 127
-        let (_, res_inv) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_BINARY_INV).unwrap();
+        let (_, res_inv) =
+            threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_BINARY_INV).unwrap();
         assert_eq!(res_inv.data, vec![255, 255, 255, 0, 0, 0]);
 
         // Truncate at 127
@@ -254,7 +255,8 @@ mod tests {
         assert_eq!(res_zero.data, vec![0, 0, 0, 150, 200, 250]);
 
         // ToZero Inv at 127
-        let (_, res_zero_inv) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_TOZERO_INV).unwrap();
+        let (_, res_zero_inv) =
+            threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_TOZERO_INV).unwrap();
         assert_eq!(res_zero_inv.data, vec![10, 50, 100, 0, 0, 0]);
     }
 }

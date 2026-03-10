@@ -34,14 +34,14 @@
  *
  */
 
-use crate::core::Matrix;
 use crate::core::error::{PureCvError, Result};
-use num_traits::{ToPrimitive, FromPrimitive, NumCast};
+use crate::core::Matrix;
+use num_traits::{FromPrimitive, NumCast, ToPrimitive};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(not(feature = "parallel"))]
 use crate::core::utils::ParIterFallback;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Thresholding types.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,13 +64,13 @@ pub enum ThresholdTypes {
 }
 
 /// Applies a fixed-level threshold to each array element.
-/// 
-/// The function applies fixed-level thresholding to a multiple-channel array. 
-/// The function is typically used to get a bi-level (binary) image out of a 
-/// grayscale image or for removing a noise, that is, filtering out pixels 
-/// with too small or too large values. There are several types of thresholding 
+///
+/// The function applies fixed-level thresholding to a multiple-channel array.
+/// The function is typically used to get a bi-level (binary) image out of a
+/// grayscale image or for removing a noise, that is, filtering out pixels
+/// with too small or too large values. There are several types of thresholding
 /// the function supports. They are determined by type parameter.
-/// 
+///
 /// * `src` - Input matrix.
 /// * `thresh` - Threshold value.
 /// * `maxval` - Maximum value to use with the `BINARY` and `BINARY_INV` thresholding types.
@@ -93,41 +93,72 @@ where
 
     // TODO: Otsu and Triangle implementations will go here
     if (threshold_type as i32 & ThresholdTypes::THRESH_OTSU as i32) != 0 {
-        return Err(PureCvError::InvalidInput("OTSU threshold is not yet implemented".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "OTSU threshold is not yet implemented".to_string(),
+        ));
     }
     if (threshold_type as i32 & ThresholdTypes::THRESH_TRIANGLE as i32) != 0 {
-        return Err(PureCvError::InvalidInput("TRIANGLE threshold is not yet implemented".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "TRIANGLE threshold is not yet implemented".to_string(),
+        ));
     }
 
     let type_val = threshold_type as i32 & 0x7; // Get the base type (0-4)
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.as_mut_slice().par_chunks_mut(cols * channels)
+        dst.data
+            .as_mut_slice()
+            .par_chunks_mut(cols * channels)
             .enumerate()
             .for_each(|(y, row_data)| {
                 for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                     for (c, comp) in pixel.iter_mut().enumerate() {
                         if let Some(src_val) = src.at(y as i32, x as i32, c) {
                             let val_f64 = src_val.to_f64().unwrap_or(0.0);
-                            
+
                             let result = match type_val {
-                                0 => { // BINARY
-                                    if val_f64 > actual_thresh { maxval } else { 0.0 }
-                                },
-                                1 => { // BINARY_INV
-                                    if val_f64 > actual_thresh { 0.0 } else { maxval }
-                                },
-                                2 => { // TRUNC
-                                    if val_f64 > actual_thresh { actual_thresh } else { val_f64 }
-                                },
-                                3 => { // TOZERO
-                                    if val_f64 > actual_thresh { val_f64 } else { 0.0 }
-                                },
-                                4 => { // TOZERO_INV
-                                    if val_f64 > actual_thresh { 0.0 } else { val_f64 }
-                                },
-                                _ => val_f64
+                                0 => {
+                                    // BINARY
+                                    if val_f64 > actual_thresh {
+                                        maxval
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                                1 => {
+                                    // BINARY_INV
+                                    if val_f64 > actual_thresh {
+                                        0.0
+                                    } else {
+                                        maxval
+                                    }
+                                }
+                                2 => {
+                                    // TRUNC
+                                    if val_f64 > actual_thresh {
+                                        actual_thresh
+                                    } else {
+                                        val_f64
+                                    }
+                                }
+                                3 => {
+                                    // TOZERO
+                                    if val_f64 > actual_thresh {
+                                        val_f64
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                                4 => {
+                                    // TOZERO_INV
+                                    if val_f64 > actual_thresh {
+                                        0.0
+                                    } else {
+                                        val_f64
+                                    }
+                                }
+                                _ => val_f64,
                             };
 
                             *comp = T::from_f64(result).unwrap_or_default();
@@ -144,27 +175,53 @@ where
                 for c in 0..channels {
                     if let Some(src_val) = src.at(y as i32, x as i32, c) {
                         let val_f64 = src_val.to_f64().unwrap_or(0.0);
-                        
+
                         let result = match type_val {
-                            0 => { // BINARY
-                                if val_f64 > actual_thresh { maxval } else { 0.0 }
-                            },
-                            1 => { // BINARY_INV
-                                if val_f64 > actual_thresh { 0.0 } else { maxval }
-                            },
-                            2 => { // TRUNC
-                                if val_f64 > actual_thresh { actual_thresh } else { val_f64 }
-                            },
-                            3 => { // TOZERO
-                                if val_f64 > actual_thresh { val_f64 } else { 0.0 }
-                            },
-                            4 => { // TOZERO_INV
-                                if val_f64 > actual_thresh { 0.0 } else { val_f64 }
-                            },
-                            _ => val_f64
+                            0 => {
+                                // BINARY
+                                if val_f64 > actual_thresh {
+                                    maxval
+                                } else {
+                                    0.0
+                                }
+                            }
+                            1 => {
+                                // BINARY_INV
+                                if val_f64 > actual_thresh {
+                                    0.0
+                                } else {
+                                    maxval
+                                }
+                            }
+                            2 => {
+                                // TRUNC
+                                if val_f64 > actual_thresh {
+                                    actual_thresh
+                                } else {
+                                    val_f64
+                                }
+                            }
+                            3 => {
+                                // TOZERO
+                                if val_f64 > actual_thresh {
+                                    val_f64
+                                } else {
+                                    0.0
+                                }
+                            }
+                            4 => {
+                                // TOZERO_INV
+                                if val_f64 > actual_thresh {
+                                    0.0
+                                } else {
+                                    val_f64
+                                }
+                            }
+                            _ => val_f64,
                         };
 
-                        *dst.at_mut(y as i32, x as i32, c).unwrap() = T::from_f64(result).unwrap_or_default();
+                        *dst.at_mut(y as i32, x as i32, c).unwrap() =
+                            T::from_f64(result).unwrap_or_default();
                     }
                 }
             }

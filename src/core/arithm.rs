@@ -34,9 +34,9 @@
  *
  */
 
-use crate::core::Matrix;
 use crate::core::error::{PureCvError, Result};
-use num_traits::{Num, Bounded, ToPrimitive, FromPrimitive};
+use crate::core::Matrix;
+use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
 #[cfg(feature = "parallel")]
@@ -48,7 +48,8 @@ macro_rules! binary_op {
     ($dst:expr, $src1:expr, $src2:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s1:ident, $s2:ident| $body:expr) => {
         #[cfg(feature = "parallel")]
         {
-            $dst.data.par_iter_mut()
+            $dst.data
+                .par_iter_mut()
                 .zip($src1.data.par_iter())
                 .zip($src2.data.par_iter())
                 .for_each(|((d_raw, &s1_raw), &s2_raw)| {
@@ -61,7 +62,8 @@ macro_rules! binary_op {
 
         #[cfg(not(feature = "parallel"))]
         {
-            $dst.data.iter_mut()
+            $dst.data
+                .iter_mut()
                 .zip($src1.data.iter())
                 .zip($src2.data.iter())
                 .for_each(|((d_raw, &s1_raw), &s2_raw)| {
@@ -79,7 +81,8 @@ macro_rules! unary_op {
     ($dst:expr, $src:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s:ident| $body:expr) => {
         #[cfg(feature = "parallel")]
         {
-            $dst.data.par_iter_mut()
+            $dst.data
+                .par_iter_mut()
                 .zip($src.data.par_iter())
                 .for_each(|(d_raw, &s_raw)| {
                     let $d: &mut $t_dst = d_raw;
@@ -90,7 +93,8 @@ macro_rules! unary_op {
 
         #[cfg(not(feature = "parallel"))]
         {
-            $dst.data.iter_mut()
+            $dst.data
+                .iter_mut()
                 .zip($src.data.iter())
                 .for_each(|(d_raw, &s_raw)| {
                     let $d: &mut $t_dst = d_raw;
@@ -109,7 +113,9 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -127,7 +133,9 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -145,12 +153,15 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = if s1 > s2 { s1 - s2 } else { s2 - s1 });
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d =
+        if s1 > s2 { s1 - s2 } else { s2 - s1 });
 
     Ok(dst)
 }
@@ -163,7 +174,9 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -181,7 +194,9 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -205,7 +220,9 @@ where
     T: Copy + Send + Sync + BitAnd<Output = T> + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -223,7 +240,9 @@ where
     T: Copy + Send + Sync + BitOr<Output = T> + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -241,7 +260,9 @@ where
     T: Copy + Send + Sync + BitXor<Output = T> + Default + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -276,18 +297,27 @@ pub fn add_weighted<T>(
     gamma: f64,
 ) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + ToPrimitive
+        + FromPrimitive
+        + Default
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions("Matrices must have the same dimensions".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Matrices must have the same dimensions".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        let val = s1.to_f64().unwrap_or(0.0) * alpha 
-                + s2.to_f64().unwrap_or(0.0) * beta 
-                + gamma;
+        let val = s1.to_f64().unwrap_or(0.0) * alpha + s2.to_f64().unwrap_or(0.0) * beta + gamma;
         *d = T::from_f64(val).unwrap_or(T::zero());
     });
 
@@ -299,7 +329,16 @@ where
 /// dst = sqrt(src)
 pub fn sqrt<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + ToPrimitive
+        + FromPrimitive
+        + Default
+        + 'static,
 {
     let mut dst = Matrix::<T>::new(src.rows, src.cols, src.channels);
 
@@ -316,7 +355,16 @@ where
 /// dst = exp(src)
 pub fn exp<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + ToPrimitive
+        + FromPrimitive
+        + Default
+        + 'static,
 {
     let mut dst = Matrix::<T>::new(src.rows, src.cols, src.channels);
 
@@ -333,7 +381,16 @@ where
 /// dst = log(src)
 pub fn log<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + ToPrimitive
+        + FromPrimitive
+        + Default
+        + 'static,
 {
     let mut dst = Matrix::<T>::new(src.rows, src.cols, src.channels);
 
@@ -350,7 +407,16 @@ where
 /// dst = src^p
 pub fn pow<T>(src: &Matrix<T>, p: f64) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + ToPrimitive
+        + FromPrimitive
+        + Default
+        + 'static,
 {
     let mut dst = Matrix::<T>::new(src.rows, src.cols, src.channels);
 

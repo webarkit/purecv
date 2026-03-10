@@ -34,12 +34,12 @@
  *
  */
 
-use purecv::core::{Matrix, BorderTypes, Size, NormTypes, normalize};
-use purecv::imgproc::{
-    blur, gaussian_blur, median_blur, bilateral_filter,
-    sobel, scharr, laplacian, canny, cvt_color_rgb_to_gray
-};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgb};
+use purecv::core::{normalize, BorderTypes, Matrix, NormTypes, Size};
+use purecv::imgproc::{
+    bilateral_filter, blur, canny, cvt_color_rgb_to_gray, gaussian_blur, laplacian, median_blur,
+    scharr, sobel,
+};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,12 +67,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Blur (Box Filter)
     println!("Applying Blur...");
-    let blurred = blur(&mat_rgb, Size::new(5, 5), purecv::core::Point::new(-1, -1), BorderTypes::REFLECT_101)?;
+    let blurred = blur(
+        &mat_rgb,
+        Size::new(5, 5),
+        purecv::core::Point::new(-1, -1),
+        BorderTypes::REFLECT_101,
+    )?;
     save_matrix_rgb(&blurred, "examples/data/out/output_blur.png")?;
 
     // Gaussian Blur
     println!("Applying Gaussian Blur...");
-    let g_blurred = gaussian_blur(&mat_rgb, Size::new(5, 5), 1.5, 1.5, BorderTypes::REFLECT_101)?;
+    let g_blurred = gaussian_blur(
+        &mat_rgb,
+        Size::new(5, 5),
+        1.5,
+        1.5,
+        BorderTypes::REFLECT_101,
+    )?;
     save_matrix_rgb(&g_blurred, "examples/data/out/output_gaussian_blur.png")?;
 
     // Median Blur
@@ -114,19 +125,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn save_matrix_rgb(mat: &Matrix<u8>, filename: &str) -> image::ImageResult<()> {
-    let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_raw(
-        mat.cols as u32,
-        mat.rows as u32,
-        mat.data.clone()
-    ).expect("Failed to create image buffer");
+    let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(mat.cols as u32, mat.rows as u32, mat.data.clone())
+            .expect("Failed to create image buffer");
     DynamicImage::ImageRgb8(img).save(filename)
 }
 
 fn save_matrix_gray(mat: &Matrix<u8>, filename: &str) -> image::ImageResult<()> {
-    let img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_raw(
-        mat.cols as u32,
-        mat.rows as u32,
-        mat.data.clone()
-    ).expect("Failed to create image buffer");
+    let img: ImageBuffer<Luma<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(mat.cols as u32, mat.rows as u32, mat.data.clone())
+            .expect("Failed to create image buffer");
     DynamicImage::ImageLuma8(img).save(filename)
 }

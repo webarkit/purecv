@@ -123,11 +123,15 @@ where
     T: Copy + Default,
 {
     pub fn new(v0: T, v1: T, v2: T, v3: T) -> Self {
-        Self { v: [v0, v1, v2, v3] }
+        Self {
+            v: [v0, v1, v2, v3],
+        }
     }
 
     pub fn from_value(v: T) -> Self {
-        Self { v: [v, T::default(), T::default(), T::default()] }
+        Self {
+            v: [v, T::default(), T::default(), T::default()],
+        }
     }
 
     pub fn all(v: T) -> Self {

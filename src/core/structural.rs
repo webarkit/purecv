@@ -34,9 +34,9 @@
  *
  */
 
-use crate::core::Matrix;
-use crate::core::types::Scalar;
 use crate::core::error::{PureCvError, Result};
+use crate::core::types::Scalar;
+use crate::core::Matrix;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -57,23 +57,26 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(width_step).enumerate().for_each(|(y, row_dst)| {
-            let y_src = if flip_code <= 0 { src.rows - 1 - y } else { y };
-            let row_src = &src.data[y_src * width_step..(y_src + 1) * width_step];
+        dst.data
+            .par_chunks_mut(width_step)
+            .enumerate()
+            .for_each(|(y, row_dst)| {
+                let y_src = if flip_code <= 0 { src.rows - 1 - y } else { y };
+                let row_src = &src.data[y_src * width_step..(y_src + 1) * width_step];
 
-            if flip_code != 0 {
-                // Horizontal flip (or both)
-                for x in 0..src.cols {
-                    let x_src = src.cols - 1 - x;
-                    for c in 0..channels {
-                        row_dst[x * channels + c] = row_src[x_src * channels + c];
+                if flip_code != 0 {
+                    // Horizontal flip (or both)
+                    for x in 0..src.cols {
+                        let x_src = src.cols - 1 - x;
+                        for c in 0..channels {
+                            row_dst[x * channels + c] = row_src[x_src * channels + c];
+                        }
                     }
+                } else {
+                    // Vertical flip only
+                    row_dst.copy_from_slice(row_src);
                 }
-            } else {
-                // Vertical flip only
-                row_dst.copy_from_slice(row_src);
-            }
-        });
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -109,13 +112,17 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(src.rows * channels).enumerate().for_each(|(x_dst, col_dst)| {
-            for y_dst in 0..src.rows {
-                let src_idx = (y_dst * src.cols + x_dst) * channels;
-                let dst_idx = y_dst * channels;
-                col_dst[dst_idx..(channels + dst_idx)].copy_from_slice(&src.data[src_idx..(channels + src_idx)]);
-            }
-        });
+        dst.data
+            .par_chunks_mut(src.rows * channels)
+            .enumerate()
+            .for_each(|(x_dst, col_dst)| {
+                for y_dst in 0..src.rows {
+                    let src_idx = (y_dst * src.cols + x_dst) * channels;
+                    let dst_idx = y_dst * channels;
+                    col_dst[dst_idx..(channels + dst_idx)]
+                        .copy_from_slice(&src.data[src_idx..(channels + src_idx)]);
+                }
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -180,7 +187,9 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     if src.is_empty() || dst.is_empty() || from_to.is_empty() {
-        return Err(PureCvError::InvalidInput("Input/Output/from_to cannot be empty".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "Input/Output/from_to cannot be empty".to_string(),
+        ));
     }
 
     let rows = src[0].rows;
@@ -189,26 +198,31 @@ where
     // Validate dimensions
     for m in src {
         if m.rows != rows || m.cols != cols {
-            return Err(PureCvError::InvalidDimensions("All source matrices must have the same size".to_string()));
+            return Err(PureCvError::InvalidDimensions(
+                "All source matrices must have the same size".to_string(),
+            ));
         }
     }
     for m in dst.iter() {
         if m.rows != rows || m.cols != cols {
-            return Err(PureCvError::InvalidDimensions("All destination matrices must have the same size".to_string()));
+            return Err(PureCvError::InvalidDimensions(
+                "All destination matrices must have the same size".to_string(),
+            ));
         }
     }
 
     // Helper to find which matrix and channel a global channel index refers to
-    let get_matrix_and_chan = |matrices: &[Matrix<T>], global_idx: usize| -> Option<(usize, usize)> {
-        let mut idx = global_idx;
-        for (m_idx, m) in matrices.iter().enumerate() {
-            if idx < m.channels {
-                return Some((m_idx, idx));
+    let get_matrix_and_chan =
+        |matrices: &[Matrix<T>], global_idx: usize| -> Option<(usize, usize)> {
+            let mut idx = global_idx;
+            for (m_idx, m) in matrices.iter().enumerate() {
+                if idx < m.channels {
+                    return Some((m_idx, idx));
+                }
+                idx -= m.channels;
             }
-            idx -= m.channels;
-        }
-        None
-    };
+            None
+        };
 
     let total_pixels = rows * cols;
 
@@ -226,7 +240,7 @@ where
                     // However, mutating multiple &mut [Matrix] items in parallel is tricky in safe Rust without interior mutability
                     // or splitting the output buffers.
                     // For now, let's process it sequentially per pixel if we can't easily split.
-                    // Actually, a safer parallel approach is to parallelize over pixels AND 
+                    // Actually, a safer parallel approach is to parallelize over pixels AND
                     // ensure we don't have overlapping destination writes in the mapping (OpenCV allows it, but it's UB in Rust).
                 }
             }
@@ -242,7 +256,7 @@ where
                 get_matrix_and_chan(src, f_idx),
                 get_matrix_and_chan(dst, t_idx),
             ) {
-                dst[ds_idx].data[i * dst[ds_idx].channels + dc_idx] = 
+                dst[ds_idx].data[i * dst[ds_idx].channels + dc_idx] =
                     src[fs_idx].data[i * src[fs_idx].channels + fc_idx];
             }
         }
@@ -275,36 +289,55 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(dst_cols * channels).enumerate().for_each(|(y_dst, row_dst)| {
-            for x_dst in 0..dst_cols {
-                let (y_src, is_border_y) = if y_dst < top {
-                    if border_type == 1 { (top - 1 - y_dst, false) } else { (0, true) }
-                } else if y_dst >= top + src.rows {
-                    if border_type == 1 { (src.rows - 1 - (y_dst - (top + src.rows)), false) } else { (0, true) }
-                } else {
-                    (y_dst - top, false)
-                };
+        dst.data
+            .par_chunks_mut(dst_cols * channels)
+            .enumerate()
+            .for_each(|(y_dst, row_dst)| {
+                for x_dst in 0..dst_cols {
+                    let (y_src, is_border_y) = if y_dst < top {
+                        if border_type == 1 {
+                            (top - 1 - y_dst, false)
+                        } else {
+                            (0, true)
+                        }
+                    } else if y_dst >= top + src.rows {
+                        if border_type == 1 {
+                            (src.rows - 1 - (y_dst - (top + src.rows)), false)
+                        } else {
+                            (0, true)
+                        }
+                    } else {
+                        (y_dst - top, false)
+                    };
 
-                let (x_src, is_border_x) = if x_dst < left {
-                    if border_type == 1 { (left - 1 - x_dst, false) } else { (0, true) }
-                } else if x_dst >= left + src.cols {
-                    if border_type == 1 { (src.cols - 1 - (x_dst - (left + src.cols)), false) } else { (0, true) }
-                } else {
-                    (x_dst - left, false)
-                };
+                    let (x_src, is_border_x) = if x_dst < left {
+                        if border_type == 1 {
+                            (left - 1 - x_dst, false)
+                        } else {
+                            (0, true)
+                        }
+                    } else if x_dst >= left + src.cols {
+                        if border_type == 1 {
+                            (src.cols - 1 - (x_dst - (left + src.cols)), false)
+                        } else {
+                            (0, true)
+                        }
+                    } else {
+                        (x_dst - left, false)
+                    };
 
-                if (is_border_x || is_border_y) && border_type == 0 {
-                    for c in 0..channels {
-                        row_dst[x_dst * channels + c] = value.v[c];
-                    }
-                } else {
-                    let src_idx = (y_src * src.cols + x_src) * channels;
-                    for c in 0..channels {
-                        row_dst[x_dst * channels + c] = src.data[src_idx + c];
+                    if (is_border_x || is_border_y) && border_type == 0 {
+                        for c in 0..channels {
+                            row_dst[x_dst * channels + c] = value.v[c];
+                        }
+                    } else {
+                        let src_idx = (y_src * src.cols + x_src) * channels;
+                        for c in 0..channels {
+                            row_dst[x_dst * channels + c] = src.data[src_idx + c];
+                        }
                     }
                 }
-            }
-        });
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -312,17 +345,33 @@ where
         for y_dst in 0..dst_rows {
             for x_dst in 0..dst_cols {
                 let (y_src, is_border_y) = if y_dst < top {
-                    if border_type == 1 { (top - 1 - y_dst, false) } else { (0, true) }
+                    if border_type == 1 {
+                        (top - 1 - y_dst, false)
+                    } else {
+                        (0, true)
+                    }
                 } else if y_dst >= top + src.rows {
-                    if border_type == 1 { (src.rows - 1 - (y_dst - (top + src.rows)), false) } else { (0, true) }
+                    if border_type == 1 {
+                        (src.rows - 1 - (y_dst - (top + src.rows)), false)
+                    } else {
+                        (0, true)
+                    }
                 } else {
                     (y_dst - top, false)
                 };
 
                 let (x_src, is_border_x) = if x_dst < left {
-                    if border_type == 1 { (left - 1 - x_dst, false) } else { (0, true) }
+                    if border_type == 1 {
+                        (left - 1 - x_dst, false)
+                    } else {
+                        (0, true)
+                    }
                 } else if x_dst >= left + src.cols {
-                    if border_type == 1 { (src.cols - 1 - (x_dst - (left + src.cols)), false) } else { (0, true) }
+                    if border_type == 1 {
+                        (src.cols - 1 - (x_dst - (left + src.cols)), false)
+                    } else {
+                        (0, true)
+                    }
                 } else {
                     (x_dst - left, false)
                 };
@@ -350,7 +399,9 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     if mv.is_empty() {
-        return Err(PureCvError::InvalidDimensions("Input vector is empty".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "Input vector is empty".to_string(),
+        ));
     }
 
     let rows = mv[0].rows;
@@ -359,7 +410,9 @@ where
 
     for m in mv {
         if m.rows != rows || m.cols != cols || m.channels != 1 {
-            return Err(PureCvError::InvalidDimensions("All matrices must have the same size and 1 channel".to_string()));
+            return Err(PureCvError::InvalidDimensions(
+                "All matrices must have the same size and 1 channel".to_string(),
+            ));
         }
     }
 
@@ -367,11 +420,14 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(channels).enumerate().for_each(|(i, pixel_dst)| {
-            for c in 0..channels {
-                pixel_dst[c] = mv[c].data[i];
-            }
-        });
+        dst.data
+            .par_chunks_mut(channels)
+            .enumerate()
+            .for_each(|(i, pixel_dst)| {
+                for c in 0..channels {
+                    pixel_dst[c] = mv[c].data[i];
+                }
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -411,7 +467,9 @@ where
             let t = transpose(src)?;
             flip(&t, 0)
         }
-        _ => Err(PureCvError::InvalidDimensions("Invalid rotate_code. Must be 0, 1, or 2".to_string())),
+        _ => Err(PureCvError::InvalidDimensions(
+            "Invalid rotate_code. Must be 0, 1, or 2".to_string(),
+        )),
     }
 }
 
@@ -421,7 +479,9 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     if ny == 0 || nx == 0 {
-        return Err(PureCvError::InvalidDimensions("ny and nx must be > 0".to_string()));
+        return Err(PureCvError::InvalidDimensions(
+            "ny and nx must be > 0".to_string(),
+        ));
     }
 
     let mut dst = Matrix::<T>::new(src.rows * ny, src.cols * nx, src.channels);
@@ -431,14 +491,18 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(dst_width_step).enumerate().for_each(|(y_dst, row_dst)| {
-            let y_src = y_dst % src.rows;
-            let row_src = &src.data[y_src * src_width_step..(y_src + 1) * src_width_step];
+        dst.data
+            .par_chunks_mut(dst_width_step)
+            .enumerate()
+            .for_each(|(y_dst, row_dst)| {
+                let y_src = y_dst % src.rows;
+                let row_src = &src.data[y_src * src_width_step..(y_src + 1) * src_width_step];
 
-            for ix in 0..nx {
-                row_dst[ix * src_width_step..(ix + 1) * src_width_step].copy_from_slice(row_src);
-            }
-        });
+                for ix in 0..nx {
+                    row_dst[ix * src_width_step..(ix + 1) * src_width_step]
+                        .copy_from_slice(row_src);
+                }
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -466,9 +530,13 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     let total_elements = src.rows * src.cols * src.channels;
-    
-    let actual_new_channels = if new_channels == 0 { src.channels } else { new_channels };
-    
+
+    let actual_new_channels = if new_channels == 0 {
+        src.channels
+    } else {
+        new_channels
+    };
+
     if !total_elements.is_multiple_of(actual_new_channels) {
         return Err(PureCvError::InvalidDimensions(format!(
             "Total elements ({}) is not divisible by new_channels ({})",
@@ -500,7 +568,9 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     if src.is_empty() {
-        return Err(PureCvError::InvalidInput("Input array is empty".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "Input array is empty".to_string(),
+        ));
     }
 
     let rows = src[0].rows;
@@ -520,15 +590,18 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        dst.data.par_chunks_mut(total_cols * channels).enumerate().for_each(|(y, row_dst)| {
-            let mut offset = 0;
-            for m in src {
-                let row_width = m.cols * channels;
-                let src_row = &m.data[y * row_width..(y + 1) * row_width];
-                row_dst[offset..offset + row_width].copy_from_slice(src_row);
-                offset += row_width;
-            }
-        });
+        dst.data
+            .par_chunks_mut(total_cols * channels)
+            .enumerate()
+            .for_each(|(y, row_dst)| {
+                let mut offset = 0;
+                for m in src {
+                    let row_width = m.cols * channels;
+                    let src_row = &m.data[y * row_width..(y + 1) * row_width];
+                    row_dst[offset..offset + row_width].copy_from_slice(src_row);
+                    offset += row_width;
+                }
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -556,7 +629,9 @@ where
     T: Copy + Send + Sync + Default + 'static,
 {
     if src.is_empty() {
-        return Err(PureCvError::InvalidInput("Input array is empty".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "Input array is empty".to_string(),
+        ));
     }
 
     let cols = src[0].cols;

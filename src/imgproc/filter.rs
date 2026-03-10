@@ -34,20 +34,20 @@
  *
  */
 
-use crate::core::{Matrix, PureCvError, Size2i, Point2i};
-use crate::core::types::BorderTypes;
 use crate::core::error::Result;
+use crate::core::types::BorderTypes;
 use crate::core::utils::border_interpolate;
+use crate::core::{Matrix, Point2i, PureCvError, Size2i};
+use num_traits::{FromPrimitive, NumCast, ToPrimitive};
 use std::iter::Sum;
-use num_traits::{ToPrimitive, FromPrimitive, NumCast};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 #[cfg(not(feature = "parallel"))]
 use crate::core::utils::ParIterFallback;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Blurs an image using the box filter.
-/// 
+///
 /// * `src` - Input image.
 /// * `ksize` - Blurring kernel size.
 /// * `anchor` - Anchor point; default value Point(-1,-1) means that the anchor is at the kernel center.
@@ -65,7 +65,7 @@ where
 }
 
 /// Blurs an image using the box filter.
-/// 
+///
 /// * `src` - Input image.
 /// * `ksize` - Blurring kernel size.
 /// * `anchor` - Anchor point.
@@ -87,15 +87,24 @@ where
     let rows_i32 = rows as i32;
     let cols_i32 = cols as i32;
 
-    let anchor_x = if anchor.x == -1 { ksize.width / 2 } else { anchor.x };
-    let anchor_y = if anchor.y == -1 { ksize.height / 2 } else { anchor.y };
+    let anchor_x = if anchor.x == -1 {
+        ksize.width / 2
+    } else {
+        anchor.x
+    };
+    let anchor_y = if anchor.y == -1 {
+        ksize.height / 2
+    } else {
+        anchor.y
+    };
 
     // Intermediate buffer as f64 to avoid overflow and precision issues
     let mut temp = Matrix::<f64>::new(rows, cols, channels);
-    
+
     // Horizontal pass
     let temp_data = &mut temp.data;
-    temp_data.par_chunks_mut(cols * channels)
+    temp_data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
@@ -103,7 +112,8 @@ where
                 for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for kx in 0..ksize.width {
-                        let src_x = border_interpolate(x_i32 + kx - anchor_x, cols_i32, border_type);
+                        let src_x =
+                            border_interpolate(x_i32 + kx - anchor_x, cols_i32, border_type);
                         if src_x >= 0 {
                             if let Some(val) = src.at(y as i32, src_x, c) {
                                 sum += val.to_f64().unwrap_or(0.0);
@@ -116,10 +126,15 @@ where
         });
 
     let mut dst = Matrix::<T>::new(rows, cols, channels);
-    let inv_area = if normalize { 1.0 / (ksize.width * ksize.height) as f64 } else { 1.0 };
+    let inv_area = if normalize {
+        1.0 / (ksize.width * ksize.height) as f64
+    } else {
+        1.0
+    };
 
     // Vertical pass
-    dst.data.par_chunks_mut(cols * channels)
+    dst.data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
@@ -127,7 +142,8 @@ where
                 for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
                     for ky in 0..ksize.height {
-                        let src_y = border_interpolate(y_i32 + ky - anchor_y, rows_i32, border_type);
+                        let src_y =
+                            border_interpolate(y_i32 + ky - anchor_y, rows_i32, border_type);
                         if src_y >= 0 {
                             if let Some(&val) = temp.at(src_y, x as i32, c) {
                                 sum += val;
@@ -144,13 +160,15 @@ where
 }
 
 /// Returns Gaussian filter coefficients.
-/// 
+///
 /// * `n` - Kernel size.
 /// * `sigma` - Gaussian standard deviation.
 pub fn get_gaussian_kernel(n: i32, sigma: f64) -> Vec<f64> {
-    if n <= 0 { return vec![]; }
+    if n <= 0 {
+        return vec![];
+    }
     let mut kernel = vec![0.0; n as usize];
-    
+
     // If sigma is <= 0, compute it from n as in OpenCV
     let sigma_x = if sigma <= 0.0 {
         0.3 * ((n as f64 - 1.0) * 0.5 - 1.0) + 0.8
@@ -175,7 +193,7 @@ pub fn get_gaussian_kernel(n: i32, sigma: f64) -> Vec<f64> {
 }
 
 /// Blurs an image using a Gaussian filter.
-/// 
+///
 /// * `src` - Input image.
 /// * `ksize` - Gaussian kernel size. `ksize.width` and `ksize.height` can differ but they both must be positive and odd.
 /// * `sigma1` - Gaussian kernel standard deviation in X direction.
@@ -192,7 +210,9 @@ where
     T: Default + Clone + ToPrimitive + FromPrimitive + NumCast + Copy + Send + Sync,
 {
     if ksize.width % 2 == 0 || ksize.height % 2 == 0 {
-        return Err(PureCvError::InvalidInput("Kernel size must be odd".to_string()));
+        return Err(PureCvError::InvalidInput(
+            "Kernel size must be odd".to_string(),
+        ));
     }
 
     let kx = get_gaussian_kernel(ksize.width, sigma1);
@@ -212,7 +232,8 @@ where
     let mut temp = Matrix::<f64>::new(rows, cols, channels);
     let radius_x = ksize.width / 2;
 
-    temp.data.par_chunks_mut(cols * channels)
+    temp.data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
@@ -237,7 +258,8 @@ where
     let mut dst = Matrix::<T>::new(rows, cols, channels);
     let radius_y = ksize.height / 2;
 
-    dst.data.par_chunks_mut(cols * channels)
+    dst.data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
@@ -258,23 +280,21 @@ where
             }
         });
 
-
     Ok(dst)
 }
 
 /// Blurs an image using the median filter.
-/// 
+///
 /// * `src` - Input matrix.
 /// * `ksize` - Aperture linear size; it must be odd and greater than 1, for example: 3, 5, 7.
-pub fn median_blur<T>(
-    src: &Matrix<T>,
-    ksize: i32,
-) -> Result<Matrix<T>>
+pub fn median_blur<T>(src: &Matrix<T>, ksize: i32) -> Result<Matrix<T>>
 where
     T: Default + Clone + PartialOrd + Send + Sync + Copy + ToPrimitive,
 {
     if ksize % 2 == 0 || ksize <= 1 {
-        return Err(crate::core::error::PureCvError::InvalidInput("Kernel size must be odd and > 1".to_string()));
+        return Err(crate::core::error::PureCvError::InvalidInput(
+            "Kernel size must be odd and > 1".to_string(),
+        ));
     }
 
     let rows = src.rows;
@@ -286,7 +306,8 @@ where
 
     let mut dst = Matrix::<T>::new(rows, cols, channels);
 
-    dst.data.par_chunks_mut(cols * channels)
+    dst.data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
@@ -298,9 +319,17 @@ where
                     neighbors.clear();
                     for ky in 0..ksize {
                         for kx in 0..ksize {
-                            let src_y = border_interpolate(y_i32 + ky - radius, rows_i32, BorderTypes::REFLECT_101);
-                            let src_x = border_interpolate(x_i32 + kx - radius, cols_i32, BorderTypes::REFLECT_101);
-                            
+                            let src_y = border_interpolate(
+                                y_i32 + ky - radius,
+                                rows_i32,
+                                BorderTypes::REFLECT_101,
+                            );
+                            let src_x = border_interpolate(
+                                x_i32 + kx - radius,
+                                cols_i32,
+                                BorderTypes::REFLECT_101,
+                            );
+
                             if let Some(&val) = src.at(src_y, src_x, c) {
                                 neighbors.push(val);
                             }
@@ -318,7 +347,7 @@ where
 }
 
 /// Applies the bilateral filter to an image.
-/// 
+///
 /// * `src` - Source 8-bit or floating-point, 1-channel or 3-channel image.
 /// * `d` - Diameter of each pixel neighborhood that is used during filtering. If it is non-positive, it is computed from sigmaSpace.
 /// * `sigma_color` - Filter sigma in the color space.
@@ -351,15 +380,20 @@ where
     let color_coeff = -1.0 / (2.0 * sigma_color * sigma_color);
     let space_coeff = -1.0 / (2.0 * sigma_space * sigma_space);
 
-    dst.data.par_chunks_mut(cols * channels)
+    dst.data
+        .par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
             for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
-                
+
                 let center_vals: Vec<f64> = (0..channels)
-                    .map(|c| src.at(y as i32, x as i32, c).map(|&v| v.to_f64().unwrap_or(0.0)).unwrap_or(0.0))
+                    .map(|c| {
+                        src.at(y as i32, x as i32, c)
+                            .map(|&v| v.to_f64().unwrap_or(0.0))
+                            .unwrap_or(0.0)
+                    })
                     .collect();
 
                 let mut sums = vec![0.0f64; channels];
@@ -374,16 +408,20 @@ where
                         let mut neighbor_vals = vec![0.0f64; channels];
 
                         for c in 0..channels {
-                            let val = src.at(src_y, src_x, c).map(|&v| v.to_f64().unwrap_or(0.0)).unwrap_or(0.0);
+                            let val = src
+                                .at(src_y, src_x, c)
+                                .map(|&v| v.to_f64().unwrap_or(0.0))
+                                .unwrap_or(0.0);
                             neighbor_vals[c] = val;
                             let diff = val - center_vals[c];
                             color_dist_sq += diff * diff;
                         }
 
                         let space_dist_sq = (ky * ky + kx * kx) as f64;
-                        
-                        let weight = (color_dist_sq * color_coeff + space_dist_sq * space_coeff).exp();
-                        
+
+                        let weight =
+                            (color_dist_sq * color_coeff + space_dist_sq * space_coeff).exp();
+
                         for c in 0..channels {
                             sums[c] += neighbor_vals[c] * weight;
                         }

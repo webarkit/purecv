@@ -85,7 +85,10 @@ impl<T: Default + Clone> Matrix<T> {
     /// Marked as `#[inline]` to ensure zero-cost abstraction in loops.
     #[inline(always)]
     pub fn flat_index(&self, row: usize, col: usize, channel: usize) -> usize {
-        debug_assert!(row < self.rows && col < self.cols && channel < self.channels, "Index out of bounds");
+        debug_assert!(
+            row < self.rows && col < self.cols && channel < self.channels,
+            "Index out of bounds"
+        );
         (row * self.cols * self.channels) + (col * self.channels) + channel
     }
 
@@ -130,7 +133,6 @@ impl<T: Default + Clone> Matrix<T> {
         }
     }
 
-
     /// Returns the underlying buffer as an immutable slice.
     /// Perfect for Rayon's `par_iter()` or sequential iterators.
     #[inline]
@@ -147,21 +149,27 @@ impl<T: Default + Clone> Matrix<T> {
 
     /// Converts the matrix elements to a different type `U`.
     /// Similar to OpenCV's `Mat::convertTo`.
-    /// 
+    ///
     /// Note: This version currently performs basic casting.
     pub fn convert_to<U>(&self) -> Result<Matrix<U>>
     where
         U: Default + Clone + num_traits::NumCast,
         T: num_traits::ToPrimitive + Copy,
     {
-        let out_data: Vec<U> = self.data
+        let out_data: Vec<U> = self
+            .data
             .iter()
             .map(|&x| {
                 U::from(x).ok_or_else(|| PureCvError::InvalidInput("Conversion failed".into()))
             })
             .collect::<Result<Vec<U>>>()?;
 
-        Ok(Matrix::from_vec(self.rows, self.cols, self.channels, out_data))
+        Ok(Matrix::from_vec(
+            self.rows,
+            self.cols,
+            self.channels,
+            out_data,
+        ))
     }
 }
 

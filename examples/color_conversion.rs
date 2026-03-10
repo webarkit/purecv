@@ -43,18 +43,18 @@ fn main() {
     // 1. Create a 3x3 RGB matrix (3 channels)
     // Representing a simple gradient
     let rgb_data = vec![
-        255, 0, 0,   0, 255, 0,   0, 0, 255,
-        128, 128, 0, 0, 128, 128, 128, 0, 128,
-        255, 255, 255, 128, 128, 128, 0, 0, 0
+        255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 0, 0, 128, 128, 128, 0, 128, 255, 255, 255, 128,
+        128, 128, 0, 0, 0,
     ];
     let m_rgb = Matrix::<u8>::from_vec(3, 3, 3, rgb_data);
     println!("Original RGB Matrix (3x3, 3ch):\n{:?}", m_rgb.data);
 
     // 2. Convert to Grayscale
-    let m_gray = cvt_color(&m_rgb, ColorConversionCode::COLOR_RGB2GRAY).expect("Color conversion failed");
-    
+    let m_gray =
+        cvt_color(&m_rgb, ColorConversionCode::COLOR_RGB2GRAY).expect("Color conversion failed");
+
     println!("\nGrayscale Matrix (3x3, 1ch):\n{:?}", m_gray.data);
-    
+
     assert_eq!(m_gray.channels, 1);
     assert_eq!(m_gray.rows, 3);
     assert_eq!(m_gray.cols, 3);

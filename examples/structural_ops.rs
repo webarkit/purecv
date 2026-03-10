@@ -34,17 +34,14 @@
  *
  */
 
+use purecv::core::structural::{copy_make_border, flip, merge, repeat, rotate, split, transpose};
 use purecv::core::{Matrix, Scalar};
-use purecv::core::structural::{flip, transpose, rotate, repeat, copy_make_border, split, merge};
 
 fn main() {
     println!("--- purecv Structural Operations Example ---");
 
     // Start with a 2x3 matrix
-    let m = Matrix::<u8>::from_vec(2, 3, 1, vec![
-        1, 2, 3,
-        4, 5, 6
-    ]);
+    let m = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
     println!("Original Matrix (2x3):\n{:?}", m.data);
 
     // 1. Flip
@@ -68,12 +65,14 @@ fn main() {
     println!("\nConstant Border (white 255):\n{:?}", m_border.data);
 
     // 6. Split/Merge
-    let m_rgb = Matrix::<u8>::from_vec(2, 2, 3, vec![
-        255, 0, 0,   0, 255, 0,
-        0, 0, 255,   255, 255, 255
-    ]);
+    let m_rgb = Matrix::<u8>::from_vec(
+        2,
+        2,
+        3,
+        vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+    );
     println!("\nRGB Matrix (2x2, 3ch):\n{:?}", m_rgb.data);
-    
+
     let planes = split(&m_rgb).unwrap();
     println!("Red plane:   {:?}", planes[0].data);
     println!("Green plane: {:?}", planes[1].data);

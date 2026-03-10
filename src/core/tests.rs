@@ -36,9 +36,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::*;
     use crate::core::types::*;
     use crate::core::utils::*;
+    use crate::core::*;
 
     #[test]
     fn test_point_add() {
@@ -59,7 +59,7 @@ mod tests {
     fn test_matrix_from_size() {
         let sz = crate::core::types::Size2i::new(100, 200);
         let mat: Matrix<u8> = Matrix::from_size(sz, 3);
-        
+
         assert_eq!(mat.cols, 100);
         assert_eq!(mat.rows, 200);
         assert_eq!(mat.channels, 3);
@@ -78,7 +78,7 @@ mod tests {
         let r = Range::new(10, 20);
         assert_eq!(r.size(), 10);
         assert!(!r.empty());
-        
+
         let r_all = crate::core::types::Range::all();
         assert_eq!(r_all.start, i32::MIN);
     }
@@ -105,7 +105,7 @@ mod tests {
 
         let quot = divide(&m1, &m2).unwrap();
         assert_eq!(quot.data, vec![2, 4, 6, 8]);
-        
+
         let abs_diff = absdiff(&m2, &m1).unwrap();
         assert_eq!(abs_diff.data, vec![5, 15, 25, 35]);
     }
@@ -133,7 +133,7 @@ mod tests {
     fn test_weighted() {
         let m1 = Matrix::from_vec(1, 2, 1, vec![100u8, 200u8]);
         let m2 = Matrix::from_vec(1, 2, 1, vec![50u8, 10u8]);
-        
+
         // dst = m1*0.5 + m2*0.1 + 10.0
         let res = add_weighted(&m1, 0.5, &m2, 0.1, 10.0).unwrap();
         assert_eq!(res.data, vec![65, 111]);
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn test_structural() {
         use crate::core::structural::*;
-        
+
         // Flip test
         let m = Matrix::<u8>::from_vec(2, 2, 1, vec![1, 2, 3, 4]);
         let f_v = flip(&m, 0).unwrap(); // vertical
@@ -219,7 +219,8 @@ mod tests {
 
         // copyMakeBorder test
         let m_pad = Matrix::<u8>::from_vec(1, 1, 1, vec![100]);
-        let padded = copy_make_border(&m_pad, 1, 1, 1, 1, 0, crate::core::types::Scalar::all(0)).unwrap();
+        let padded =
+            copy_make_border(&m_pad, 1, 1, 1, 1, 0, crate::core::types::Scalar::all(0)).unwrap();
         assert_eq!(padded.rows, 3);
         assert_eq!(padded.cols, 3);
         assert_eq!(padded.data, vec![0, 0, 0, 0, 100, 0, 0, 0, 0]);
@@ -278,7 +279,7 @@ mod tests {
     fn test_norm_normalize() {
         use crate::core::norm::*;
         let m = Matrix::from_vec(1, 3, 1, vec![1.0f64, 2.0, 3.0]);
-        
+
         // Norms
         assert_eq!(norm(&m, NormTypes::INF), 3.0);
         assert_eq!(norm(&m, NormTypes::L1), 6.0);
@@ -300,7 +301,7 @@ mod tests {
     fn test_stats() {
         use crate::core::stats::*;
         let m = Matrix::from_vec(2, 2, 1, vec![10.0f64, 20.0, 30.0, 40.0]);
-        
+
         // Sum
         let s = sum(&m);
         assert_eq!(s[0], 100.0);
@@ -339,11 +340,7 @@ mod tests {
 
         // eye
         let m_eye = Matrix::<i32>::eye(3, 3, 1);
-        let expected_eye = vec![
-            1, 0, 0,
-            0, 1, 0,
-            0, 0, 1,
-        ];
+        let expected_eye = vec![1, 0, 0, 0, 1, 0, 0, 0, 1];
         assert_eq!(m_eye.data, expected_eye);
 
         // diag
@@ -351,11 +348,7 @@ mod tests {
         let m_diag = Matrix::diag(&diag_vals);
         assert_eq!(m_diag.rows, 3);
         assert_eq!(m_diag.cols, 3);
-        let expected_diag = vec![
-            1.0, 0.0, 0.0,
-            0.0, 2.0, 0.0,
-            0.0, 0.0, 3.0,
-        ];
+        let expected_diag = vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0];
         assert_eq!(m_diag.data, expected_diag);
     }
 }

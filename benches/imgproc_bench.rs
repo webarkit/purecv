@@ -35,32 +35,52 @@
  */
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use purecv::core::{Matrix, Size2i, Point2i};
 use purecv::core::types::BorderTypes;
-use purecv::imgproc::{cvt_color, ColorConversionCode};
+use purecv::core::{Matrix, Point2i, Size2i};
+use purecv::imgproc::derivatives::{scharr, sobel};
 use purecv::imgproc::filter::box_filter;
-use purecv::imgproc::derivatives::{sobel, scharr};
+use purecv::imgproc::{cvt_color, ColorConversionCode};
 
 fn bench_imgproc(c: &mut Criterion) {
     let size = 1024;
-    
+
     // cvt_color_rgb_to_gray benchmark setup
     let img_rgb = Matrix::<u8>::new(size, size, 3);
-    
+
     c.bench_function("cvt_color_rgb2gray_1024x1024", |b| {
         b.iter(|| cvt_color(black_box(&img_rgb), ColorConversionCode::COLOR_RGB2GRAY).unwrap())
     });
 
     // box_filter benchmark setup
     let img_gray = Matrix::<f32>::new(size, size, 1);
-    
+
     c.bench_function("box_filter_3x3_1024x1024", |b| {
-        b.iter(|| box_filter(black_box(&img_gray), Size2i::new(3, 3), Point2i::new(-1, -1), true, BorderTypes::default()).unwrap())
+        b.iter(|| {
+            box_filter(
+                black_box(&img_gray),
+                Size2i::new(3, 3),
+                Point2i::new(-1, -1),
+                true,
+                BorderTypes::default(),
+            )
+            .unwrap()
+        })
     });
 
     // sobel benchmark setup
     c.bench_function("sobel_3x3_1024x1024", |b| {
-        b.iter(|| sobel(black_box(&img_gray), 1, 1, 3, 1.0, 0.0, BorderTypes::default()).unwrap())
+        b.iter(|| {
+            sobel(
+                black_box(&img_gray),
+                1,
+                1,
+                3,
+                1.0,
+                0.0,
+                BorderTypes::default(),
+            )
+            .unwrap()
+        })
     });
 
     // scharr benchmark setup

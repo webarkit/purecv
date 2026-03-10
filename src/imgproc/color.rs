@@ -93,7 +93,8 @@ pub fn cvt_color_rgb_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -108,7 +109,8 @@ pub fn cvt_color_rgb_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -136,7 +138,8 @@ pub fn cvt_color_bgr_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -151,7 +154,8 @@ pub fn cvt_color_bgr_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -179,7 +183,8 @@ pub fn cvt_color_rgba_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -194,7 +199,8 @@ pub fn cvt_color_rgba_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -222,7 +228,8 @@ pub fn cvt_color_bgra_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -237,7 +244,8 @@ pub fn cvt_color_bgra_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -265,7 +273,8 @@ pub fn cvt_color_gray_to_rgb(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -280,7 +289,8 @@ pub fn cvt_color_gray_to_rgb(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -308,7 +318,8 @@ pub fn cvt_color_gray_to_bgr(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -323,7 +334,8 @@ pub fn cvt_color_gray_to_bgr(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -351,7 +363,8 @@ pub fn cvt_color_gray_to_rgba(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -367,7 +380,8 @@ pub fn cvt_color_gray_to_rgba(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -396,7 +410,8 @@ pub fn cvt_color_gray_to_bgra(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(feature = "parallel")]
     {
-        output.data
+        output
+            .data
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
@@ -412,7 +427,8 @@ pub fn cvt_color_gray_to_bgra(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     #[cfg(not(feature = "parallel"))]
     {
-        output.data
+        output
+            .data
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
