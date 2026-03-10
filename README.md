@@ -2,8 +2,6 @@
 
 A high-performance, **pure Rust** computer vision library focusing on the `core` and `imgproc` modules of OpenCV. **PureCV** is built from the ground up to be memory-safe, thread-safe, and highly portable without the overhead of C++ FFI.
 
-[Image of computer vision image processing pipeline]
-
 ## 🎯 Philosophy
 
 Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
@@ -13,10 +11,18 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 * **Modern Parallelism:** Native integration with **Rayon** for effortless multi-core processing.
 * **WASM & Native SIMD:** Optimized for the web and high-performance native architectures using explicit SIMD (via `pulp`).
 
-## 🛠 Project Structure
+## ✨ Features
 
-* `purecv-core`: Foundational structures like `Matrix<T>`, `Point`, and `Scalar`.
-* `purecv-imgproc`: Image processing algorithms (filtering, color conversion, geometric transforms).
+### `purecv-core`
+- **Matrix Operations:** Multi-dimensional `Matrix<T>` with support for common arithmetic (`add`, `sub`, `mul`, `div`) and bitwise logic.
+- **Factory Methods:** Intuitive initialization with `zeros`, `ones`, `eye`, and `diag`.
+- **Structural:** `flip`, `rotate`, `transpose`, `repeat`, `reshape`, `hconcat`, `vconcat`.
+- **Math & Stats:** `sqrt`, `exp`, `log`, `pow`, `sum`, `mean`, `minMaxLoc`, `norm`.
+- **Channel Management:** `split`, `merge`, `mixChannels`.
+
+### `purecv-imgproc`
+- **Color Conversions:** High-performance `cvt_color` supporting RGB, BGR, Gray, and more.
+- **Filtering:** (In Progress) Fast convolutions and image filters.
 
 ## 🚀 Getting Started
 
@@ -27,6 +33,24 @@ Add the following to your `Cargo.toml`:
 ```toml
 [dependencies]
 purecv = { git = "https://github.com/webarkit/purecv" }
+```
+
+### Usage Example
+
+```rust
+use purecv::core::{Matrix, Size, Scalar};
+use purecv::imgproc::{cvt_color, ColorConversionCodes};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a 3-channel matrix initialized to ones
+    let mat = Matrix::<f32>::ones(480, 640, 3);
+    
+    // Create an identity matrix
+    let identity = Matrix::<f32>::eye(3, 3, 1);
+    
+    println!("Matrix size: {}x{}", mat.cols, mat.rows);
+    Ok(())
+}
 ```
 
 ### Running Examples
@@ -43,3 +67,32 @@ cargo run --example structural_ops
 # Color conversion (RGB to Grayscale)
 cargo run --example color_conversion
 ```
+
+## 🧪 Testing & Benchmarking
+
+### Running Tests
+PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV.
+
+```bash
+# Run all tests
+cargo test
+```
+
+### Running Benchmarks
+Performance is a core focus. You can run benchmarks to see the impact of SIMD and multi-threading on your architecture:
+
+```bash
+# Run all benchmarks
+cargo bench
+```
+
+## 🗺 Roadmap
+
+- [x] **Phase 1: Core Foundation** - Matrix types, arithmetic, geometric utilities, and basic structural transforms.
+- [/] **Phase 2: Performance** - SIMD optimizations and benchmarking vs OpenCV C++.
+- [ ] **Phase 3: WebAssembly** - Specialized wrappers and multi-threading for the web.
+- [ ] **Phase 4: Image Processing** - Advanced filtering, convolutions, and feature detection.
+
+## 📄 License
+
+This project is licensed under the LGPL-3.0 License.
