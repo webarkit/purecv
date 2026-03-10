@@ -38,6 +38,7 @@ pub mod color;
 pub mod filter;
 pub mod derivatives;
 pub mod edge;
+pub mod threshold;
 
 #[cfg(test)]
 mod tests;
@@ -53,3 +54,4 @@ pub use color::{
 pub use filter::*;
 pub use derivatives::*;
 pub use edge::*;
+pub use threshold::*;

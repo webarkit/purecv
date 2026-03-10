@@ -231,4 +231,30 @@ mod tests {
         // 0
         assert_eq!(*gray_bgr.at(1, 1, 0).unwrap(), 0);
     }
+
+    #[test]
+    fn test_threshold() {
+        let data = vec![10u8, 50, 100, 150, 200, 250];
+        let src = Matrix::from_vec(1, 6, 1, data);
+
+        // Binary threshold at 127
+        let (_, res) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_BINARY).unwrap();
+        assert_eq!(res.data, vec![0, 0, 0, 255, 255, 255]);
+
+        // Binary Inv threshold at 127
+        let (_, res_inv) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_BINARY_INV).unwrap();
+        assert_eq!(res_inv.data, vec![255, 255, 255, 0, 0, 0]);
+
+        // Truncate at 127
+        let (_, res_trunc) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_TRUNC).unwrap();
+        assert_eq!(res_trunc.data, vec![10, 50, 100, 127, 127, 127]);
+
+        // ToZero at 127
+        let (_, res_zero) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_TOZERO).unwrap();
+        assert_eq!(res_zero.data, vec![0, 0, 0, 150, 200, 250]);
+
+        // ToZero Inv at 127
+        let (_, res_zero_inv) = threshold(&src, 127.0, 255.0, ThresholdTypes::THRESH_TOZERO_INV).unwrap();
+        assert_eq!(res_zero_inv.data, vec![10, 50, 100, 0, 0, 0]);
+    }
 }

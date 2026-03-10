@@ -1,5 +1,9 @@
 # PureCV
 
+![PureCv Banner](./assets/purecv_banner.png)
+
+[![Rust CI](https://github.com/webarkit/purecv/actions/workflows/rust.yml/badge.svg)](https://github.com/webarkit/purecv/actions/workflows/rust.yml)
+
 A high-performance, **pure Rust** computer vision library focusing on the `core` and `imgproc` modules of OpenCV. **PureCV** is built from the ground up to be memory-safe, thread-safe, and highly portable without the overhead of C++ FFI.
 
 ## 🎯 Philosophy
@@ -95,4 +99,4 @@ cargo bench
 
 ## 📄 License
 
-This project is licensed under the LGPL-3.0 License.
+This project is licensed under the LGPL-3.0 License.
