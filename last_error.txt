@@ -1,0 +1,56 @@
+﻿cargo :    Compiling 
+purecv v0.1.0 (D:\kalwa
+lt-github\purecv)
+In riga:1 car:1
++ cargo test --lib 
+core::tests 2>&1 | 
+Out-File -FilePath 
+last_error.txt ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (   Compiling    
+ pu...-github\purec    
+v):String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+error[E0433]: failed 
+to resolve: use of 
+undeclared type `Size2`
+  --> 
+src\core\tests.rs:62:49
+   |
+62 |         let mat: 
+Matrix<u8> = Matrix::fr
+om_size(Size2::new(sz.w
+idth as usize, 
+sz.height as usize), 
+3);
+   |                   
+                       
+       ^^^^^
+   |                   
+                       
+       |
+   |                   
+                       
+       use of 
+undeclared type `Size2`
+   |                   
+                       
+       help: a struct 
+with a similar name 
+exists: `Size`
+
+For more information 
+about this error, try 
+`rustc --explain 
+E0433`.
+error: could not 
+compile `purecv` (lib 
+test) due to 1 
+previous error

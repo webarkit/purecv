@@ -59,7 +59,8 @@ mod tests {
     #[test]
     fn test_matrix_from_size() {
         let sz = Size2i::new(100, 200);
-        let mat: Matrix<u8> = Matrix::from_size(Size::new(sz.width as usize, sz.height as usize), 3);
+        let mat: Matrix<u8> =
+            Matrix::from_size(Size::new(sz.width as usize, sz.height as usize), 3);
 
         assert_eq!(mat.cols, 100);
         assert_eq!(mat.rows, 200);
