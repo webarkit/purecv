@@ -1,5 +1,5 @@
 /*
- *  color_conversion.rs
+ *  imgproc_bench.rs
  *  purecv
  *
  *  This file is part of purecv - OpenCV.
@@ -34,31 +34,40 @@
  *
  */
 
-use purecv::core::Matrix;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use purecv::core::{Matrix, Size2i, Point2i};
+use purecv::core::types::BorderTypes;
 use purecv::imgproc::{cvt_color, ColorConversionCode};
+use purecv::imgproc::filter::box_filter;
+use purecv::imgproc::derivatives::{sobel, scharr};
 
-fn main() {
-    println!("--- purecv Color Conversion Example ---");
-
-    // 1. Create a 3x3 RGB matrix (3 channels)
-    // Representing a simple gradient
-    let rgb_data = vec![
-        255, 0, 0,   0, 255, 0,   0, 0, 255,
-        128, 128, 0, 0, 128, 128, 128, 0, 128,
-        255, 255, 255, 128, 128, 128, 0, 0, 0
-    ];
-    let m_rgb = Matrix::<u8>::from_vec(3, 3, 3, rgb_data);
-    println!("Original RGB Matrix (3x3, 3ch):\n{:?}", m_rgb.data);
-
-    // 2. Convert to Grayscale
-    let m_gray = cvt_color(&m_rgb, ColorConversionCode::COLOR_RGB2GRAY).expect("Color conversion failed");
+fn bench_imgproc(c: &mut Criterion) {
+    let size = 1024;
     
-    println!("\nGrayscale Matrix (3x3, 1ch):\n{:?}", m_gray.data);
+    // cvt_color_rgb_to_gray benchmark setup
+    let img_rgb = Matrix::<u8>::new(size, size, 3);
     
-    assert_eq!(m_gray.channels, 1);
-    assert_eq!(m_gray.rows, 3);
-    assert_eq!(m_gray.cols, 3);
+    c.bench_function("cvt_color_rgb2gray_1024x1024", |b| {
+        b.iter(|| cvt_color(black_box(&img_rgb), ColorConversionCode::COLOR_RGB2GRAY).unwrap())
+    });
 
-    println!("\nConversion successful!");
-    println!("Done.");
+    // box_filter benchmark setup
+    let img_gray = Matrix::<f32>::new(size, size, 1);
+    
+    c.bench_function("box_filter_3x3_1024x1024", |b| {
+        b.iter(|| box_filter(black_box(&img_gray), Size2i::new(3, 3), Point2i::new(-1, -1), true, BorderTypes::default()).unwrap())
+    });
+
+    // sobel benchmark setup
+    c.bench_function("sobel_3x3_1024x1024", |b| {
+        b.iter(|| sobel(black_box(&img_gray), 1, 1, 3, 1.0, 0.0, BorderTypes::default()).unwrap())
+    });
+
+    // scharr benchmark setup
+    c.bench_function("scharr_x_1024x1024", |b| {
+        b.iter(|| scharr(black_box(&img_gray), 1, 0, 1.0, 0.0, BorderTypes::default()).unwrap())
+    });
 }
+
+criterion_group!(benches, bench_imgproc);
+criterion_main!(benches);

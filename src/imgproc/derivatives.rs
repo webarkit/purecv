@@ -38,7 +38,11 @@ use crate::core::{Matrix, BorderTypes};
 use crate::core::error::{Result, PureCvError};
 use crate::core::utils::border_interpolate;
 use num_traits::{ToPrimitive, FromPrimitive, NumCast};
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use crate::core::utils::ParIterFallback;
 
 /// Returns derivative filter coefficients.
 /// 
@@ -110,7 +114,15 @@ where
         return Err(PureCvError::InvalidInput("Invalid derivative order or kernel size".to_string()));
     }
 
-    sep_filter_2d(src, &kx, &ky, scale, delta, border_type)
+    if kx.len() == 3 && ky.len() == 3 {
+        let mut kx_arr = [0.0; 3];
+        let mut ky_arr = [0.0; 3];
+        kx_arr.copy_from_slice(&kx);
+        ky_arr.copy_from_slice(&ky);
+        fast_deriv_3x3(src, kx_arr, ky_arr, scale, delta, border_type)
+    } else {
+        sep_filter_2d(src, &kx, &ky, scale, delta, border_type)
+    }
 }
 
 /// Calculates the first x- or y-image derivative using the Scharr operator.
@@ -195,20 +207,41 @@ where
     let anchor_x = kx_len / 2;
     let anchor_y = ky_len / 2;
 
-    // Horizontal pass
-    let mut temp = Matrix::<f64>::new(rows, cols, channels);
+    // Use f32 for intermediate buffer to halve memory bandwidth vs f64.
+    // Floating point precision is usually sufficient.
+    let mut temp = Matrix::<f32>::new(rows, cols, channels);
     
+    // Horizontal pass
     temp.data.par_chunks_mut(cols * channels)
         .enumerate()
         .for_each(|(y, row_data)| {
+            let row_offset = y * cols * channels;
+            
             for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
                 let x_i32 = x as i32;
+                let is_x_inside = x_i32 >= anchor_x && x_i32 < cols_i32 - (kx_len - anchor_x - 1);
+                
                 for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
-                    for i in 0..kx_len {
-                        let src_x = border_interpolate(x_i32 + i - anchor_x, cols_i32, border_type);
-                        if let Some(val) = src.at(y as i32, src_x, c) {
-                            sum += ToPrimitive::to_f64(val).unwrap_or(0.0) * kx[i as usize];
+                    
+                    if is_x_inside {
+                        // Fast path without boundary checks
+                        let start_x = (x_i32 - anchor_x) as usize;
+                        for i in 0..kx_len {
+                            let src_x = start_x + (i as usize);
+                            let src_idx = row_offset + src_x * channels + c;
+                            let val = ToPrimitive::to_f32(&src.data[src_idx]).unwrap_or(0.0);
+                            sum += val * kx[i as usize] as f32;
+                        }
+                    } else {
+                        // Slow path with boundary checks
+                        for i in 0..kx_len {
+                            let src_x = border_interpolate(x_i32 + i - anchor_x, cols_i32, border_type);
+                            if src_x >= 0 {
+                                let src_idx = row_offset + (src_x as usize) * channels + c;
+                                let val = ToPrimitive::to_f32(&src.data[src_idx]).unwrap_or(0.0);
+                                sum += val * kx[i as usize] as f32;
+                            }
                         }
                     }
                     *comp = sum;
@@ -222,15 +255,122 @@ where
         .enumerate()
         .for_each(|(y, row_data)| {
             let y_i32 = y as i32;
+            let is_y_inside = y_i32 >= anchor_y && y_i32 < rows_i32 - (ky_len - anchor_y - 1);
+            
             for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
+                
                 for (c, comp) in pixel.iter_mut().enumerate() {
                     let mut sum = 0.0;
-                    for i in 0..ky_len {
-                        let src_y = border_interpolate(y_i32 + i - anchor_y, rows_i32, border_type);
-                        if let Some(&val) = temp.at(src_y, x as i32, c) {
-                            sum += val * ky[i as usize];
+                    
+                    if is_y_inside {
+                        // Fast path without boundary checks
+                        let start_y = (y_i32 - anchor_y) as usize;
+                        for i in 0..ky_len {
+                            let src_y = start_y + (i as usize);
+                            let temp_idx = (src_y * cols + x) * channels + c;
+                            sum += temp.data[temp_idx] as f64 * ky[i as usize];
+                        }
+                    } else {
+                        // Slow path with boundary checks
+                        for i in 0..ky_len {
+                            let src_y = border_interpolate(y_i32 + i - anchor_y, rows_i32, border_type);
+                            if src_y >= 0 {
+                                let temp_idx = (src_y as usize * cols + x) * channels + c;
+                                sum += temp.data[temp_idx] as f64 * ky[i as usize];
+                            }
                         }
                     }
+                    
+                    let final_val = sum * scale + delta;
+                    *comp = T::from(final_val).unwrap_or_default();
+                }
+            }
+        });
+
+    Ok(dst)
+}
+
+fn fast_deriv_3x3<T>(
+    src: &Matrix<T>,
+    kx: [f64; 3],
+    ky: [f64; 3],
+    scale: f64,
+    delta: f64,
+    border_type: BorderTypes,
+) -> Result<Matrix<T>>
+where
+    T: Default + Clone + ToPrimitive + FromPrimitive + NumCast + Copy + Send + Sync,
+{
+    let rows = src.rows;
+    let cols = src.cols;
+    let channels = src.channels;
+    let rows_i32 = rows as i32;
+    let cols_i32 = cols as i32;
+
+    let mut dst = Matrix::<T>::new(rows, cols, channels);
+    
+    // Pre-multiply kx and ky to get a 3x3 kernel
+    let mut k2d = [0.0; 9];
+    for y in 0..3 {
+        for x in 0..3 {
+            k2d[y * 3 + x] = ky[y] * kx[x];
+        }
+    }
+
+    dst.data.par_chunks_mut(cols * channels)
+        .enumerate()
+        .for_each(|(y, row_data)| {
+            let y_i32 = y as i32;
+            let is_y_inside = y_i32 >= 1 && y_i32 < rows_i32 - 1;
+            
+            for (x, pixel) in row_data.chunks_exact_mut(channels).enumerate() {
+                let x_i32 = x as i32;
+                let is_x_inside = x_i32 >= 1 && x_i32 < cols_i32 - 1;
+                
+                for (c, comp) in pixel.iter_mut().enumerate() {
+                    let mut sum = 0.0;
+                    
+                    if is_y_inside && is_x_inside {
+                        // Fast path
+                        let row_prev = (y - 1) * cols * channels + c;
+                        let row_curr = y * cols * channels + c;
+                        let row_next = (y + 1) * cols * channels + c;
+                        
+                        let x_prev = (x - 1) * channels;
+                        let x_curr = x * channels;
+                        let x_next = (x + 1) * channels;
+                        
+                        // row y-1
+                        sum += ToPrimitive::to_f64(&src.data[row_prev + x_prev]).unwrap_or(0.0) * k2d[0];
+                        sum += ToPrimitive::to_f64(&src.data[row_prev + x_curr]).unwrap_or(0.0) * k2d[1];
+                        sum += ToPrimitive::to_f64(&src.data[row_prev + x_next]).unwrap_or(0.0) * k2d[2];
+                        
+                        // row y
+                        sum += ToPrimitive::to_f64(&src.data[row_curr + x_prev]).unwrap_or(0.0) * k2d[3];
+                        sum += ToPrimitive::to_f64(&src.data[row_curr + x_curr]).unwrap_or(0.0) * k2d[4];
+                        sum += ToPrimitive::to_f64(&src.data[row_curr + x_next]).unwrap_or(0.0) * k2d[5];
+                        
+                        // row y+1
+                        sum += ToPrimitive::to_f64(&src.data[row_next + x_prev]).unwrap_or(0.0) * k2d[6];
+                        sum += ToPrimitive::to_f64(&src.data[row_next + x_curr]).unwrap_or(0.0) * k2d[7];
+                        sum += ToPrimitive::to_f64(&src.data[row_next + x_next]).unwrap_or(0.0) * k2d[8];
+                    } else {
+                        // Slow path
+                        for ky_idx in 0..3 {
+                            let src_y = border_interpolate(y_i32 + ky_idx - 1, rows_i32, border_type);
+                            if src_y >= 0 {
+                                let y_offset = (src_y as usize) * cols * channels + c;
+                                for kx_idx in 0..3 {
+                                    let src_x = border_interpolate(x_i32 + kx_idx - 1, cols_i32, border_type);
+                                    if src_x >= 0 {
+                                        let val = ToPrimitive::to_f64(&src.data[y_offset + (src_x as usize) * channels]).unwrap_or(0.0);
+                                        sum += val * k2d[(ky_idx * 3 + kx_idx) as usize];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
                     let final_val = sum * scale + delta;
                     *comp = T::from(final_val).unwrap_or_default();
                 }

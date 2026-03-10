@@ -194,4 +194,41 @@ mod tests {
         assert_eq!(*edges.at(5, 7, 0).unwrap(), 255);
         assert_eq!(*edges.at(5, 0, 0).unwrap(), 0);
     }
+
+    #[test]
+    fn test_cvt_color() {
+        let mut data = vec![0u8; 12];
+        // 2x2 RGB image. R,G,B
+        data[0] = 255; // Red
+        data[4] = 255; // Green
+        data[8] = 255; // Blue
+        let rgb_src = Matrix::from_vec(2, 2, 3, data);
+
+        let gray = cvt_color(&rgb_src, ColorConversionCode::COLOR_RGB2GRAY).unwrap();
+        
+        // 0.299 * 255 = 76.245 -> 76
+        assert_eq!(*gray.at(0, 0, 0).unwrap(), 76);
+        // 0.587 * 255 = 149.685 -> 150
+        assert_eq!(*gray.at(0, 1, 0).unwrap(), 150);
+        // 0.114 * 255 = 29.07 -> 29
+        assert_eq!(*gray.at(1, 0, 0).unwrap(), 29);
+        // 0
+        assert_eq!(*gray.at(1, 1, 0).unwrap(), 0);
+
+        let mut bgr_data = vec![0u8; 12];
+        bgr_data[0] = 255; // Blue
+        bgr_data[4] = 255; // Green
+        bgr_data[8] = 255; // Red
+        let bgr_src = Matrix::from_vec(2, 2, 3, bgr_data);
+
+        let gray_bgr = cvt_color(&bgr_src, ColorConversionCode::COLOR_BGR2GRAY).unwrap();
+        // 0.114 * 255 = 29.07 -> 29 (Blue)
+        assert_eq!(*gray_bgr.at(0, 0, 0).unwrap(), 29);
+        // 0.587 * 255 = 149.685 -> 150 (Green)
+        assert_eq!(*gray_bgr.at(0, 1, 0).unwrap(), 150);
+        // 0.299 * 255 = 76.245 -> 76 (Red)
+        assert_eq!(*gray_bgr.at(1, 0, 0).unwrap(), 76);
+        // 0
+        assert_eq!(*gray_bgr.at(1, 1, 0).unwrap(), 0);
+    }
 }

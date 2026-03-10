@@ -131,3 +131,25 @@ pub fn border_interpolate(p: i32, len: i32, border_type: crate::core::types::Bor
     }
 }
 
+/// Fallback trait for seamless compilation when the "parallel" feature is disabled.
+/// This allows `.par_iter()`, `.par_iter_mut()`, and `.par_chunks_mut()` 
+/// to resolve to their sequential standard library equivalents.
+#[cfg(not(feature = "parallel"))]
+pub trait ParIterFallback<'a, T: 'a> {
+    type Iter: Iterator<Item = &'a T>;
+    type IterMut: Iterator<Item = &'a mut T>;
+
+    fn par_iter(&'a self) -> Self::Iter;
+    fn par_iter_mut(&'a mut self) -> Self::IterMut;
+    fn par_chunks_mut(&'a mut self, size: usize) -> std::slice::ChunksMut<'a, T>;
+}
+
+#[cfg(not(feature = "parallel"))]
+impl<'a, T: 'a> ParIterFallback<'a, T> for [T] {
+    type Iter = std::slice::Iter<'a, T>;
+    type IterMut = std::slice::IterMut<'a, T>;
+
+    fn par_iter(&'a self) -> Self::Iter { self.iter() }
+    fn par_iter_mut(&'a mut self) -> Self::IterMut { self.iter_mut() }
+    fn par_chunks_mut(&'a mut self, size: usize) -> std::slice::ChunksMut<'a, T> { self.chunks_mut(size) }
+}

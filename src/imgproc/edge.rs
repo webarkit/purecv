@@ -39,7 +39,11 @@ use crate::core::error::{Result, PureCvError};
 use crate::core::types::BorderTypes;
 use crate::imgproc::derivatives::sobel;
 use num_traits::{ToPrimitive, FromPrimitive, NumCast};
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use crate::core::utils::ParIterFallback;
 
 /// Finds edges in an image using the Canny algorithm.
 /// 

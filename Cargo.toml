@@ -41,6 +41,10 @@ wasm = []
 name = "arithm_bench"
 harness = false
 
+[[bench]]
+name = "imgproc_bench"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

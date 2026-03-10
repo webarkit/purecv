@@ -39,7 +39,11 @@ use crate::core::error::Result;
 use crate::core::utils::border_interpolate;
 use std::iter::Sum;
 use num_traits::{ToPrimitive, FromPrimitive, NumCast};
+
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use crate::core::utils::ParIterFallback;
 
 /// Blurs an image using the box filter.
 /// 
