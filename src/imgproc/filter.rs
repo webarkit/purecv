@@ -34,7 +34,8 @@
  *
  */
 
-use crate::core::{Matrix, Size2i, Point2i, BorderTypes};
+use crate::core::{Matrix, PureCvError, Size2i, Point2i};
+use crate::core::types::BorderTypes;
 use crate::core::error::Result;
 use crate::core::utils::border_interpolate;
 use std::iter::Sum;
@@ -191,7 +192,7 @@ where
     T: Default + Clone + ToPrimitive + FromPrimitive + NumCast + Copy + Send + Sync,
 {
     if ksize.width % 2 == 0 || ksize.height % 2 == 0 {
-        return Err(crate::core::error::PureCvError::InvalidInput("Kernel size must be odd".to_string()));
+        return Err(PureCvError::InvalidInput("Kernel size must be odd".to_string()));
     }
 
     let kx = get_gaussian_kernel(ksize.width, sigma1);

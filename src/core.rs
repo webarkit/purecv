@@ -47,10 +47,16 @@ pub mod error;
 mod tests;
 
 // Re-exports for easier access
-pub use matrix::Matrix;
-pub use types::*;
-pub use utils::*;
-pub use structural::*;
-pub use norm::*;
-pub use stats::*;
-pub use error::{PureCvError, Result};
+pub use self::arithm::{bitwise_and, bitwise_not, bitwise_or, bitwise_xor};
+pub use self::error::{PureCvError, Result};
+pub use self::matrix::Matrix;
+pub use self::norm::{norm, normalize, NormTypes};
+pub use self::stats::{mean, mean_std_dev, min_max_loc, sum};
+pub use self::types::{
+    BorderTypes, Point, Point2d, Point2f, Point2i, Point2l,
+    Point3, Point3d, Point3f, Point3i, Rect, Rect2d, Rect2f, Rect2i, RotatedRect,
+    Scalar, Size, Size2d, Size2f, Size2i, TermCriteria, TermType,
+};
+#[cfg(not(feature = "parallel"))]
+pub use self::utils::ParIterFallback;
+pub use self::utils::border_interpolate;

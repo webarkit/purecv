@@ -41,6 +41,8 @@ use num_traits::{ToPrimitive, FromPrimitive};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(not(feature = "parallel"))]
+use crate::core::utils::ParIterFallback;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(i32)]

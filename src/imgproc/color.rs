@@ -88,7 +88,7 @@ pub fn cvt_color_rgb_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
     }
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 1);
-    let out_row_len = output.cols * 1;
+    let out_row_len = output.cols;
     let in_row_len = input.cols * 3;
 
     #[cfg(feature = "parallel")]
@@ -131,7 +131,7 @@ pub fn cvt_color_bgr_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
     }
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 1);
-    let out_row_len = output.cols * 1;
+    let out_row_len = output.cols;
     let in_row_len = input.cols * 3;
 
     #[cfg(feature = "parallel")]
@@ -174,7 +174,7 @@ pub fn cvt_color_rgba_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
     }
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 1);
-    let out_row_len = output.cols * 1;
+    let out_row_len = output.cols;
     let in_row_len = input.cols * 4;
 
     #[cfg(feature = "parallel")]
@@ -217,7 +217,7 @@ pub fn cvt_color_bgra_to_gray(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
     }
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 1);
-    let out_row_len = output.cols * 1;
+    let out_row_len = output.cols;
     let in_row_len = input.cols * 4;
 
     #[cfg(feature = "parallel")]
@@ -261,7 +261,7 @@ pub fn cvt_color_gray_to_rgb(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 3);
     let out_row_len = output.cols * 3;
-    let in_row_len = input.cols * 1;
+    let in_row_len = input.cols;
 
     #[cfg(feature = "parallel")]
     {
@@ -304,7 +304,7 @@ pub fn cvt_color_gray_to_bgr(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 3);
     let out_row_len = output.cols * 3;
-    let in_row_len = input.cols * 1;
+    let in_row_len = input.cols;
 
     #[cfg(feature = "parallel")]
     {
@@ -347,7 +347,7 @@ pub fn cvt_color_gray_to_rgba(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 4);
     let out_row_len = output.cols * 4;
-    let in_row_len = input.cols * 1;
+    let in_row_len = input.cols;
 
     #[cfg(feature = "parallel")]
     {
@@ -392,7 +392,7 @@ pub fn cvt_color_gray_to_bgra(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
 
     let mut output = Matrix::<u8>::new(input.rows, input.cols, 4);
     let out_row_len = output.cols * 4;
-    let in_row_len = input.cols * 1;
+    let in_row_len = input.cols;
 
     #[cfg(feature = "parallel")]
     {

@@ -35,7 +35,7 @@
  */
 
 use crate::core::Matrix;
-use crate::core::error::{Result, PureCvError};
+use crate::core::error::{PureCvError, Result};
 use crate::core::types::BorderTypes;
 use crate::imgproc::derivatives::sobel;
 use num_traits::{ToPrimitive, FromPrimitive, NumCast};
@@ -101,11 +101,11 @@ where
                 let angle = gy_f.atan2(gx_f) * 180.0 / std::f64::consts::PI;
                 let normalized_angle = if angle < 0.0 { angle + 180.0 } else { angle };
                 
-                if (normalized_angle >= 0.0 && normalized_angle < 22.5) || (normalized_angle >= 157.5 && normalized_angle <= 180.0) {
+                if (0.0..22.5).contains(&normalized_angle) || (157.5..=180.0).contains(&normalized_angle) {
                     *o = 0.0; // Horizontal
-                } else if normalized_angle >= 22.5 && normalized_angle < 67.5 {
+                } else if (22.5..67.5).contains(&normalized_angle) {
                     *o = 1.0; // 45 deg
-                } else if normalized_angle >= 67.5 && normalized_angle < 112.5 {
+                } else if (67.5..112.5).contains(&normalized_angle) {
                     *o = 2.0; // Vertical
                 } else {
                     *o = 3.0; // 135 deg
@@ -168,12 +168,11 @@ where
                 let ny = y as i32 + dy;
                 let nx = x as i32 + dx;
 
-                if ny >= 0 && ny < rows as i32 && nx >= 0 && nx < cols as i32 {
-                    if *suppressed.at(ny, nx, 0).unwrap() == 1 {
-                        dst.set(ny as usize, nx as usize, 0, 255);
-                        suppressed.set(ny as usize, nx as usize, 0, 0);
-                        stack.push((ny as usize, nx as usize));
-                    }
+                if (1..rows as i32 - 1).contains(&ny) && (1..cols as i32 - 1).contains(&nx)
+                    && *suppressed.at(ny, nx, 0).unwrap() == 1 {
+                    dst.set(ny as usize, nx as usize, 0, 255);
+                    suppressed.set(ny as usize, nx as usize, 0, 0);
+                    stack.push((ny as usize, nx as usize));
                 }
             }
         }

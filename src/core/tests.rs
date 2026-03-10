@@ -36,10 +36,9 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::core::*;
     use crate::core::types::*;
     use crate::core::utils::*;
-    use crate::core::Matrix;
-    use crate::core::arithm::*;
 
     #[test]
     fn test_point_add() {
@@ -58,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_matrix_from_size() {
-        let sz = crate::core::Size::new(100usize, 200usize);
+        let sz = crate::core::types::Size2i::new(100, 200);
         let mat: Matrix<u8> = Matrix::from_size(sz, 3);
         
         assert_eq!(mat.cols, 100);
@@ -80,13 +79,13 @@ mod tests {
         assert_eq!(r.size(), 10);
         assert!(!r.empty());
         
-        let r_all = Range::all();
+        let r_all = crate::core::types::Range::all();
         assert_eq!(r_all.start, i32::MIN);
     }
 
     #[test]
     fn test_scalar() {
-        let s = Scalar::<u8>::all(255);
+        let s = crate::core::types::Scalar::<u8>::all(255);
         assert_eq!(s.v, [255, 255, 255, 255]);
     }
 
@@ -220,7 +219,7 @@ mod tests {
 
         // copyMakeBorder test
         let m_pad = Matrix::<u8>::from_vec(1, 1, 1, vec![100]);
-        let padded = copy_make_border(&m_pad, 1, 1, 1, 1, 0, Scalar::all(0)).unwrap();
+        let padded = copy_make_border(&m_pad, 1, 1, 1, 1, 0, crate::core::types::Scalar::all(0)).unwrap();
         assert_eq!(padded.rows, 3);
         assert_eq!(padded.cols, 3);
         assert_eq!(padded.data, vec![0, 0, 0, 0, 100, 0, 0, 0, 0]);

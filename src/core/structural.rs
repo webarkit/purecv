@@ -46,7 +46,7 @@ use rayon::prelude::*;
 /// flip_code:
 ///  0  - vertical (X-axis)
 ///  >0 - horizontal (Y-axis)
-///  <0 - both axes
+/// > <0 - both axes
 pub fn flip<T>(src: &Matrix<T>, flip_code: i32) -> Result<Matrix<T>>
 where
     T: Copy + Send + Sync + Default + 'static,
@@ -113,9 +113,7 @@ where
             for y_dst in 0..src.rows {
                 let src_idx = (y_dst * src.cols + x_dst) * channels;
                 let dst_idx = y_dst * channels;
-                for c in 0..channels {
-                    col_dst[dst_idx + c] = src.data[src_idx + c];
-                }
+                col_dst[dst_idx..(channels + dst_idx)].copy_from_slice(&src.data[src_idx..(channels + src_idx)]);
             }
         });
     }
@@ -151,8 +149,8 @@ where
         let channels = src.channels;
         // Parallelizing over channels might be overkill for small channel counts,
         // but it's consistent. Better to parallelize over pixels if channels are few.
-        for c in 0..channels {
-            let dst_data = &mut mv[c].data;
+        for (c, mat) in mv.iter_mut().enumerate().take(channels) {
+            let dst_data = &mut mat.data;
             dst_data.par_iter_mut().enumerate().for_each(|(i, val)| {
                 *val = src.data[i * channels + c];
             });
@@ -163,8 +161,8 @@ where
     {
         let channels = src.channels;
         for i in 0..src.rows * src.cols {
-            for c in 0..channels {
-                mv[c].data[i] = src.data[i * channels + c];
+            for (c, mat) in mv.iter_mut().enumerate().take(channels) {
+                mat.data[i] = src.data[i * channels + c];
             }
         }
     }
@@ -471,7 +469,7 @@ where
     
     let actual_new_channels = if new_channels == 0 { src.channels } else { new_channels };
     
-    if total_elements % actual_new_channels != 0 {
+    if !total_elements.is_multiple_of(actual_new_channels) {
         return Err(PureCvError::InvalidDimensions(format!(
             "Total elements ({}) is not divisible by new_channels ({})",
             total_elements, actual_new_channels
@@ -481,7 +479,7 @@ where
     let total_pixels = total_elements / actual_new_channels;
     let actual_new_rows = if new_rows == 0 { src.rows } else { new_rows };
 
-    if total_pixels % actual_new_rows != 0 {
+    if !total_pixels.is_multiple_of(actual_new_rows) {
         return Err(PureCvError::InvalidDimensions(format!(
             "Total pixels ({}) is not divisible by new_rows ({})",
             total_pixels, actual_new_rows

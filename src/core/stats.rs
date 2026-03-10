@@ -34,7 +34,8 @@
  *
  */
 
-use crate::core::{Matrix, Point2i};
+use crate::core::Matrix;
+use crate::core::types::Point2i;
 use num_traits::ToPrimitive;
 
 #[cfg(feature = "parallel")]

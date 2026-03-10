@@ -110,7 +110,7 @@ pub type Size2i = Size<i32>;
 pub type Size2f = Size<f32>;
 pub type Size2d = Size<f64>;
 
-//// Scalar represents a 4-element vector.
+/// Scalar represents a 4-element vector.
 ///
 /// It is widely used in OpenCV to pass pixel values and for range checks.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -219,21 +219,16 @@ impl RotatedRect {
 
 /// Various border interpolation methods.
 /// See OpenCV's BorderTypes.
-#[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 #[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BorderTypes {
     CONSTANT = 0,
     REPLICATE = 1,
     REFLECT = 2,
     WRAP = 3,
+    #[default]
     REFLECT_101 = 4,
     TRANSPARENT = 5,
     ISOLATED = 16,
-}
-
-impl Default for BorderTypes {
-    fn default() -> Self {
-        BorderTypes::REFLECT_101
-    }
 }

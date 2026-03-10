@@ -35,7 +35,7 @@
  */
 
 use crate::core::{Matrix, BorderTypes};
-use crate::core::error::{Result, PureCvError};
+use crate::core::error::{PureCvError, Result};
 use crate::core::utils::border_interpolate;
 use num_traits::{ToPrimitive, FromPrimitive, NumCast};
 

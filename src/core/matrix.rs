@@ -33,6 +33,7 @@
  *  Author(s): Walter Perdan @kalwalt https://github.com/kalwalt
  *
  */
+use crate::core::error::{PureCvError, Result};
 
 /// A generic, memory-safe 2D matrix optimized for image processing.
 /// Uses a contiguous row-major memory layout, making it suitable for
@@ -148,7 +149,7 @@ impl<T: Default + Clone> Matrix<T> {
     /// Similar to OpenCV's `Mat::convertTo`.
     /// 
     /// Note: This version currently performs basic casting.
-    pub fn convert_to<U>(&self) -> crate::core::error::Result<Matrix<U>>
+    pub fn convert_to<U>(&self) -> Result<Matrix<U>>
     where
         U: Default + Clone + num_traits::NumCast,
         T: num_traits::ToPrimitive + Copy,
@@ -156,9 +157,9 @@ impl<T: Default + Clone> Matrix<T> {
         let out_data: Vec<U> = self.data
             .iter()
             .map(|&x| {
-                U::from(x).ok_or_else(|| crate::core::error::PureCvError::InvalidInput("Conversion failed".into()))
+                U::from(x).ok_or_else(|| PureCvError::InvalidInput("Conversion failed".into()))
             })
-            .collect::<Result<Vec<U>, _>>()?;
+            .collect::<Result<Vec<U>>>()?;
 
         Ok(Matrix::from_vec(self.rows, self.cols, self.channels, out_data))
     }
@@ -212,8 +213,8 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
     pub fn diag(diagonal: &[T]) -> Self {
         let n = diagonal.len();
         let mut mat = Self::zeros(n, n, 1);
-        for i in 0..n {
-            mat.set(i, i, 0, diagonal[i].clone());
+        for (i, val) in diagonal.iter().enumerate().take(n) {
+            mat.set(i, i, 0, val.clone());
         }
         mat
     }

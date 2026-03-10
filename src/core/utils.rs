@@ -74,7 +74,7 @@ pub fn get_log_level() -> log::LevelFilter {
 /// Returns the index of a pixel that would be at the given position `p`
 /// in a sequence of length `len` if a specified border logic is applied.
 pub fn border_interpolate(p: i32, len: i32, border_type: crate::core::types::BorderTypes) -> i32 {
-    if p >= 0 && (p as i32) < len {
+    if p >= 0 && p < len {
         return p;
     }
 
