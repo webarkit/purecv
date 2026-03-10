@@ -36,6 +36,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::core::arithm::*;
     use crate::core::types::*;
     use crate::core::utils::*;
     use crate::core::*;
@@ -57,8 +58,8 @@ mod tests {
 
     #[test]
     fn test_matrix_from_size() {
-        let sz = crate::core::types::Size2i::new(100, 200);
-        let mat: Matrix<u8> = Matrix::from_size(sz, 3);
+        let sz = Size2i::new(100, 200);
+        let mat: Matrix<u8> = Matrix::from_size(Size::new(sz.width as usize, sz.height as usize), 3);
 
         assert_eq!(mat.cols, 100);
         assert_eq!(mat.rows, 200);
@@ -79,13 +80,13 @@ mod tests {
         assert_eq!(r.size(), 10);
         assert!(!r.empty());
 
-        let r_all = crate::core::types::Range::all();
+        let r_all = Range::all();
         assert_eq!(r_all.start, i32::MIN);
     }
 
     #[test]
     fn test_scalar() {
-        let s = crate::core::types::Scalar::<u8>::all(255);
+        let s = Scalar::<u8>::all(255);
         assert_eq!(s.v, [255, 255, 255, 255]);
     }
 
@@ -259,7 +260,7 @@ mod tests {
         assert!((e.data[1] - std::f32::consts::E).abs() < 1e-6);
 
         let m3 = Matrix::from_vec(1, 2, 1, vec![1.0f32, std::f32::consts::E]);
-        let l = log(&m3).unwrap();
+        let l = crate::core::arithm::log(&m3).unwrap();
         assert!((l.data[0] - 0.0).abs() < 1e-6);
         assert!((l.data[1] - 1.0).abs() < 1e-6);
 
