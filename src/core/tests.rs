@@ -353,4 +353,37 @@ mod tests {
         let expected_diag = vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0];
         assert_eq!(m_diag.data, expected_diag);
     }
+
+    #[test]
+    fn test_mat_type_integration() {
+        // Test DataType trait depth mapping
+        assert_eq!(u8::depth(), Depth::CV_8U);
+        assert_eq!(f32::depth(), Depth::CV_32F);
+
+        // Test Matrix::new_with_type
+        let mat = Matrix::<u8>::new_with_type(10, 20, CV_8UC3);
+        assert_eq!(mat.rows, 10);
+        assert_eq!(mat.cols, 20);
+        assert_eq!(mat.channels, 3);
+        assert_eq!(mat.mat_type(), CV_8UC3);
+
+        // Test Matrix::zeros_with_type
+        let z = Matrix::<f32>::zeros_with_type(5, 5, CV_32FC1);
+        assert_eq!(z.data.len(), 25);
+        assert!(z.data.iter().all(|&v| v == 0.0));
+        assert_eq!(z.mat_type(), CV_32FC1);
+
+        // Test Matrix::ones_with_type
+        let o = Matrix::<i16>::ones_with_type(2, 2, CV_16SC2);
+        assert_eq!(o.data.len(), 8);
+        assert!(o.data.iter().all(|&v| v == 1));
+        assert_eq!(o.mat_type(), CV_16SC2);
+    }
+
+    #[test]
+    #[should_panic(expected = "MatType depth must match matrix element type")]
+    fn test_mat_type_mismatch_panic() {
+        // Should panic if Depth doesn't match T
+        let _ = Matrix::<u8>::new_with_type(10, 10, CV_32FC1);
+    }
 }
