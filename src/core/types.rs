@@ -36,6 +36,17 @@
 
 use std::ops::{Add, Mul, Sub};
 
+pub type Uchar = u8;
+pub type Schar = i8;
+pub type Short = i16;
+pub type Ushort = u16;
+pub type Int = i32;
+pub type Uint = u32;
+pub type Int64 = i64;
+pub type Uint64 = u64;
+pub type Float = f32;
+pub type Double = f64;
+
 /// Template class for 2D points specified by its coordinates `x` and `y`.
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub struct Point<T> {
