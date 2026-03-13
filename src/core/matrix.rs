@@ -34,7 +34,6 @@
  *
  */
 use crate::core::error::{PureCvError, Result};
-use crate::core::types::*;
 
 /// Matrix depth: number of bits per element and its signedness/type.
 /// Follows OpenCV's depth conventions (CV_8U, CV_32F, etc.).
@@ -53,17 +52,11 @@ pub enum Depth {
 
 impl Depth {
     pub fn is_signed(&self) -> bool {
-        match self {
-            Depth::CV_8U | Depth::CV_16U => false,
-            _ => true,
-        }
+        !matches!(self, Depth::CV_8U | Depth::CV_16U)
     }
 
     pub fn is_float(&self) -> bool {
-        match self {
-            Depth::CV_32F | Depth::CV_64F | Depth::CV_16F => true,
-            _ => false,
-        }
+        matches!(self, Depth::CV_32F | Depth::CV_64F | Depth::CV_16F)
     }
 
     pub fn byte_size(&self) -> usize {
