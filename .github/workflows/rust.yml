@@ -2,9 +2,8 @@ name: Rust CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "dev" ]
   pull_request:
-    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,6 +29,9 @@ jobs:
 
     - name: Run tests (with parallel feature)
       run: cargo test --verbose --features parallel
+
+    - name: Run tests (with simd feature)
+      run: cargo test --verbose --features simd
 
     - name: Lint with clippy
       run: cargo clippy -- -D warnings

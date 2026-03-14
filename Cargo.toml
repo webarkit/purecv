@@ -33,6 +33,7 @@ criterion = "0.5"
 default = ["std", "parallel"]
 std = []
 parallel = ["rayon"]
+simd = []
 
 # Feature for WASM specific optimizations
 wasm = []
