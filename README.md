@@ -23,6 +23,7 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Structural:** `flip`, `rotate`, `transpose`, `repeat`, `reshape`, `hconcat`, `vconcat`.
 - **Math & Stats:** `sqrt`, `exp`, `log`, `pow`, `sum`, `mean`, `minMaxLoc`, `norm`.
 - **Channel Management:** `split`, `merge`, `mixChannels`.
+- **ndarray Interop:** Optional, zero-cost conversions to/from `ndarray::Array3` via the `ndarray` feature flag.
 
 ### `purecv-imgproc`
 - **Color Conversions:** High-performance `cvt_color` supporting RGB, BGR, Gray, and more.
@@ -37,6 +38,23 @@ Add the following to your `Cargo.toml`:
 ```toml
 [dependencies]
 purecv = { git = "https://github.com/webarkit/purecv" }
+```
+
+### Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `std` | ✅ | Standard library support |
+| `parallel` | ✅ | Multi-core parallelism via **Rayon** |
+| `ndarray` | ❌ | Interop with the `ndarray` crate (zero-cost views & ownership transfers) |
+| `simd` | ❌ | Explicit SIMD optimizations |
+| `wasm` | ❌ | WebAssembly-specific optimizations |
+
+To enable the `ndarray` feature:
+
+```toml
+[dependencies]
+purecv = { git = "https://github.com/webarkit/purecv", features = ["ndarray"] }
 ```
 
 ### Usage Example
@@ -55,6 +73,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Matrix size: {}x{}", mat.cols, mat.rows);
     Ok(())
 }
+```
+
+### ndarray Interoperability
+
+With the `ndarray` feature enabled, you can convert between `Matrix<T>` and `ndarray::Array3<T>`:
+
+```rust
+use purecv::core::Matrix;
+
+// Matrix → ndarray (zero-cost view)
+let mat = Matrix::<f32>::ones(480, 640, 3);
+let view = mat.as_ndarray_view(); // ArrayView3<f32>, shape (480, 640, 3)
+
+// Matrix → ndarray (ownership transfer)
+let arr = mat.into_ndarray();
+
+// ndarray → Matrix (guarantees contiguous C-order layout for SIMD/WASM)
+let mat2 = Matrix::from_ndarray(arr);
+
+// Also works via the From trait
+let arr2 = ndarray::Array3::<f32>::zeros((100, 100, 3));
+let mat3: Matrix<f32> = Matrix::from(arr2);
 ```
 
 ### Running Examples
