@@ -19,7 +19,8 @@ Thumbs.db
 cpp_ref/opencv
 
 # AI
-.agents/
+.agents/*
+!.agents/instructions.md
 
 # Examples
 examples/data/out/
