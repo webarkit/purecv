@@ -489,7 +489,7 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
 // ──────────────────────────────────────────────────────────────────────────────
 #[cfg(feature = "ndarray")]
 impl<T: Default + Clone> Matrix<T> {
-    /// Returns a zero-cost, immutable 3-D ndarray view (rows × cols × channels)
+    /// Returns a zero-cost, immutable 3D ndarray view (rows × cols × channels)
     /// over the underlying contiguous data buffer.
     ///
     /// # Panics
@@ -499,7 +499,7 @@ impl<T: Default + Clone> Matrix<T> {
             .expect("Matrix data length must equal rows * cols * channels")
     }
 
-    /// Returns a zero-cost, mutable 3-D ndarray view (rows × cols × channels)
+    /// Returns a zero-cost, mutable 3D ndarray view (rows × cols × channels)
     /// over the underlying contiguous data buffer.
     ///
     /// # Panics
@@ -509,7 +509,7 @@ impl<T: Default + Clone> Matrix<T> {
             .expect("Matrix data length must equal rows * cols * channels")
     }
 
-    /// Consumes the `Matrix` and returns an owned 3-D ndarray
+    /// Consumes the `Matrix` and returns an owned 3D ndarray
     /// (rows × cols × channels), transferring ownership of the data buffer.
     ///
     /// # Panics
@@ -519,7 +519,7 @@ impl<T: Default + Clone> Matrix<T> {
             .expect("Matrix data length must equal rows * cols * channels")
     }
 
-    /// Creates a `Matrix` from an owned 3-D ndarray (rows × cols × channels).
+    /// Creates a `Matrix` from an owned 3D ndarray (rows × cols × channels).
     ///
     /// The incoming array is converted to standard (C-contiguous, row-major)
     /// layout before extracting its raw `Vec`, ensuring the flat data buffer
