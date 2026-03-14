@@ -87,14 +87,15 @@ let mat = Matrix::<f32>::ones(480, 640, 3);
 let view = mat.as_ndarray_view(); // ArrayView3<f32>, shape (480, 640, 3)
 
 // Matrix → ndarray (ownership transfer)
-let arr = mat.into_ndarray();
+let mat2 = Matrix::<f32>::ones(480, 640, 3);
+let arr = mat2.into_ndarray();
 
 // ndarray → Matrix (guarantees contiguous C-order layout for SIMD/WASM)
-let mat2 = Matrix::from_ndarray(arr);
+let mat3 = Matrix::from_ndarray(arr);
 
 // Also works via the From trait
 let arr2 = ndarray::Array3::<f32>::zeros((100, 100, 3));
-let mat3: Matrix<f32> = Matrix::from(arr2);
+let mat4: Matrix<f32> = Matrix::from(arr2);
 ```
 
 ### Running Examples
