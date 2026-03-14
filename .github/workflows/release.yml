@@ -1,38 +1,55 @@
-name: Rust CI
+name: Release
 
 on:
   push:
-    branches: [ "main", "dev" ]
-    tags: [ "v*" ]
-  pull_request:
+    tags:
+      - 'v*'
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: write
+  actions: read
+  checks: read
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          fetch-depth: 0 # Fondamentale per far leggere a git-cliff tutta la cronologia
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Wait for CI Benchmarks
+        uses: lewagon/wait-on-check-action@v1.3.1
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'build'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Generate Release Notes
+        id: git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: release_notes.md
 
-      - name: Run tests (with parallel feature)
-        run: cargo test --verbose --features parallel
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: release_notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Optional but recommended: Test the SIMD implementation natively
-      - name: Run tests (with SIMD feature)
-        run: cargo test --verbose --features simd
-
-      - name: Lint with clippy
-        run: cargo clippy -- -D warnings
+  publish-crates:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Publish to Crates.io
+        run: cargo publish --token ${{ secrets.CRATES_TOKEN }} -p purecv
