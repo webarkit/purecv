@@ -14,6 +14,8 @@ categories = ["computer-vision", "science", "wasm"]
 # Parallelism: Essential for matching C++ performance
 rayon = { version="1.10", optional = true}
 
+# ndarray interoperability: optional, for ecosystem compatibility
+ndarray = { version = "0.15", optional = true }
 
 # Math & Linear Algebra: Provide the underlying structure for Mat/Matrix
 # We use this as a dependency if you want to leverage existing BLAS/SIMD optimizations
@@ -33,6 +35,7 @@ criterion = "0.5"
 default = ["std", "parallel"]
 std = []
 parallel = ["rayon"]
+ndarray = ["dep:ndarray"]
 simd = []
 
 # Feature for WASM specific optimizations

@@ -484,6 +484,68 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// ndarray interoperability (behind the "ndarray" feature flag)
+// ──────────────────────────────────────────────────────────────────────────────
+#[cfg(feature = "ndarray")]
+impl<T: Default + Clone> Matrix<T> {
+    /// Returns a zero-cost, immutable 3-D ndarray view (rows × cols × channels)
+    /// over the underlying contiguous data buffer.
+    ///
+    /// # Panics
+    /// Panics if the data length does not match `rows * cols * channels`.
+    pub fn as_ndarray_view(&self) -> ndarray::ArrayView3<'_, T> {
+        ndarray::ArrayView3::from_shape((self.rows, self.cols, self.channels), &self.data)
+            .expect("Matrix data length must equal rows * cols * channels")
+    }
+
+    /// Returns a zero-cost, mutable 3-D ndarray view (rows × cols × channels)
+    /// over the underlying contiguous data buffer.
+    ///
+    /// # Panics
+    /// Panics if the data length does not match `rows * cols * channels`.
+    pub fn as_ndarray_view_mut(&mut self) -> ndarray::ArrayViewMut3<'_, T> {
+        ndarray::ArrayViewMut3::from_shape((self.rows, self.cols, self.channels), &mut self.data)
+            .expect("Matrix data length must equal rows * cols * channels")
+    }
+
+    /// Consumes the `Matrix` and returns an owned 3-D ndarray
+    /// (rows × cols × channels), transferring ownership of the data buffer.
+    ///
+    /// # Panics
+    /// Panics if the internal data length does not match `rows * cols * channels`.
+    pub fn into_ndarray(self) -> ndarray::Array3<T> {
+        ndarray::Array3::from_shape_vec((self.rows, self.cols, self.channels), self.data)
+            .expect("Matrix data length must equal rows * cols * channels")
+    }
+
+    /// Creates a `Matrix` from an owned 3-D ndarray (rows × cols × channels).
+    ///
+    /// The incoming array is converted to standard (C-contiguous, row-major)
+    /// layout before extracting its raw `Vec`, ensuring the flat data buffer
+    /// is always strictly contiguous — a requirement for SIMD/WASM targets.
+    pub fn from_ndarray(arr: ndarray::Array3<T>) -> Self {
+        let shape = arr.shape();
+        let rows = shape[0];
+        let cols = shape[1];
+        let channels = shape[2];
+        let data = arr.as_standard_layout().into_owned().into_raw_vec();
+        Self {
+            rows,
+            cols,
+            channels,
+            data,
+        }
+    }
+}
+
+#[cfg(feature = "ndarray")]
+impl<T: Default + Clone> From<ndarray::Array3<T>> for Matrix<T> {
+    fn from(arr: ndarray::Array3<T>) -> Self {
+        Self::from_ndarray(arr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +589,87 @@ mod tests {
         assert_eq!(mat.cols, 20);
         assert_eq!(mat.channels, 3);
         assert_eq!(mat.data.len(), 10 * 20 * 3);
+    }
+
+    #[cfg(feature = "ndarray")]
+    mod ndarray_tests {
+        use super::*;
+
+        #[test]
+        fn test_as_ndarray_view() {
+            let mat = Matrix::<f32>::from_vec(2, 3, 1, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+            let view = mat.as_ndarray_view();
+            assert_eq!(view.shape(), &[2, 3, 1]);
+            assert_eq!(view[[0, 0, 0]], 1.0);
+            assert_eq!(view[[1, 2, 0]], 6.0);
+        }
+
+        #[test]
+        fn test_as_ndarray_view_mut() {
+            let mut mat = Matrix::<u8>::from_vec(2, 2, 1, vec![1, 2, 3, 4]);
+            {
+                let mut view = mat.as_ndarray_view_mut();
+                view[[0, 1, 0]] = 42;
+            }
+            assert_eq!(*mat.get(0, 1, 0).unwrap(), 42);
+        }
+
+        #[test]
+        fn test_into_ndarray() {
+            let mat = Matrix::<u8>::from_vec(2, 2, 3, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+            let arr = mat.into_ndarray();
+            assert_eq!(arr.shape(), &[2, 2, 3]);
+            assert_eq!(arr[[0, 0, 0]], 1);
+            assert_eq!(arr[[1, 1, 2]], 12);
+        }
+
+        #[test]
+        fn test_from_ndarray() {
+            let arr = ndarray::Array3::<f64>::from_shape_vec(
+                (2, 3, 1),
+                vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            )
+            .unwrap();
+            let mat = Matrix::from_ndarray(arr);
+            assert_eq!(mat.rows, 2);
+            assert_eq!(mat.cols, 3);
+            assert_eq!(mat.channels, 1);
+            assert_eq!(mat.data, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        }
+
+        #[test]
+        fn test_from_trait_ndarray() {
+            let arr =
+                ndarray::Array3::<u8>::from_shape_vec((1, 2, 3), vec![10, 20, 30, 40, 50, 60])
+                    .unwrap();
+            let mat: Matrix<u8> = Matrix::from(arr);
+            assert_eq!(mat.rows, 1);
+            assert_eq!(mat.cols, 2);
+            assert_eq!(mat.channels, 3);
+            assert_eq!(mat.data, vec![10, 20, 30, 40, 50, 60]);
+        }
+
+        #[test]
+        fn test_roundtrip_matrix_to_ndarray_and_back() {
+            let original = Matrix::<f32>::from_vec(3, 4, 2, (0..24).map(|i| i as f32).collect());
+            let arr = original.clone().into_ndarray();
+            let recovered = Matrix::from_ndarray(arr);
+            assert_eq!(original, recovered);
+        }
+
+        #[test]
+        fn test_from_ndarray_non_contiguous() {
+            // Create a transposed (Fortran-order) array to verify
+            // that from_ndarray produces contiguous C-order data.
+            let arr =
+                ndarray::Array3::<u8>::from_shape_vec((2, 3, 1), vec![1, 2, 3, 4, 5, 6]).unwrap();
+            let transposed = arr.reversed_axes(); // now shape (1, 3, 2), Fortran order
+            let mat = Matrix::from_ndarray(transposed.into_owned());
+            assert_eq!(mat.rows, 1);
+            assert_eq!(mat.cols, 3);
+            assert_eq!(mat.channels, 2);
+            // Data must be C-contiguous (row-major)
+            assert_eq!(mat.data.len(), 1 * 3 * 2);
+        }
     }
 }
