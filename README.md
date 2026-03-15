@@ -24,9 +24,13 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Structural:** `flip`, `rotate`, `transpose`, `repeat`, `reshape`, `hconcat`, `vconcat`, `copy_make_border`, `extract_channel`, `insert_channel`.
 - **Math:** `sqrt`, `exp`, `log`, `pow`, `magnitude`, `phase`, `cart_to_polar`, `polar_to_cart`, `convert_scale_abs`.
 - **Stats:** `sum`, `mean`, `mean_std_dev`, `min_max_loc`, `norm`, `normalize`, `count_non_zero`, `reduce`.
-- **Linear Algebra:** `gemm`, `dot`, `cross`, `trace`, `determinant`, `invert`, `solve`, `set_identity`.
+- **Linear Algebra:** `gemm`, `dot`, `cross`, `trace`, `determinant`, `invert`, `solve`, `solve_poly`, `set_identity`.
+- **Sorting:** `sort`, `sort_idx` with configurable row/column and ascending/descending flags.
+- **Clustering:** `kmeans` with random, k-means++, and user-supplied initialization strategies.
+- **Transforms:** `transform` (per-element matrix transformation), `perspective_transform` (projective / homography mapping).
+- **Random Number Generation:** `randu` (uniform distribution), `randn` (normal/Gaussian distribution), `set_rng_seed`.
 - **Channel Management:** `split`, `merge`, `mix_channels`.
-- **Utilities:** `add_weighted`, `check_range`, `absdiff`.
+- **Utilities:** `add_weighted`, `check_range`, `absdiff`, `get_tick_count`, `get_tick_frequency`.
 - **ndarray Interop:** Optional, zero-cost conversions to/from `ndarray::Array3` via the `ndarray` feature flag.
 
 ### `purecv-imgproc`
