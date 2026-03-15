@@ -283,3 +283,27 @@ pub enum ReduceTypes {
     Max = 2,
     Min = 3,
 }
+
+// ---------------------------------------------------------------------------
+// Sort flags  (mirrors cv::SortFlags)
+// ---------------------------------------------------------------------------
+
+/// Sort each row of the matrix (default).
+pub const SORT_EVERY_ROW: i32 = 0;
+/// Sort each column of the matrix.
+pub const SORT_EVERY_COLUMN: i32 = 1;
+/// Sort in ascending order (default).
+pub const SORT_ASCENDING: i32 = 0;
+/// Sort in descending order.
+pub const SORT_DESCENDING: i32 = 16;
+
+// ---------------------------------------------------------------------------
+// K-means flags  (mirrors cv::KmeansFlags)
+// ---------------------------------------------------------------------------
+
+/// Use random initial centers at each attempt.
+pub const KMEANS_RANDOM_CENTERS: i32 = 0;
+/// Use k-means++ center initialization.
+pub const KMEANS_PP_CENTERS: i32 = 2;
+/// Use the user-supplied `labels` as initial cluster assignment.
+pub const KMEANS_USE_INITIAL_LABELS: i32 = 1;

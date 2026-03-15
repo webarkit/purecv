@@ -586,4 +586,83 @@ mod tests {
         assert!((dst.data[1] - 2.0).abs() < 1e-10);
         assert!((dst.data[2] - 3.0).abs() < 1e-10);
     }
+
+    // ---- solvePoly tests ----
+
+    #[test]
+    fn test_solve_poly_cubic() {
+        use crate::core::arithm::solve_poly;
+
+        // (x-1)(x-2)(x-3) = x^3 - 6x^2 + 11x - 6
+        // coeffs = [-6, 11, -6, 1]
+        let coeffs = Matrix::from_vec(1, 4, 1, vec![-6.0, 11.0, -6.0, 1.0]);
+        let mut roots = Matrix::<f64>::new(0, 0, 0);
+        let residual = solve_poly(&coeffs, &mut roots, 0).unwrap();
+        assert!(residual < 1e-6);
+        assert_eq!(roots.rows, 3);
+
+        let mut reals: Vec<f64> = (0..3).map(|k| roots.data[k * 2]).collect();
+        reals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((reals[0] - 1.0).abs() < 1e-6);
+        assert!((reals[1] - 2.0).abs() < 1e-6);
+        assert!((reals[2] - 3.0).abs() < 1e-6);
+    }
+
+    // ---- sort / sortIdx tests ----
+
+    #[test]
+    fn test_sort_integration() {
+        use crate::core::arithm::{sort, sort_idx};
+
+        let src = Matrix::from_vec(2, 3, 1, vec![9i32, 3, 6, 1, 7, 4]);
+        let mut dst = Matrix::<i32>::new(0, 0, 0);
+        sort(&src, &mut dst, 0).unwrap(); // rows ascending
+        assert_eq!(dst.data, vec![3, 6, 9, 1, 4, 7]);
+
+        // sortIdx
+        let mut idx = Matrix::<i32>::new(0, 0, 0);
+        sort_idx(&src, &mut idx, 0).unwrap();
+        // Row 0: [9,3,6] → sorted indices [1,2,0]
+        assert_eq!(&idx.data[0..3], &[1, 2, 0]);
+    }
+
+    // ---- kmeans tests ----
+
+    #[test]
+    fn test_kmeans_multidim() {
+        use crate::core::arithm::kmeans;
+        use crate::core::types::{TermCriteria, TermType, KMEANS_PP_CENTERS};
+
+        // 6 points in 2D: cluster A near (0,0), cluster B near (10,10)
+        let mut data = Matrix::<f32>::new(6, 2, 1);
+        data.data = vec![
+            0.0, 0.0, 0.1, 0.1, 0.2, 0.2, 10.0, 10.0, 10.1, 10.1, 10.2, 10.2,
+        ];
+        let mut labels = Matrix::<i32>::new(0, 0, 0);
+        let criteria = TermCriteria::new(TermType::Both, 100, 1e-6);
+        let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+
+        let comp = kmeans(
+            &data,
+            2,
+            &mut labels,
+            criteria,
+            3,
+            KMEANS_PP_CENTERS,
+            &mut centers,
+        )
+        .unwrap();
+
+        assert!(comp < 1.0);
+        // First 3 should share a label, last 3 another
+        let la = labels.data[0];
+        let lb = labels.data[3];
+        assert_ne!(la, lb);
+        for i in 0..3 {
+            assert_eq!(labels.data[i], la);
+        }
+        for i in 3..6 {
+            assert_eq!(labels.data[i], lb);
+        }
+    }
 }

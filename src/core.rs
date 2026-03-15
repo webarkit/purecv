@@ -48,9 +48,10 @@ mod tests;
 // Re-exports for easier access
 pub use self::arithm::{
     absdiff, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
-    count_non_zero, cross, determinant, dot, gemm, invert, magnitude, mean, mean_std_dev,
+    count_non_zero, cross, determinant, dot, gemm, invert, kmeans, magnitude, mean, mean_std_dev,
     min_max_loc, norm, normalize, perspective_transform, phase, polar_to_cart, reduce,
-    set_identity, solve, sum, trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
+    set_identity, solve, solve_poly, sort, sort_idx, sum, trace, transform, DecompTypes, GEMM_1_T,
+    GEMM_2_T, GEMM_3_T,
 };
 pub use self::error::{PureCvError, Result};
 pub use self::matrix::{
@@ -63,7 +64,8 @@ pub use self::rng::{randn, randu, set_rng_seed};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,
     Point3i, Rect, Rect2d, Rect2f, Rect2i, ReduceTypes, RotatedRect, Scalar, Size, Size2d, Size2f,
-    Size2i, TermCriteria, TermType,
+    Size2i, TermCriteria, TermType, KMEANS_PP_CENTERS, KMEANS_RANDOM_CENTERS,
+    KMEANS_USE_INITIAL_LABELS, SORT_ASCENDING, SORT_DESCENDING, SORT_EVERY_COLUMN, SORT_EVERY_ROW,
 };
 #[cfg(not(feature = "parallel"))]
 pub use self::utils::ParIterFallback;

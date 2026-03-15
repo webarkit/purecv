@@ -2507,6 +2507,685 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+//  solvePoly — find polynomial roots (Durand–Kerner / Aberth companion)
+// ---------------------------------------------------------------------------
+
+/// Finds the real and complex roots of a polynomial equation.
+///
+/// The function `solve_poly` finds the real and complex roots of a polynomial
+/// equation:
+///
+/// `coeffs[n]*x^n + coeffs[n-1]*x^(n-1) + ... + coeffs[1]*x + coeffs[0] = 0`
+///
+/// # Arguments
+/// * `coeffs` - Array of polynomial coefficients (single-channel, N+1 elements).
+///   The leading coefficient (highest degree) is `coeffs[n]`.
+/// * `roots`  - Output (N×1) two-channel matrix where each element stores (real, imag).
+/// * `max_iters` - Maximum number of iterations. If 0, a default of 300 is used.
+///
+/// # Returns
+/// The maximum residual magnitude across all roots.
+///
+/// Mirrors OpenCV's `cv::solvePoly`.
+pub fn solve_poly(coeffs: &Matrix<f64>, roots: &mut Matrix<f64>, max_iters: i32) -> Result<f64> {
+    // Flatten coefficients into a slice
+    let total = coeffs.rows * coeffs.cols * coeffs.channels;
+    if total < 2 {
+        return Err(PureCvError::InvalidInput(
+            "solvePoly requires at least 2 coefficients (degree >= 1)".into(),
+        ));
+    }
+    if coeffs.channels != 1 {
+        return Err(PureCvError::InvalidInput(
+            "solvePoly requires single-channel coefficient matrix".into(),
+        ));
+    }
+
+    let c = &coeffs.data;
+    let n = total - 1; // polynomial degree
+
+    // Normalise so that c[n] == 1 (monic)
+    let lead = c[n];
+    if lead.abs() < f64::EPSILON {
+        return Err(PureCvError::InvalidInput(
+            "Leading coefficient is zero".into(),
+        ));
+    }
+    let a: Vec<f64> = c.iter().map(|&v| v / lead).collect();
+
+    let iters = if max_iters <= 0 {
+        300
+    } else {
+        max_iters as usize
+    };
+
+    // Durand-Kerner initial guesses: z_k = 0.4 + 0.9i)^k
+    let mut zr = Vec::with_capacity(n);
+    let mut zi = Vec::with_capacity(n);
+    {
+        let mut wr = 1.0f64;
+        let mut wi = 0.0f64;
+        let br = 0.4f64;
+        let bi = 0.9f64;
+        for _ in 0..n {
+            zr.push(wr);
+            zi.push(wi);
+            let new_wr = wr * br - wi * bi;
+            let new_wi = wr * bi + wi * br;
+            wr = new_wr;
+            wi = new_wi;
+        }
+    }
+
+    // Durand-Kerner iteration
+    for _ in 0..iters {
+        let mut max_delta = 0.0f64;
+        for k in 0..n {
+            // Evaluate polynomial at z_k  (Horner)
+            let mut pr = a[n]; // = 1.0 (monic)
+            let mut pi = 0.0f64;
+            for j in (0..n).rev() {
+                // (pr + i*pi) * (zr[k] + i*zi[k]) + a[j]
+                let new_pr = pr * zr[k] - pi * zi[k] + a[j];
+                let new_pi = pr * zi[k] + pi * zr[k];
+                pr = new_pr;
+                pi = new_pi;
+            }
+
+            // Compute denominator: product_{j!=k} (z_k - z_j)
+            let mut dr = 1.0f64;
+            let mut di = 0.0f64;
+            for j in 0..n {
+                if j == k {
+                    continue;
+                }
+                let diff_r = zr[k] - zr[j];
+                let diff_i = zi[k] - zi[j];
+                let new_dr = dr * diff_r - di * diff_i;
+                let new_di = dr * diff_i + di * diff_r;
+                dr = new_dr;
+                di = new_di;
+            }
+
+            // delta = p(z_k) / denom
+            let denom = dr * dr + di * di;
+            if denom < f64::EPSILON * f64::EPSILON {
+                continue;
+            }
+            let delta_r = (pr * dr + pi * di) / denom;
+            let delta_i = (pi * dr - pr * di) / denom;
+            zr[k] -= delta_r;
+            zi[k] -= delta_i;
+
+            max_delta = max_delta.max((delta_r * delta_r + delta_i * delta_i).sqrt());
+        }
+        if max_delta < 1e-15 {
+            break;
+        }
+    }
+
+    // Store roots as 2-channel (real, imag)
+    roots.rows = n;
+    roots.cols = 1;
+    roots.channels = 2;
+    roots.data = Vec::with_capacity(n * 2);
+    let mut max_residual = 0.0f64;
+    for k in 0..n {
+        // Snap near-zero imaginary parts
+        let im = if zi[k].abs() < 1e-12 { 0.0 } else { zi[k] };
+        let re = if im == 0.0 && zr[k].abs() < 1e-12 {
+            0.0
+        } else {
+            zr[k]
+        };
+        roots.data.push(re);
+        roots.data.push(im);
+
+        // Residual: |P(z_k)|
+        let mut pr = 1.0f64;
+        let mut pi_val = 0.0f64;
+        for j in (0..n).rev() {
+            let new_pr = pr * re - pi_val * im + a[j];
+            let new_pi = pr * im + pi_val * re;
+            pr = new_pr;
+            pi_val = new_pi;
+        }
+        max_residual = max_residual.max((pr * pr + pi_val * pi_val).sqrt());
+    }
+
+    Ok(max_residual)
+}
+
+// ---------------------------------------------------------------------------
+//  sort / sort_idx
+// ---------------------------------------------------------------------------
+
+/// Sorts each matrix row or each matrix column.
+///
+/// The function sorts each row or column of the input matrix in ascending
+/// or descending order. The matrix must be single-channel.
+///
+/// # Arguments
+/// * `src`   - Input single-channel matrix.
+/// * `dst`   - Output matrix of the same size and type.
+/// * `flags` - Operation flags: a combination of `SORT_EVERY_ROW` /
+///   `SORT_EVERY_COLUMN` and `SORT_ASCENDING` / `SORT_DESCENDING`.
+///
+/// Mirrors OpenCV's `cv::sort`.
+pub fn sort<T>(src: &Matrix<T>, dst: &mut Matrix<T>, flags: i32) -> Result<()>
+where
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + 'static,
+{
+    if src.channels != 1 {
+        return Err(PureCvError::InvalidInput(
+            "sort requires single-channel matrix".into(),
+        ));
+    }
+    dst.rows = src.rows;
+    dst.cols = src.cols;
+    dst.channels = 1;
+    dst.data = src.data.clone();
+
+    let by_column = (flags & 1) != 0;
+    let descending = (flags & 16) != 0;
+
+    if !by_column {
+        // Sort every row
+        for r in 0..dst.rows {
+            let start = r * dst.cols;
+            let end = start + dst.cols;
+            let row = &mut dst.data[start..end];
+            row.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            if descending {
+                row.reverse();
+            }
+        }
+    } else {
+        // Sort every column: extract column, sort, put back
+        for c in 0..dst.cols {
+            let mut col: Vec<T> = (0..dst.rows).map(|r| dst.data[r * dst.cols + c]).collect();
+            col.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            if descending {
+                col.reverse();
+            }
+            for (r, val) in col.iter().enumerate() {
+                dst.data[r * dst.cols + c] = *val;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sorts each matrix row or column and returns the indices.
+///
+/// Similar to `sort`, but instead of rearranging the elements themselves,
+/// it stores the indices of sorted elements in the output matrix.
+///
+/// Mirrors OpenCV's `cv::sortIdx`.
+pub fn sort_idx<T>(src: &Matrix<T>, dst: &mut Matrix<i32>, flags: i32) -> Result<()>
+where
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + 'static,
+{
+    if src.channels != 1 {
+        return Err(PureCvError::InvalidInput(
+            "sortIdx requires single-channel matrix".into(),
+        ));
+    }
+    dst.rows = src.rows;
+    dst.cols = src.cols;
+    dst.channels = 1;
+    dst.data = vec![0i32; src.rows * src.cols];
+
+    let by_column = (flags & 1) != 0;
+    let descending = (flags & 16) != 0;
+
+    if !by_column {
+        for r in 0..src.rows {
+            let start = r * src.cols;
+            let mut indices: Vec<usize> = (0..src.cols).collect();
+            indices.sort_by(|&a, &b| {
+                src.data[start + a]
+                    .partial_cmp(&src.data[start + b])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if descending {
+                indices.reverse();
+            }
+            for (i, &idx) in indices.iter().enumerate() {
+                dst.data[start + i] = idx as i32;
+            }
+        }
+    } else {
+        for c in 0..src.cols {
+            let mut indices: Vec<usize> = (0..src.rows).collect();
+            indices.sort_by(|&a, &b| {
+                src.data[a * src.cols + c]
+                    .partial_cmp(&src.data[b * src.cols + c])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if descending {
+                indices.reverse();
+            }
+            for (r, &idx) in indices.iter().enumerate() {
+                dst.data[r * src.cols + c] = idx as i32;
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+//  kmeans
+// ---------------------------------------------------------------------------
+
+/// Finds centers of clusters and groups input samples around the clusters.
+///
+/// The function implements the k-means clustering algorithm. It returns the
+/// compactness measure (the sum of squared distances from each point to its
+/// cluster center).
+///
+/// # Arguments
+/// * `data`        - Floating-point matrix of input samples, one row per sample.
+/// * `k`           - Number of clusters.
+/// * `best_labels` - Output integer array storing the cluster index for each sample.
+/// * `criteria`    - Termination criteria (`TermCriteria`).
+/// * `attempts`    - Number of times the algorithm is executed using different
+///   initial labellings; the best result (lowest compactness) is kept.
+/// * `flags`       - Initialization flags: `KMEANS_RANDOM_CENTERS`,
+///   `KMEANS_PP_CENTERS`, or `KMEANS_USE_INITIAL_LABELS`.
+/// * `centers`     - Optional output matrix of cluster centers.
+///
+/// # Returns
+/// The compactness of the best clustering.
+///
+/// Mirrors OpenCV's `cv::kmeans`.
+pub fn kmeans(
+    data: &Matrix<f32>,
+    k: i32,
+    best_labels: &mut Matrix<i32>,
+    criteria: crate::core::types::TermCriteria,
+    attempts: i32,
+    flags: i32,
+    centers: &mut Option<Matrix<f32>>,
+) -> Result<f64> {
+    use crate::core::types::{TermType, KMEANS_PP_CENTERS, KMEANS_USE_INITIAL_LABELS};
+
+    let n = data.rows; // number of samples
+    let dims = data.cols * data.channels; // dimensionality
+
+    if k <= 0 || (k as usize) > n {
+        return Err(PureCvError::InvalidInput(format!(
+            "k ({}) must be in [1, {}]",
+            k, n
+        )));
+    }
+    let k = k as usize;
+
+    let max_iter = if criteria.max_count > 0 {
+        criteria.max_count as usize
+    } else {
+        100
+    };
+    let eps = if criteria.epsilon > 0.0 {
+        criteria.epsilon
+    } else {
+        1e-6
+    };
+    let check_eps = matches!(criteria.type_, TermType::Eps | TermType::Both);
+    let check_count = matches!(criteria.type_, TermType::Count | TermType::Both);
+
+    let attempts = if attempts < 1 { 1 } else { attempts as usize };
+    let use_initial = (flags & KMEANS_USE_INITIAL_LABELS) != 0;
+    let pp_centers = (flags & KMEANS_PP_CENTERS) != 0;
+
+    // Flatten data to f64 for computation
+    let samples: Vec<f64> = data.data.iter().map(|&v| v as f64).collect();
+
+    let mut best_compactness = f64::MAX;
+    let mut best_lab: Vec<i32> = vec![0; n];
+    let mut best_ctr: Vec<f64> = vec![0.0; k * dims];
+
+    // Use the RNG from crate::core::rng
+    // We use a simple thread-local seeded approach via the existing PRNG.
+    // For each attempt we re-seed to get different initial centers.
+
+    for attempt in 0..attempts {
+        // ---- Initialise labels/centers ----
+        let mut labels: Vec<i32> = vec![0; n];
+        let mut ctr = vec![0.0f64; k * dims]; // k × dims
+
+        if use_initial && attempt == 0 {
+            // Use user-supplied labels (first attempt only)
+            if best_labels.data.len() == n {
+                labels.copy_from_slice(&best_labels.data);
+                // Clamp to valid range
+                for l in labels.iter_mut() {
+                    if *l < 0 || (*l as usize) >= k {
+                        *l = 0;
+                    }
+                }
+            }
+            // Compute centers from labels
+            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
+        } else if pp_centers {
+            kmeans_pp_init(&samples, &mut ctr, n, dims, k, attempt as u64);
+            // Assign labels from centers
+            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
+        } else {
+            // Random centers: pick k distinct sample indices
+            kmeans_random_init(&samples, &mut ctr, n, dims, k, attempt as u64);
+            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
+        }
+
+        // ---- Lloyd iterations ----
+        for iter in 0..max_iter {
+            let old_ctr = ctr.clone();
+
+            // Update centers
+            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
+
+            // Handle empty clusters: steal farthest point from largest cluster
+            kmeans_handle_empty(&samples, &mut labels, &mut ctr, n, dims, k);
+
+            // Re-assign
+            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
+
+            // Check convergence (max center movement)
+            if check_eps {
+                let mut max_shift = 0.0f64;
+                for i in 0..k * dims {
+                    let d = ctr[i] - old_ctr[i];
+                    max_shift = max_shift.max(d * d);
+                }
+                if max_shift.sqrt() < eps {
+                    break;
+                }
+            }
+            if check_count && iter + 1 >= max_iter {
+                break;
+            }
+        }
+
+        // Compute compactness
+        let compactness = kmeans_compactness(&samples, &ctr, &labels, n, dims);
+
+        if compactness < best_compactness {
+            best_compactness = compactness;
+            best_lab.copy_from_slice(&labels);
+            best_ctr.copy_from_slice(&ctr);
+        }
+    }
+
+    // Write outputs
+    best_labels.rows = n;
+    best_labels.cols = 1;
+    best_labels.channels = 1;
+    best_labels.data = best_lab;
+
+    if let Some(ref mut c) = centers {
+        c.rows = k;
+        c.cols = data.cols;
+        c.channels = data.channels;
+        c.data = best_ctr.iter().map(|&v| v as f32).collect();
+    }
+
+    Ok(best_compactness)
+}
+
+/// Assign each sample to its nearest center.
+fn kmeans_assign(
+    samples: &[f64],
+    centers: &[f64],
+    labels: &mut [i32],
+    n: usize,
+    dims: usize,
+    k: usize,
+) {
+    for i in 0..n {
+        let s = &samples[i * dims..(i + 1) * dims];
+        let mut best_dist = f64::MAX;
+        let mut best_k = 0usize;
+        for j in 0..k {
+            let c = &centers[j * dims..(j + 1) * dims];
+            let mut dist = 0.0f64;
+            for d in 0..dims {
+                let diff = s[d] - c[d];
+                dist += diff * diff;
+            }
+            if dist < best_dist {
+                best_dist = dist;
+                best_k = j;
+            }
+        }
+        labels[i] = best_k as i32;
+    }
+}
+
+/// Compute cluster centers from current labels.
+fn kmeans_compute_centers(
+    samples: &[f64],
+    labels: &[i32],
+    centers: &mut [f64],
+    n: usize,
+    dims: usize,
+    k: usize,
+) {
+    centers.iter_mut().for_each(|v| *v = 0.0);
+    let mut counts = vec![0usize; k];
+    for i in 0..n {
+        let lbl = labels[i] as usize;
+        counts[lbl] += 1;
+        let s = &samples[i * dims..(i + 1) * dims];
+        let c = &mut centers[lbl * dims..(lbl + 1) * dims];
+        for d in 0..dims {
+            c[d] += s[d];
+        }
+    }
+    for j in 0..k {
+        if counts[j] > 0 {
+            let c = &mut centers[j * dims..(j + 1) * dims];
+            let cnt = counts[j] as f64;
+            for val in c.iter_mut().take(dims) {
+                *val /= cnt;
+            }
+        }
+    }
+}
+
+/// Handle empty clusters by stealing the farthest point from the largest cluster.
+fn kmeans_handle_empty(
+    samples: &[f64],
+    labels: &mut [i32],
+    centers: &mut [f64],
+    n: usize,
+    dims: usize,
+    k: usize,
+) {
+    let mut counts = vec![0usize; k];
+    for l in labels.iter() {
+        counts[*l as usize] += 1;
+    }
+
+    for j in 0..k {
+        if counts[j] == 0 {
+            // Find the largest cluster
+            let largest = counts
+                .iter()
+                .enumerate()
+                .max_by_key(|&(_, &c)| c)
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+
+            // Find farthest point in largest cluster from its center
+            let mut farthest_idx = 0usize;
+            let mut farthest_dist = 0.0f64;
+            for i in 0..n {
+                if labels[i] as usize != largest {
+                    continue;
+                }
+                let s = &samples[i * dims..(i + 1) * dims];
+                let c = &centers[largest * dims..(largest + 1) * dims];
+                let mut dist = 0.0f64;
+                for d in 0..dims {
+                    let diff = s[d] - c[d];
+                    dist += diff * diff;
+                }
+                if dist > farthest_dist {
+                    farthest_dist = dist;
+                    farthest_idx = i;
+                }
+            }
+
+            // Move that sample to the empty cluster
+            labels[farthest_idx] = j as i32;
+            counts[j] += 1;
+            counts[largest] -= 1;
+
+            // Copy sample as new center
+            let s = &samples[farthest_idx * dims..(farthest_idx + 1) * dims];
+            centers[j * dims..(j + 1) * dims].copy_from_slice(s);
+
+            // Recompute largest cluster center
+            kmeans_compute_centers_single(samples, labels, centers, n, dims, largest);
+        }
+    }
+}
+
+/// Recompute a single cluster center.
+fn kmeans_compute_centers_single(
+    samples: &[f64],
+    labels: &[i32],
+    centers: &mut [f64],
+    n: usize,
+    dims: usize,
+    cluster: usize,
+) {
+    let c = &mut centers[cluster * dims..(cluster + 1) * dims];
+    c.iter_mut().for_each(|v| *v = 0.0);
+    let mut cnt = 0usize;
+    for i in 0..n {
+        if labels[i] as usize == cluster {
+            cnt += 1;
+            let s = &samples[i * dims..(i + 1) * dims];
+            for d in 0..dims {
+                c[d] += s[d];
+            }
+        }
+    }
+    if cnt > 0 {
+        let cnt_f = cnt as f64;
+        for v in c.iter_mut() {
+            *v /= cnt_f;
+        }
+    }
+}
+
+/// Compute compactness (sum of squared distances to assigned centers).
+fn kmeans_compactness(
+    samples: &[f64],
+    centers: &[f64],
+    labels: &[i32],
+    n: usize,
+    dims: usize,
+) -> f64 {
+    let mut sum = 0.0f64;
+    for i in 0..n {
+        let lbl = labels[i] as usize;
+        let s = &samples[i * dims..(i + 1) * dims];
+        let c = &centers[lbl * dims..(lbl + 1) * dims];
+        for d in 0..dims {
+            let diff = s[d] - c[d];
+            sum += diff * diff;
+        }
+    }
+    sum
+}
+
+/// Random center initialization: pick k distinct sample indices.
+fn kmeans_random_init(
+    samples: &[f64],
+    centers: &mut [f64],
+    n: usize,
+    dims: usize,
+    k: usize,
+    seed: u64,
+) {
+    // Simple Fisher-Yates-style selection using a basic LCG
+    let mut rng_state: u64 = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let mut indices: Vec<usize> = (0..n).collect();
+    for i in 0..k {
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let j = i + (rng_state as usize % (n - i));
+        indices.swap(i, j);
+        let idx = indices[i];
+        centers[i * dims..(i + 1) * dims].copy_from_slice(&samples[idx * dims..(idx + 1) * dims]);
+    }
+}
+
+/// K-means++ center initialization.
+fn kmeans_pp_init(
+    samples: &[f64],
+    centers: &mut [f64],
+    n: usize,
+    dims: usize,
+    k: usize,
+    seed: u64,
+) {
+    let mut rng_state: u64 = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+
+    // Pick first center uniformly at random
+    rng_state = rng_state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let first = rng_state as usize % n;
+    centers[0..dims].copy_from_slice(&samples[first * dims..(first + 1) * dims]);
+
+    let mut min_dists = vec![f64::MAX; n];
+
+    for c_idx in 1..k {
+        // Update min distances to the latest center
+        let prev = c_idx - 1;
+        let prev_center = &centers[prev * dims..(prev + 1) * dims];
+        let mut total_dist = 0.0f64;
+        for i in 0..n {
+            let s = &samples[i * dims..(i + 1) * dims];
+            let mut dist = 0.0f64;
+            for d in 0..dims {
+                let diff = s[d] - prev_center[d];
+                dist += diff * diff;
+            }
+            if dist < min_dists[i] {
+                min_dists[i] = dist;
+            }
+            total_dist += min_dists[i];
+        }
+
+        // Weighted random selection proportional to D²
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let threshold = (rng_state as f64 / u64::MAX as f64) * total_dist;
+        let mut cumulative = 0.0f64;
+        let mut chosen = 0usize;
+        for (i, &d) in min_dists.iter().enumerate().take(n) {
+            cumulative += d;
+            if cumulative >= threshold {
+                chosen = i;
+                break;
+            }
+        }
+        centers[c_idx * dims..(c_idx + 1) * dims]
+            .copy_from_slice(&samples[chosen * dims..(chosen + 1) * dims]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2686,5 +3365,129 @@ mod tests {
         in_range_scalar(&src, &[10, 10, 10], &[50, 50, 50], &mut mask).unwrap();
         assert_eq!(mask.channels, 1);
         assert_eq!(mask.data, vec![255, 0, 0]);
+    }
+
+    #[test]
+    fn test_solve_poly_quadratic_real() {
+        // x^2 - 1 = 0  → roots {-1, 1}
+        // coeffs = [-1, 0, 1]  (c0=-1, c1=0, c2=1)
+        let coeffs = Matrix::from_vec(1, 3, 1, vec![-1.0, 0.0, 1.0]);
+        let mut roots = Matrix::<f64>::new(0, 0, 0);
+        let residual = solve_poly(&coeffs, &mut roots, 300).unwrap();
+        assert!(residual < 1e-6, "residual too large: {}", residual);
+
+        assert_eq!(roots.rows, 2);
+        assert_eq!(roots.channels, 2);
+
+        // Collect real parts (imag should be ~0)
+        let mut reals: Vec<f64> = Vec::new();
+        for k in 0..roots.rows {
+            assert!(
+                roots.data[k * 2 + 1].abs() < 1e-6,
+                "unexpected imaginary part"
+            );
+            reals.push(roots.data[k * 2]);
+        }
+        reals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((reals[0] - (-1.0)).abs() < 1e-6);
+        assert!((reals[1] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_solve_poly_quadratic_complex() {
+        // x^2 + 1 = 0  → roots {i, -i}
+        let coeffs = Matrix::from_vec(1, 3, 1, vec![1.0, 0.0, 1.0]);
+        let mut roots = Matrix::<f64>::new(0, 0, 0);
+        solve_poly(&coeffs, &mut roots, 300).unwrap();
+
+        assert_eq!(roots.rows, 2);
+        // Both roots should have real part ~0, imag part ~±1
+        for k in 0..2 {
+            let re = roots.data[k * 2];
+            let im = roots.data[k * 2 + 1];
+            assert!(re.abs() < 1e-6, "real part should be ~0, got {}", re);
+            assert!(
+                (im.abs() - 1.0).abs() < 1e-6,
+                "imag part should be ~±1, got {}",
+                im
+            );
+        }
+    }
+
+    #[test]
+    fn test_sort_row_ascending() {
+        let src = Matrix::from_vec(2, 3, 1, vec![3.0f32, 1.0, 2.0, 6.0, 4.0, 5.0]);
+        let mut dst = Matrix::<f32>::new(0, 0, 0);
+        sort(&src, &mut dst, 0).unwrap(); // SORT_EVERY_ROW | SORT_ASCENDING
+        assert_eq!(dst.data, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_sort_row_descending() {
+        let src = Matrix::from_vec(2, 3, 1, vec![3.0f32, 1.0, 2.0, 6.0, 4.0, 5.0]);
+        let mut dst = Matrix::<f32>::new(0, 0, 0);
+        sort(&src, &mut dst, 16).unwrap(); // SORT_EVERY_ROW | SORT_DESCENDING
+        assert_eq!(dst.data, vec![3.0, 2.0, 1.0, 6.0, 5.0, 4.0]);
+    }
+
+    #[test]
+    fn test_sort_column_ascending() {
+        let src = Matrix::from_vec(3, 2, 1, vec![3.0f32, 6.0, 1.0, 4.0, 2.0, 5.0]);
+        let mut dst = Matrix::<f32>::new(0, 0, 0);
+        sort(&src, &mut dst, 1).unwrap(); // SORT_EVERY_COLUMN | SORT_ASCENDING
+        assert_eq!(dst.data, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn test_sort_idx_row() {
+        let src = Matrix::from_vec(1, 4, 1, vec![30.0f32, 10.0, 40.0, 20.0]);
+        let mut dst = Matrix::<i32>::new(0, 0, 0);
+        sort_idx(&src, &mut dst, 0).unwrap(); // ascending by row
+        assert_eq!(dst.data, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn test_kmeans_two_clusters() {
+        use crate::core::types::{TermCriteria, TermType, KMEANS_PP_CENTERS};
+
+        // 10 samples: 5 near 0, 5 near 100
+        let mut data = Matrix::<f32>::new(10, 1, 1);
+        data.data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 96.0, 97.0, 98.0, 99.0, 100.0];
+
+        let mut labels = Matrix::<i32>::new(0, 0, 0);
+        let criteria = TermCriteria::new(TermType::Both, 100, 1e-6);
+        let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+
+        let compactness = kmeans(
+            &data,
+            2,
+            &mut labels,
+            criteria,
+            3,
+            KMEANS_PP_CENTERS,
+            &mut centers,
+        )
+        .unwrap();
+
+        assert!(compactness < 100.0, "compactness too high: {}", compactness);
+        assert_eq!(labels.data.len(), 10);
+
+        // All first-5 should share one label, all last-5 another
+        let label_a = labels.data[0];
+        let label_b = labels.data[5];
+        assert_ne!(label_a, label_b);
+        for i in 0..5 {
+            assert_eq!(labels.data[i], label_a);
+        }
+        for i in 5..10 {
+            assert_eq!(labels.data[i], label_b);
+        }
+
+        // Centers should be near 3.0 and 98.0
+        let c = centers.unwrap();
+        let mut c_vals: Vec<f32> = vec![c.data[0], c.data[1]];
+        c_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((c_vals[0] - 3.0).abs() < 1.0);
+        assert!((c_vals[1] - 98.0).abs() < 1.0);
     }
 }
