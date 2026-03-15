@@ -2309,6 +2309,204 @@ where
     Ok(())
 }
 
+/// Performs the matrix transformation of every array element.
+///
+/// Each element of `src` is treated as an `scn`-element vector, where
+/// `scn` is the number of channels. The transformation matrix `m` is
+/// applied to each vector independently:
+///
+/// `dst(I) = m * src(I)`
+///
+/// When `m` has size `dcn × (scn + 1)`, the extra column is treated as a
+/// translation vector (affine transform).
+///
+/// Mirrors OpenCV's `cv::transform`.
+///
+/// # Arguments
+/// * `src` - Input matrix with `scn` channels.
+/// * `dst` - Output matrix; will be (re)allocated with `dcn` channels.
+/// * `m`   - Transformation matrix of size `dcn × scn` or `dcn × (scn + 1)`,
+///   single-channel.
+///
+/// # Errors
+/// Returns `PureCvError::InvalidDimensions` if `m` dimensions are
+/// incompatible with the source channel count.
+#[allow(clippy::needless_range_loop)]
+pub fn transform<T>(src: &Matrix<T>, dst: &mut Matrix<T>, m: &Matrix<f64>) -> Result<()>
+where
+    T: Default + Clone + Copy + FromPrimitive + ToPrimitive + Send + Sync + 'static,
+{
+    if m.channels != 1 {
+        return Err(PureCvError::InvalidDimensions(
+            "transformation matrix must be single-channel".into(),
+        ));
+    }
+
+    let scn = src.channels;
+    let dcn = m.rows;
+    let m_cols = m.cols;
+
+    // m must be dcn × scn  OR  dcn × (scn + 1)  (affine)
+    if m_cols != scn && m_cols != scn + 1 {
+        return Err(PureCvError::InvalidDimensions(format!(
+            "transformation matrix columns ({}) must equal src channels ({}) or src channels + 1 ({})",
+            m_cols, scn, scn + 1
+        )));
+    }
+
+    let affine = m_cols == scn + 1;
+
+    dst.create(src.rows, src.cols, dcn);
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_exact_mut(dcn)
+            .zip(src.data.par_chunks_exact(scn))
+            .for_each(|(d_chunk, s_chunk)| {
+                for r in 0..dcn {
+                    let row_base = r * m_cols;
+                    let mut val = 0.0;
+                    for c in 0..scn {
+                        val += m.data[row_base + c] * s_chunk[c].to_f64().unwrap_or(0.0);
+                    }
+                    if affine {
+                        val += m.data[row_base + scn];
+                    }
+                    d_chunk[r] = T::from_f64(val).unwrap_or_default();
+                }
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let pixel_count = src.rows * src.cols;
+        for p in 0..pixel_count {
+            let s_off = p * scn;
+            let d_off = p * dcn;
+            for r in 0..dcn {
+                let row_base = r * m_cols;
+                let mut val = 0.0;
+                for c in 0..scn {
+                    val += m.data[row_base + c] * src.data[s_off + c].to_f64().unwrap_or(0.0);
+                }
+                if affine {
+                    val += m.data[row_base + scn];
+                }
+                dst.data[d_off + r] = T::from_f64(val).unwrap_or_default();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Performs the perspective matrix transformation of vectors.
+///
+/// Every element of `src` (an `scn`-channel vector, where `scn` is 2 or 3)
+/// is extended with a `1`, multiplied by the `(scn + 1) × (scn + 1)` matrix
+/// `m`, and then the result is divided by its last component (perspective
+/// divide).
+///
+/// Mirrors OpenCV's `cv::perspectiveTransform`.
+///
+/// # Arguments
+/// * `src` - Input matrix with 2 or 3 channels.
+/// * `dst` - Output matrix; will be (re)allocated with the same number of
+///   channels as `src`.
+/// * `m`   - `(scn + 1) × (scn + 1)` single-channel transformation matrix
+///   (3×3 for 2-channel input, 4×4 for 3-channel input).
+///
+/// # Errors
+/// Returns `PureCvError::InvalidDimensions` if channel count is not 2 or 3,
+/// or if `m` has the wrong size.
+pub fn perspective_transform<T>(src: &Matrix<T>, dst: &mut Matrix<T>, m: &Matrix<f64>) -> Result<()>
+where
+    T: Default + Clone + Copy + FromPrimitive + ToPrimitive + Send + Sync + 'static,
+{
+    let scn = src.channels;
+
+    if scn != 2 && scn != 3 {
+        return Err(PureCvError::InvalidDimensions(
+            "perspectiveTransform requires 2- or 3-channel input".into(),
+        ));
+    }
+
+    if m.channels != 1 {
+        return Err(PureCvError::InvalidDimensions(
+            "transformation matrix must be single-channel".into(),
+        ));
+    }
+
+    let n = scn + 1; // homogeneous dimension
+    if m.rows != n || m.cols != n {
+        return Err(PureCvError::InvalidDimensions(format!(
+            "transformation matrix must be {}x{} for {}-channel input, got {}x{}",
+            n, n, scn, m.rows, m.cols
+        )));
+    }
+
+    dst.create(src.rows, src.cols, scn);
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_exact_mut(scn)
+            .zip(src.data.par_chunks_exact(scn))
+            .for_each(|(d_chunk, s_chunk)| {
+                perspective_transform_pixel(s_chunk, d_chunk, &m.data, scn, n);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let pixel_count = src.rows * src.cols;
+        for p in 0..pixel_count {
+            let s_off = p * scn;
+            let d_off = p * scn;
+            perspective_transform_pixel(
+                &src.data[s_off..s_off + scn],
+                &mut dst.data[d_off..d_off + scn],
+                &m.data,
+                scn,
+                n,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Applies perspective transformation to a single pixel vector.
+#[inline]
+#[allow(clippy::needless_range_loop)]
+fn perspective_transform_pixel<T>(src: &[T], dst: &mut [T], m: &[f64], scn: usize, n: usize)
+where
+    T: Copy + FromPrimitive + ToPrimitive + Default,
+{
+    // Build the homogeneous result vector (length n).
+    // result[r] = sum(m[r][c] * v[c], c=0..n)  where v = [src..., 1]
+    let mut result = [0.0f64; 4]; // max n = 4
+    for r in 0..n {
+        let row_base = r * n;
+        let mut val = 0.0;
+        for c in 0..scn {
+            val += m[row_base + c] * src[c].to_f64().unwrap_or(0.0);
+        }
+        // Last element of the homogeneous source vector is 1.
+        val += m[row_base + scn];
+        result[r] = val;
+    }
+
+    // Perspective divide: divide by the last component.
+    let w = result[scn];
+    let w_inv = if w.abs() > f64::EPSILON { 1.0 / w } else { 0.0 };
+
+    for c in 0..scn {
+        dst[c] = T::from_f64(result[c] * w_inv).unwrap_or_default();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

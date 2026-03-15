@@ -49,8 +49,8 @@ mod tests;
 pub use self::arithm::{
     absdiff, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
     count_non_zero, cross, determinant, dot, gemm, invert, magnitude, mean, mean_std_dev,
-    min_max_loc, norm, normalize, phase, polar_to_cart, reduce, set_identity, solve, sum, trace,
-    DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
+    min_max_loc, norm, normalize, perspective_transform, phase, polar_to_cart, reduce,
+    set_identity, solve, sum, trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
 pub use self::error::{PureCvError, Result};
 pub use self::matrix::{

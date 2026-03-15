@@ -476,4 +476,114 @@ mod tests {
 
         assert_eq!(a.data, b.data);
     }
+
+    // ---- transform / perspective_transform tests ----
+
+    #[test]
+    fn test_transform_identity() {
+        // 3-channel input, 3×3 identity matrix → output equals input.
+        let src = Matrix::from_vec(1, 2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let m = Matrix::from_vec(3, 3, 1, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.data, src.data);
+    }
+
+    #[test]
+    fn test_transform_swap_channels() {
+        // Swap R and B: matrix [[0,0,1],[0,1,0],[1,0,0]]
+        let src = Matrix::from_vec(1, 1, 3, vec![10.0, 20.0, 30.0]);
+        let m = Matrix::from_vec(3, 3, 1, vec![0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.data, vec![30.0, 20.0, 10.0]);
+    }
+
+    #[test]
+    fn test_transform_affine() {
+        // 2-channel input, 2×3 affine matrix (identity + translation (5, 10))
+        let src = Matrix::from_vec(1, 2, 2, vec![1.0, 2.0, 3.0, 4.0]);
+        let m = Matrix::from_vec(2, 3, 1, vec![1.0, 0.0, 5.0, 0.0, 1.0, 10.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.data, vec![6.0, 12.0, 8.0, 14.0]);
+    }
+
+    #[test]
+    fn test_transform_reduce_channels() {
+        // Convert 3-channel to 1-channel grayscale using a 1×3 matrix.
+        let src = Matrix::from_vec(1, 1, 3, vec![100.0, 150.0, 200.0]);
+        let m = Matrix::from_vec(1, 3, 1, vec![0.299, 0.587, 0.114]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.channels, 1);
+        let expected = 0.299 * 100.0 + 0.587 * 150.0 + 0.114 * 200.0;
+        assert!((dst.data[0] - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_perspective_transform_identity() {
+        // 2-channel input, 3×3 identity → output equals input.
+        let src = Matrix::from_vec(1, 2, 2, vec![10.0, 20.0, 30.0, 40.0]);
+        let m = Matrix::from_vec(3, 3, 1, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        perspective_transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.channels, 2);
+        assert!((dst.data[0] - 10.0).abs() < 1e-10);
+        assert!((dst.data[1] - 20.0).abs() < 1e-10);
+        assert!((dst.data[2] - 30.0).abs() < 1e-10);
+        assert!((dst.data[3] - 40.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_perspective_transform_translation() {
+        // Translation by (5, 10) via perspective matrix.
+        #[rustfmt::skip]
+        let m = Matrix::from_vec(3, 3, 1, vec![
+            1.0, 0.0, 5.0,
+            0.0, 1.0, 10.0,
+            0.0, 0.0, 1.0,
+        ]);
+        let src = Matrix::from_vec(1, 1, 2, vec![3.0, 7.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        perspective_transform(&src, &mut dst, &m).unwrap();
+        assert!((dst.data[0] - 8.0).abs() < 1e-10);
+        assert!((dst.data[1] - 17.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_perspective_transform_scaling() {
+        // A projective matrix that scales by 0.5 via the w component.
+        #[rustfmt::skip]
+        let m = Matrix::from_vec(3, 3, 1, vec![
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 2.0,
+        ]);
+        let src = Matrix::from_vec(1, 1, 2, vec![10.0, 20.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        perspective_transform(&src, &mut dst, &m).unwrap();
+        // w = 2, so result = (10/2, 20/2) = (5, 10)
+        assert!((dst.data[0] - 5.0).abs() < 1e-10);
+        assert!((dst.data[1] - 10.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_perspective_transform_3d() {
+        // 3-channel (3D) input with 4×4 identity.
+        #[rustfmt::skip]
+        let m = Matrix::from_vec(4, 4, 1, vec![
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ]);
+        let src = Matrix::from_vec(1, 1, 3, vec![1.0, 2.0, 3.0]);
+        let mut dst = Matrix::<f64>::new(0, 0, 0);
+        perspective_transform(&src, &mut dst, &m).unwrap();
+        assert_eq!(dst.channels, 3);
+        assert!((dst.data[0] - 1.0).abs() < 1e-10);
+        assert!((dst.data[1] - 2.0).abs() < 1e-10);
+        assert!((dst.data[2] - 3.0).abs() < 1e-10);
+    }
 }
