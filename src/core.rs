@@ -37,6 +37,7 @@
 pub mod arithm;
 pub mod error;
 pub mod matrix;
+pub mod rng;
 pub mod structural;
 pub mod types;
 pub mod utils;
@@ -58,6 +59,7 @@ pub use self::matrix::{
     CV_32SC1, CV_32SC2, CV_32SC3, CV_32SC4, CV_64F, CV_64FC1, CV_64FC2, CV_64FC3, CV_64FC4, CV_8S,
     CV_8SC1, CV_8SC2, CV_8SC3, CV_8SC4, CV_8U, CV_8UC1, CV_8UC2, CV_8UC3, CV_8UC4,
 };
+pub use self::rng::{randn, randu, set_rng_seed};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,
     Point3i, Rect, Rect2d, Rect2f, Rect2i, ReduceTypes, RotatedRect, Scalar, Size, Size2d, Size2f,

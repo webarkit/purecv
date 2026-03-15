@@ -433,4 +433,47 @@ mod tests {
         let res_t = gemm(&a, &b, 1.0, &empty, 0.0, GEMM_1_T).unwrap();
         assert_eq!(res_t.data, vec![26.0, 30.0, 38.0, 44.0]);
     }
+
+    // ---- RNG tests ----
+
+    #[test]
+    fn test_randu_basic() {
+        use crate::core::rng::{randu, set_rng_seed};
+
+        set_rng_seed(1234);
+        let mut mat = Matrix::<f64>::new(10, 10, 1);
+        randu(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+
+        for &v in &mat.data {
+            assert!(v >= 0.0 && v < 1.0, "value {} out of [0, 1)", v);
+        }
+    }
+
+    #[test]
+    fn test_randn_basic() {
+        use crate::core::rng::{randn, set_rng_seed};
+
+        set_rng_seed(5678);
+        let mut mat = Matrix::<f64>::new(10, 10, 1);
+        randn(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+
+        // Just verify the matrix was filled (not all zeros).
+        let any_nonzero = mat.data.iter().any(|&v| v != 0.0);
+        assert!(any_nonzero, "randn produced all zeros");
+    }
+
+    #[test]
+    fn test_set_rng_seed_reproducible() {
+        use crate::core::rng::{randu, set_rng_seed};
+
+        set_rng_seed(999);
+        let mut a = Matrix::<f32>::new(5, 5, 3);
+        randu(&mut a, Scalar::all(0.0), Scalar::all(255.0)).unwrap();
+
+        set_rng_seed(999);
+        let mut b = Matrix::<f32>::new(5, 5, 3);
+        randu(&mut b, Scalar::all(0.0), Scalar::all(255.0)).unwrap();
+
+        assert_eq!(a.data, b.data);
+    }
 }

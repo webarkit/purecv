@@ -79,9 +79,7 @@ impl Xoshiro256 {
     /// Returns the next pseudo-random `u64`.
     #[inline]
     fn next_u64(&mut self) -> u64 {
-        let result = (self.s[1].wrapping_mul(5))
-            .rotate_left(7)
-            .wrapping_mul(9);
+        let result = (self.s[1].wrapping_mul(5)).rotate_left(7).wrapping_mul(9);
         let t = self.s[1] << 17;
 
         self.s[2] ^= self.s[0];
@@ -157,7 +155,7 @@ pub fn set_rng_seed(seed: u64) {
 ///
 /// # Arguments
 /// * `dst`  - The output matrix. Must already be allocated with the desired
-///            size and number of channels.
+///   size and number of channels.
 /// * `low`  - Inclusive lower bound for each channel.
 /// * `high` - Exclusive upper bound for each channel.
 ///
@@ -324,10 +322,7 @@ mod tests {
         let mut mat = Matrix::<u8>::new(100, 100, 1);
         randu(&mut mat, Scalar::all(0.0), Scalar::all(256.0)).unwrap();
 
-        // All values should be in [0, 255].
-        for &v in &mat.data {
-            assert!(v <= 255);
-        }
+        // All values should be valid u8 values — just verify variation.
         // With 10 000 samples the range should not collapse to a single value.
         let min = *mat.data.iter().min().unwrap();
         let max = *mat.data.iter().max().unwrap();
@@ -386,4 +381,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
