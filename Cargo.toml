@@ -15,7 +15,7 @@ categories = ["computer-vision", "science", "wasm"]
 rayon = { version="1.10", optional = true}
 
 # ndarray interoperability: optional, for ecosystem compatibility
-ndarray = { version = "0.15", optional = true }
+ndarray = { version = "0.17", optional = true }
 
 # Math & Linear Algebra: Provide the underlying structure for Mat/Matrix
 # We use this as a dependency if you want to leverage existing BLAS/SIMD optimizations
