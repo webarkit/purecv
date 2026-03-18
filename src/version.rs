@@ -47,7 +47,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// # Example
 ///
 /// ```rust
-/// use webarkitlib_rs::version::get_version;
+/// use purecv::version::get_version;
 /// let v = get_version();
 /// assert!(!v.is_empty());
 /// ```
