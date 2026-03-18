@@ -9,8 +9,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  check-code-format:
+    name: Check Code Format
     runs-on: ubuntu-latest
 
     steps:
@@ -22,8 +22,19 @@ jobs:
         components: rustfmt, clippy
 
     - name: Check formatting
-      id: fmt
       run: cargo fmt --all -- --check
+
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
 
     - name: Build
       run: cargo build --verbose
@@ -39,6 +50,3 @@ jobs:
 
     - name: Lint with clippy
       run: cargo clippy -- -D warnings
-
-outputs:
-  fmt-status: ${{ jobs.build.steps.fmt.outcome }}
