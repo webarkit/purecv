@@ -36,9 +36,11 @@
 
 use purecv::core::arithm::{add, multiply};
 use purecv::core::Matrix;
+use purecv::version;
 
 fn main() {
     println!("--- purecv Basic Arithmetic Example ---");
+    println!("purecv v{}", version::get_version());
 
     // 1. Create two 3x3 matrices with 1 channel (u8)
     let m1 = Matrix::<u8>::from_vec(3, 3, 1, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);

@@ -40,10 +40,12 @@ use purecv::imgproc::{
     bilateral_filter, blur, canny, cvt_color_rgb_to_gray, gaussian_blur, laplacian, median_blur,
     scharr, sobel,
 };
+use purecv::version;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- purecv Filters Example ---");
+    println!("purecv v{}", version::get_version());
 
     // 1. Load the image
     let img_path = "examples/data/butterfly.jpg";

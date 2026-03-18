@@ -38,6 +38,7 @@
 pub mod core;
 pub mod features;
 pub mod imgproc;
+pub mod version;
 
 /// Prelude to easily import common structures
 pub mod prelude {

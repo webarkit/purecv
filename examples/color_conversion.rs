@@ -36,9 +36,11 @@
 
 use purecv::core::Matrix;
 use purecv::imgproc::{cvt_color, ColorConversionCode};
+use purecv::version;
 
 fn main() {
     println!("--- purecv Color Conversion Example ---");
+    println!("purecv v{}", version::get_version());
 
     // 1. Create a 3x3 RGB matrix (3 channels)
     // Representing a simple gradient

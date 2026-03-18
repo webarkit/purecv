@@ -36,9 +36,11 @@
 
 use purecv::core::Matrix;
 use purecv::imgproc::{threshold, ThresholdTypes};
+use purecv::version;
 
 fn main() {
     println!("--- purecv Threshold Example ---\n");
+    println!("purecv v{}", version::get_version());
 
     // 1. Create a 4x4 grayscale matrix with a gradient
     let data: Vec<u8> = vec![

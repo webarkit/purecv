@@ -36,9 +36,11 @@
 
 use purecv::core::structural::{copy_make_border, flip, merge, repeat, rotate, split, transpose};
 use purecv::core::{Matrix, Scalar};
+use purecv::version;
 
 fn main() {
     println!("--- purecv Structural Operations Example ---");
+    println!("purecv v{}", version::get_version());
 
     // Start with a 2x3 matrix
     let m = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
