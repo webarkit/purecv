@@ -40,5 +40,5 @@ jobs:
     - name: Lint with clippy
       run: cargo clippy -- -D warnings
 
-  outputs:
-    fmt-status: ${{ steps.fmt.outcome }}
+outputs:
+  fmt-status: ${{ jobs.build.steps.fmt.outcome }}
