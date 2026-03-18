@@ -22,6 +22,7 @@ jobs:
         components: rustfmt, clippy
 
     - name: Check formatting
+      id: fmt
       run: cargo fmt --all -- --check
 
     - name: Build
@@ -38,3 +39,6 @@ jobs:
 
     - name: Lint with clippy
       run: cargo clippy -- -D warnings
+
+  outputs:
+    fmt-status: ${{ steps.fmt.outcome }}
