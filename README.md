@@ -7,9 +7,10 @@
 [![Crates.io Downloads](https://img.shields.io/crates/d/purecv.svg)](https://crates.io/crates/purecv)
 [![GitHub Stars](https://img.shields.io/github/stars/webarkit/purecv.svg?style=social)](https://github.com/webarkit/purecv/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/webarkit/purecv.svg?style=social)](https://github.com/webarkit/purecv/network/members)
-[![Cargo Fmt](https://github.com/webarkit/purecv/workflows/Check%20Code%20Format/badge.svg)](https://github.com/webarkit/purecv/actions?query=workflow%3A%22Check+Code+Format%22)
 
 A high-performance, **pure Rust** computer vision library focusing on the `core` and `imgproc` modules of OpenCV. **PureCV** is built from the ground up to be memory-safe, thread-safe, and highly portable without the overhead of C++ FFI.
+
+> This project is currently a **Work in Progress**. While most core and imgproc features have been implemented, the library is not yet stable, and bugs may occur. We are actively optimizing and expanding the feature set.
 
 ## 🎯 Philosophy
 
