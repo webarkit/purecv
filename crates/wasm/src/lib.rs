@@ -72,7 +72,7 @@ pub fn init_panic_hook() {
 
 /// Initializes the WASM module: installs the panic hook and logs the library version.
 #[wasm_bindgen]
-pub fn init_wasm() {
+pub fn init_purecv() {
     console_error_panic_hook::set_once();
     print_version();
 }

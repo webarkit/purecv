@@ -24,3 +24,9 @@ cpp_ref/opencv
 
 # Examples
 examples/data/out/
+
+# WASM Build Artifacts
+crates/wasm/pkg/
+!crates/wasm/pkg/LICENSE
+!crates/wasm/pkg/README.md
+!crates/wasm/pkg/package.json

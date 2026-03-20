@@ -1,45 +1,25 @@
-// Multi-build script for purecv WASM (std, simd, parallel, simd+parallel)
-// Output: pkg/dist-std, pkg/dist-simd, pkg/dist-parallel, pkg/dist-simd-parallel
-// Typings are copied in each dist
+#!/usr/bin/env node
+// build.js
+// Detects the OS and runs the appropriate dual build script.
 
-const { execSync } = require('child_process');
-const fs = require('fs');
+const { execFileSync } = require('child_process');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..');
-const PKG = path.join(ROOT, 'pkg');
+const scriptsDir = __dirname;
 
-const builds = [
-  { name: 'dist-std', features: '' },
-  { name: 'dist-simd', features: '--features simd' },
-  { name: 'dist-parallel', features: '--features parallel' },
-  { name: 'dist-simd-parallel', features: '--features "simd parallel"' },
-];
-
-function cleanDist(name) {
-  const dist = path.join(PKG, name);
-  if (fs.existsSync(dist)) fs.rmSync(dist, { recursive: true, force: true });
+try {
+  if (process.platform === 'win32') {
+    // Windows: run the PowerShell script
+    const script = path.join(scriptsDir, 'build-dual.ps1');
+    execFileSync('powershell.exe', ['-ExecutionPolicy', 'RemoteSigned', '-File', script], { stdio: 'inherit' });
+  } else {
+    // Linux / macOS: run the bash script
+    const script = path.join(scriptsDir, 'build-dual.sh');
+    execFileSync('bash', [script], { stdio: 'inherit' });
+  }
+} catch (err) {
+  const scriptName = process.platform === 'win32' ? 'build-dual.ps1' : 'build-dual.sh';
+  console.error(`Error: Failed to execute ${scriptName}.`);
+  console.error(err.message);
+  process.exit(1);
 }
-
-function moveBuild(name) {
-  const dist = path.join(PKG, name);
-  fs.mkdirSync(dist, { recursive: true });
-  // Move all generated files except .gitkeep
-  fs.readdirSync(PKG).forEach(f => {
-    if (f === name || f === '.gitkeep') return;
-    const src = path.join(PKG, f);
-    const dest = path.join(dist, f);
-    if (fs.lstatSync(src).isFile()) fs.renameSync(src, dest);
-  });
-}
-
-function buildAll() {
-  builds.forEach(({ name, features }) => {
-    console.log(`\n=== Building ${name} ===`);
-    cleanDist(name);
-    execSync(`wasm-pack build --release --target bundler --scope webarkit ${features}`, { cwd: ROOT, stdio: 'inherit' });
-    moveBuild(name);
-  });
-}
-
-buildAll();

@@ -1,0 +1,35 @@
+{
+    "name":  "@webarkit/purecv-wasm",
+    "type":  "module",
+    "collaborators":  [
+                          "Walter Perdan \u003chttps://github.com/kalwalt\u003e"
+                      ],
+    "description":  "A pure Rust, high-performance computer vision library focused on safety and portability.",
+    "version":  "0.1.4",
+    "license":  "LGPL-2.1-or-later",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/webarkit/purecv"
+                   },
+    "files":  [
+                  "purecv_wasm_bg.wasm",
+                  "purecv_wasm.js",
+                  "purecv_wasm.d.ts"
+              ],
+    "main":  "purecv_wasm.js",
+    "types":  "purecv_wasm.d.ts",
+    "sideEffects":  [
+                        "./snippets/*"
+                    ],
+    "keywords":  [
+                     "computer-vision",
+                     "image-processing",
+                     "opencv",
+                     "wasm",
+                     "simd"
+                 ],
+    "exports":  {
+                    ".":  "./dist-std/purecv_wasm.js",
+                    "./simd":  "./dist-simd/purecv_wasm.js"
+                }
+}
