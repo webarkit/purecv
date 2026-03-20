@@ -16,9 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fondamentale per far leggere a git-cliff tutta la cronologia
+          fetch-depth: 0
 
-      - name: Wait for CI Benchmarks
+      - name: Wait for CI
         uses: lewagon/wait-on-check-action@v1.5.0
         with:
           ref: ${{ github.ref }}
@@ -53,3 +53,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Publish to Crates.io
         run: cargo publish --token ${{ secrets.CRATES_TOKEN }} -p purecv
+
+  publish-npm:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build and Publish to NPM
+        run: |
+          npm run build:wasm
+          cd crates/wasm/pkg
+          npm config set //registry.npmjs.org/:_authToken ${{ secrets.NPM_TOKEN }}
+          npm publish --access public

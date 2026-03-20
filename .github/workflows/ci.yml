@@ -1,0 +1,94 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    tags: [ "v*" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Lint with clippy
+      run: cargo clippy -- -D warnings
+
+    - name: Run cargo check
+      run: cargo check --workspace
+
+    - name: Run tests
+      run: cargo test --workspace
+
+    - name: Run tests (with parallel feature)
+      run: cargo test --workspace --features parallel
+
+    - name: Run tests (with simd feature)
+      run: cargo test --workspace --features simd
+
+    - name: Run tests (with ndarray feature)
+      run: cargo test --workspace --features ndarray
+
+  wasm-build:
+    name: WASM Dual Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      run: |
+        curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+    - name: Build WASM module (Dual Mode)
+      run: npm run build:wasm
+
+    - name: Upload WASM Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: wasm-package
+        path: crates/wasm/pkg
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run benchmarks
+      run: cargo bench
+
+    - name: Upload benchmark reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-reports
+        path: target/criterion
