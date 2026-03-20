@@ -48,11 +48,11 @@ mod tests;
 
 // Re-exports for easier access
 pub use self::arithm::{
-    absdiff, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
-    count_non_zero, cross, determinant, dot, gemm, invert, kmeans, magnitude, mean, mean_std_dev,
-    min_max_loc, norm, normalize, perspective_transform, phase, polar_to_cart, reduce,
-    set_identity, solve, solve_poly, sort, sort_idx, sum, trace, transform, DecompTypes, GEMM_1_T,
-    GEMM_2_T, GEMM_3_T,
+    absdiff, add, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
+    count_non_zero, cross, determinant, divide, dot, gemm, invert, kmeans, magnitude, mean,
+    mean_std_dev, min_max_loc, multiply, norm, normalize, perspective_transform, phase,
+    polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum, trace,
+    transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
 pub use self::error::{PureCvError, Result};
 pub use self::matrix::{
