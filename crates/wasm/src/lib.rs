@@ -324,32 +324,28 @@ pub fn add(a: &PureCvMatrixF32, b: &PureCvMatrixF32) -> Result<PureCvMatrixF32, 
 /// Per-element subtraction: `dst = a - b`.
 #[wasm_bindgen(js_name = "subtract")]
 pub fn subtract(a: &PureCvMatrixF32, b: &PureCvMatrixF32) -> Result<PureCvMatrixF32, JsError> {
-    let result =
-        arithm::subtract(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = arithm::subtract(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
 /// Per-element multiplication: `dst = a * b`.
 #[wasm_bindgen(js_name = "multiply")]
 pub fn multiply(a: &PureCvMatrixF32, b: &PureCvMatrixF32) -> Result<PureCvMatrixF32, JsError> {
-    let result =
-        arithm::multiply(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = arithm::multiply(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
 /// Per-element division: `dst = a / b`.
 #[wasm_bindgen(js_name = "divide")]
 pub fn divide(a: &PureCvMatrixF32, b: &PureCvMatrixF32) -> Result<PureCvMatrixF32, JsError> {
-    let result =
-        arithm::divide(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = arithm::divide(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
 /// Per-element absolute difference: `dst = |a - b|`.
 #[wasm_bindgen(js_name = "absDiff")]
 pub fn abs_diff(a: &PureCvMatrixF32, b: &PureCvMatrixF32) -> Result<PureCvMatrixF32, JsError> {
-    let result =
-        arithm::abs_diff(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = arithm::abs_diff(&a.inner, &b.inner).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
@@ -382,16 +378,15 @@ pub fn flip(src: &PureCvMatrixF32, flip_code: i32) -> Result<PureCvMatrixF32, Js
 /// Transposes a matrix (swaps rows and columns).
 #[wasm_bindgen(js_name = "transpose")]
 pub fn transpose(src: &PureCvMatrixF32) -> Result<PureCvMatrixF32, JsError> {
-    let result =
-        structural::transpose(&src.inner).map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = structural::transpose(&src.inner).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
 /// Rotates a matrix: 0 = 90° CW, 1 = 180°, 2 = 90° CCW.
 #[wasm_bindgen(js_name = "rotate")]
 pub fn rotate(src: &PureCvMatrixF32, rotate_code: i32) -> Result<PureCvMatrixF32, JsError> {
-    let result = structural::rotate(&src.inner, rotate_code)
-        .map_err(|e| JsError::new(&format!("{e}")))?;
+    let result =
+        structural::rotate(&src.inner, rotate_code).map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixF32 { inner: result })
 }
 
@@ -410,7 +405,9 @@ fn color_code_from_i32(code: i32) -> Result<ColorConversionCode, JsError> {
         5 => Ok(ColorConversionCode::COLOR_GRAY2BGR),
         6 => Ok(ColorConversionCode::COLOR_GRAY2RGBA),
         7 => Ok(ColorConversionCode::COLOR_GRAY2BGRA),
-        _ => Err(JsError::new(&format!("Unknown color conversion code: {code}"))),
+        _ => Err(JsError::new(&format!(
+            "Unknown color conversion code: {code}"
+        ))),
     }
 }
 
@@ -515,8 +512,14 @@ pub fn canny(
     aperture_size: i32,
     l2_gradient: bool,
 ) -> Result<PureCvMatrixU8, JsError> {
-    let result = edge::canny(&src.inner, threshold1, threshold2, aperture_size, l2_gradient)
-        .map_err(|e| JsError::new(&format!("{e}")))?;
+    let result = edge::canny(
+        &src.inner,
+        threshold1,
+        threshold2,
+        aperture_size,
+        l2_gradient,
+    )
+    .map_err(|e| JsError::new(&format!("{e}")))?;
     Ok(PureCvMatrixU8 { inner: result })
 }
 
@@ -654,58 +657,106 @@ pub fn bilateral_filter(
 
 // Color conversion codes
 #[wasm_bindgen(js_name = "COLOR_BGR2GRAY")]
-pub fn color_bgr2gray() -> i32 { 0 }
+pub fn color_bgr2gray() -> i32 {
+    0
+}
 #[wasm_bindgen(js_name = "COLOR_RGB2GRAY")]
-pub fn color_rgb2gray() -> i32 { 1 }
+pub fn color_rgb2gray() -> i32 {
+    1
+}
 #[wasm_bindgen(js_name = "COLOR_BGRA2GRAY")]
-pub fn color_bgra2gray() -> i32 { 2 }
+pub fn color_bgra2gray() -> i32 {
+    2
+}
 #[wasm_bindgen(js_name = "COLOR_RGBA2GRAY")]
-pub fn color_rgba2gray() -> i32 { 3 }
+pub fn color_rgba2gray() -> i32 {
+    3
+}
 #[wasm_bindgen(js_name = "COLOR_GRAY2RGB")]
-pub fn color_gray2rgb() -> i32 { 4 }
+pub fn color_gray2rgb() -> i32 {
+    4
+}
 #[wasm_bindgen(js_name = "COLOR_GRAY2BGR")]
-pub fn color_gray2bgr() -> i32 { 5 }
+pub fn color_gray2bgr() -> i32 {
+    5
+}
 #[wasm_bindgen(js_name = "COLOR_GRAY2RGBA")]
-pub fn color_gray2rgba() -> i32 { 6 }
+pub fn color_gray2rgba() -> i32 {
+    6
+}
 #[wasm_bindgen(js_name = "COLOR_GRAY2BGRA")]
-pub fn color_gray2bgra() -> i32 { 7 }
+pub fn color_gray2bgra() -> i32 {
+    7
+}
 
 // Threshold types
 #[wasm_bindgen(js_name = "THRESH_BINARY")]
-pub fn thresh_binary() -> i32 { 0 }
+pub fn thresh_binary() -> i32 {
+    0
+}
 #[wasm_bindgen(js_name = "THRESH_BINARY_INV")]
-pub fn thresh_binary_inv() -> i32 { 1 }
+pub fn thresh_binary_inv() -> i32 {
+    1
+}
 #[wasm_bindgen(js_name = "THRESH_TRUNC")]
-pub fn thresh_trunc() -> i32 { 2 }
+pub fn thresh_trunc() -> i32 {
+    2
+}
 #[wasm_bindgen(js_name = "THRESH_TOZERO")]
-pub fn thresh_tozero() -> i32 { 3 }
+pub fn thresh_tozero() -> i32 {
+    3
+}
 #[wasm_bindgen(js_name = "THRESH_TOZERO_INV")]
-pub fn thresh_tozero_inv() -> i32 { 4 }
+pub fn thresh_tozero_inv() -> i32 {
+    4
+}
 
 // Border types
 #[wasm_bindgen(js_name = "BORDER_CONSTANT")]
-pub fn border_constant() -> i32 { 0 }
+pub fn border_constant() -> i32 {
+    0
+}
 #[wasm_bindgen(js_name = "BORDER_REPLICATE")]
-pub fn border_replicate() -> i32 { 1 }
+pub fn border_replicate() -> i32 {
+    1
+}
 #[wasm_bindgen(js_name = "BORDER_REFLECT")]
-pub fn border_reflect() -> i32 { 2 }
+pub fn border_reflect() -> i32 {
+    2
+}
 #[wasm_bindgen(js_name = "BORDER_WRAP")]
-pub fn border_wrap() -> i32 { 3 }
+pub fn border_wrap() -> i32 {
+    3
+}
 #[wasm_bindgen(js_name = "BORDER_REFLECT_101")]
-pub fn border_reflect_101() -> i32 { 4 }
+pub fn border_reflect_101() -> i32 {
+    4
+}
 
 // Flip codes
 #[wasm_bindgen(js_name = "FLIP_VERTICAL")]
-pub fn flip_vertical() -> i32 { 0 }
+pub fn flip_vertical() -> i32 {
+    0
+}
 #[wasm_bindgen(js_name = "FLIP_HORIZONTAL")]
-pub fn flip_horizontal() -> i32 { 1 }
+pub fn flip_horizontal() -> i32 {
+    1
+}
 #[wasm_bindgen(js_name = "FLIP_BOTH")]
-pub fn flip_both() -> i32 { -1 }
+pub fn flip_both() -> i32 {
+    -1
+}
 
 // Rotate codes
 #[wasm_bindgen(js_name = "ROTATE_90_CLOCKWISE")]
-pub fn rotate_90_clockwise() -> i32 { 0 }
+pub fn rotate_90_clockwise() -> i32 {
+    0
+}
 #[wasm_bindgen(js_name = "ROTATE_180")]
-pub fn rotate_180() -> i32 { 1 }
+pub fn rotate_180() -> i32 {
+    1
+}
 #[wasm_bindgen(js_name = "ROTATE_90_COUNTERCLOCKWISE")]
-pub fn rotate_90_counterclockwise() -> i32 { 2 }
+pub fn rotate_90_counterclockwise() -> i32 {
+    2
+}
