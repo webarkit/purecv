@@ -1,0 +1,56 @@
+[package]
+name = "purecv"
+version = "0.1.4"
+authors = ["Walter Perdan <https://github.com/kalwalt>"]
+edition = "2021"
+description = "A pure Rust, high-performance computer vision library focused on safety and portability."
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/webarkit/purecv"
+readme = "../../README.md"
+keywords = ["computer-vision", "image-processing", "opencv", "wasm", "simd"]
+categories = ["computer-vision", "science", "wasm"]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+rayon = { version = "1.10", optional = true }
+ndarray = { version = "0.17", optional = true }
+num-traits = "0.2"
+pulp = { version = "0.18", optional = true }
+log = "0.4"
+
+[dev-dependencies]
+image = "0.25"
+criterion = "0.8"
+
+[features]
+default = ["std", "parallel"]
+std = []
+parallel = ["rayon"]
+ndarray = ["dep:ndarray"]
+simd = ["dep:pulp"]
+
+
+[[bench]]
+name = "arithm_bench"
+path = "../../benches/arithm_bench.rs"
+harness = false
+
+
+[[bench]]
+name = "imgproc_bench"
+path = "../../benches/imgproc_bench.rs"
+harness = false
+
+
+[[bench]]
+name = "structural_bench"
+path = "../../benches/structural_bench.rs"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

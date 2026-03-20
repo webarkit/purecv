@@ -1,0 +1,30 @@
+{
+  "name": "purecv",
+  "version": "0.1.4",
+  "description": "A pure Rust, high-performance computer vision library focused on safety and portability.",
+  "private": true,
+  "scripts": {
+    "build:core": "cargo build -p purecv",
+    "build:wasm": "node crates/wasm/scripts/build.js",
+    "build": "npm run build:core && npm run build:wasm",
+    "test": "cargo test",
+    "bench": "cargo bench",
+    "publish:core": "cargo publish -p purecv",
+    "publish:wasm": "wasm-pack publish crates/wasm --access public"
+  },
+  "author": "kalwalt <github@kalwaltart.it>",
+  "license": "LGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/webarkit/purecv.git"
+  },
+  "keywords": [
+    "augmented-reality",
+    "computer-vision",
+    "wasm",
+    "opencv",
+    "rust",
+    "webarkit",
+    "purecv" 
+  ]
+}
