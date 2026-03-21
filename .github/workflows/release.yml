@@ -18,11 +18,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Wait for CI
+      - name: Wait for CI (Build and Test)
         uses: lewagon/wait-on-check-action@v1.5.0
         with:
           ref: ${{ github.ref }}
           check-name: "Build and Test"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
+      - name: Wait for CI (WASM Dual Build)
+        uses: lewagon/wait-on-check-action@v1.5.0
+        with:
+          ref: ${{ github.ref }}
+          check-name: "WASM Dual Build"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
+      - name: Wait for CI (Benchmarks)
+        uses: lewagon/wait-on-check-action@v1.5.0
+        with:
+          ref: ${{ github.ref }}
+          check-name: "Benchmarks"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 30
 
@@ -35,12 +51,30 @@ jobs:
         env:
           OUTPUT: release_notes.md
 
+      - name: Download CI Artifacts
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          workflow: ci.yml
+          commit: ${{github.sha}}
+          path: ./ci-artifacts
+
+      - name: Package Artifacts
+        run: |
+          cd ci-artifacts
+          zip -r ../wasm-package.zip wasm-package/
+          zip -r ../benchmark-reports.zip benchmark-reports/
+          cd ..
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           body_path: release_notes.md
+          files: |
+            wasm-package.zip
+            benchmark-reports.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
