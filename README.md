@@ -2,9 +2,10 @@
 
 ![PureCv Banner](./assets/purecv_banner.png)
 
-[![Rust CI](https://github.com/webarkit/purecv/actions/workflows/rust.yml/badge.svg)](https://github.com/webarkit/purecv/actions/workflows/rust.yml)
+[![Rust CI](https://github.com/webarkit/purecv/actions/workflows/ci.yml/badge.svg)](https://github.com/webarkit/purecv/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/purecv.svg)](https://crates.io/crates/purecv)
 [![Crates.io Downloads](https://img.shields.io/crates/d/purecv.svg)](https://crates.io/crates/purecv)
+[![NPM version](https://img.shields.io/npm/v/@webarkit/purecv-wasm.svg)](https://www.npmjs.com/package/@webarkit/purecv-wasm)
 [![GitHub Stars](https://img.shields.io/github/stars/webarkit/purecv.svg?style=social)](https://github.com/webarkit/purecv/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/webarkit/purecv.svg?style=social)](https://github.com/webarkit/purecv/network/members)
 
@@ -121,6 +122,18 @@ let mat3 = Matrix::from_ndarray(arr);
 let arr2 = ndarray::Array3::<f32>::zeros((100, 100, 3));
 let mat4: Matrix<f32> = Matrix::from(arr2);
 ```
+
+### WASM Package for Browsers & Node.js
+
+PureCV provides a compiled WebAssembly package via `wasm-bindgen` enabling access to core matrix operations, thresholds, filters, and derivatives directly from JavaScript/TypeScript.
+
+This includes both a **standard build** for maximum compatibility and a **SIMD-optimized build** for massive performance gains in modern browsers.
+
+```bash
+npm install @webarkit/purecv-wasm
+```
+
+See the [WebAssembly documentation](crates/wasm/README.md) for more usage examples and API details.
 
 ### Running Examples
 
