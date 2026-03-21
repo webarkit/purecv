@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PureCV WASM — Butterfly Demo</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      background: linear-gradient(135deg, #6366f1, #22d3ee);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      color: #94a3b8;
+      margin-top: 0.4rem;
+      font-size: 0.9rem;
+    }
+
+    #status {
+      text-align: center;
+      font-size: 0.85rem;
+      padding: 0.6rem 1.2rem;
+      border-radius: 9999px;
+      display: inline-block;
+      margin: 0 auto 2rem;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+
+    #status.ok {
+      border-color: #22c55e;
+      color: #22c55e;
+    }
+
+    #status.err {
+      border-color: #ef4444;
+      color: #ef4444;
+    }
+
+    .status-wrap {
+      text-align: center;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card header {
+      padding: 0.75rem 1rem;
+      background: #0f172a;
+      border-bottom: 1px solid #334155;
+      margin: 0;
+    }
+
+    .card header h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      letter-spacing: 0.05em;
+    }
+
+    .card header p {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 0.15rem;
+    }
+
+    .card canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    #log {
+      max-width: 1400px;
+      margin: 2rem auto 0;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #64748b;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    #log p {
+      margin: 0.15rem 0;
+    }
+
+    #log .ok {
+      color: #22c55e;
+    }
+
+    #log .err {
+      color: #ef4444;
+    }
+
+    #log .info {
+      color: #38bdf8;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>PureCV WASM — Image Processing Demo</h1>
+    <p>Pure Rust · WebAssembly · butterfly.jpg</p>
+  </header>
+
+  <div class="status-wrap">
+    <div id="status">⏳ Loading WASM…</div>
+  </div>
+
+  <div class="grid" id="grid">
+    <div class="card">
+      <header>
+        <h2>Original (RGB)</h2>
+        <p>Source image</p>
+      </header>
+      <canvas id="c-original"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Grayscale</h2>
+        <p>cvtColor RGB→Gray</p>
+      </header>
+      <canvas id="c-gray"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Blur 5×5</h2>
+        <p>Box filter</p>
+      </header>
+      <canvas id="c-blur"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Gaussian Blur 5×5</h2>
+        <p>σ = 1.75</p>
+      </header>
+      <canvas id="c-gauss"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Canny Edges</h2>
+        <p>lo=50 hi=150</p>
+      </header>
+      <canvas id="c-canny"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Sobel X</h2>
+        <p>dx=1 dy=0 k=3 (normalized)</p>
+      </header>
+      <canvas id="c-sobel"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Laplacian</h2>
+        <p>k=3 (normalized)</p>
+      </header>
+      <canvas id="c-laplacian"></canvas>
+    </div>
+    <div class="card">
+      <header>
+        <h2>Threshold Binary</h2>
+        <p>thresh=127 max=255</p>
+      </header>
+      <canvas id="c-thresh"></canvas>
+    </div>
+  </div>
+
+  <div id="log">
+    <p class="info">[log] Starting…</p>
+  </div>
+
+  <script type="module" src="main.js"></script>
+
+</body>
+
+</html>
