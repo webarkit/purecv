@@ -34,6 +34,7 @@
  *
  */
 use crate::core::error::{PureCvError, Result};
+use crate::core::types::Scalar;
 
 /// Matrix depth: number of bits per element and its signedness/type.
 /// Follows OpenCV's depth conventions (CV_8U, CV_32F, etc.).
@@ -377,6 +378,69 @@ impl<T: Default + Clone> Matrix<T> {
         self.create(rows, cols, mat_type.channels());
     }
 
+    /// Creates a new `Matrix` with all pixels initialised to the given `Scalar`.
+    ///
+    /// Channels beyond 4 are set to `T::default()` (zero), mirroring OpenCV.
+    pub fn new_with_scalar(rows: usize, cols: usize, channels: usize, s: Scalar<T>) -> Self {
+        let mut data = Vec::with_capacity(rows * cols * channels);
+        for _ in 0..rows * cols {
+            for c in 0..channels {
+                data.push(s.v.get(c).cloned().unwrap_or_default());
+            }
+        }
+        Self {
+            rows,
+            cols,
+            channels,
+            data,
+        }
+    }
+
+    /// Creates a new `Matrix` from a `Size` with all pixels set to `s`.
+    pub fn new_with_scalar_from_size<U: Into<usize>>(
+        size: crate::core::Size<U>,
+        channels: usize,
+        s: Scalar<T>,
+    ) -> Self {
+        Self::new_with_scalar(size.height.into(), size.width.into(), channels, s)
+    }
+
+    /// Sets every pixel in this matrix to the values in `s`.
+    ///
+    /// Channels beyond 4 are set to `T::default()`.
+    pub fn set_to(&mut self, s: Scalar<T>) {
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                for c in 0..self.channels {
+                    self.set(row, col, c, s.v.get(c).cloned().unwrap_or_default());
+                }
+            }
+        }
+    }
+
+    /// Sets pixels to `s` where `mask` is non-zero.
+    ///
+    /// # Errors
+    /// Returns `PureCvError::InvalidDimensions` if the mask rows/cols differ from this matrix.
+    pub fn set_to_masked(&mut self, s: Scalar<T>, mask: &Matrix<u8>) -> Result<()> {
+        if self.rows != mask.rows || self.cols != mask.cols {
+            return Err(PureCvError::InvalidDimensions(format!(
+                "mask {}×{} does not match matrix {}×{}",
+                mask.rows, mask.cols, self.rows, self.cols
+            )));
+        }
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                if *mask.get(row, col, 0).unwrap_or(&0) != 0 {
+                    for c in 0..self.channels {
+                        self.set(row, col, c, s.v.get(c).cloned().unwrap_or_default());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Converts the matrix elements to a different type `U`.
     /// Similar to OpenCV's `Mat::convertTo`.
     ///
@@ -481,6 +545,34 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
             mat.set(i, i, 0, val.clone());
         }
         mat
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Scalar constructors that require DataType (fallible, typed)
+// ──────────────────────────────────────────────────────────────────────────────
+
+impl<T: Default + Clone + DataType> Matrix<T> {
+    /// Creates a new `Matrix` from a `Size` and `MatType` with all pixels set to `s`.
+    ///
+    /// # Errors
+    /// Returns `PureCvError::InvalidInput` if the depth encoded in `mat_type` does not
+    /// match the element type `T`.
+    pub fn new_with_scalar_typed_from_size<U: Into<usize>>(
+        size: crate::core::Size<U>,
+        mat_type: MatType,
+        s: Scalar<T>,
+    ) -> Result<Self> {
+        if mat_type.depth() != T::depth() {
+            return Err(PureCvError::InvalidInput(format!(
+                "MatType depth {:?} does not match element type depth {:?}",
+                mat_type.depth(),
+                T::depth()
+            )));
+        }
+        let rows = size.height.into();
+        let cols = size.width.into();
+        Ok(Self::new_with_scalar(rows, cols, mat_type.channels(), s))
     }
 }
 
