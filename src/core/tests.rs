@@ -854,4 +854,118 @@ mod tests {
         assert_eq!(mat.channels, 2);
         assert_eq!(mat.data, vec![0u8; 4], "data must be zeroed after resize");
     }
+
+    // ---- Matrix scalar constructor tests ----
+
+    #[test]
+    fn test_matrix_new_with_scalar_1ch() {
+        let s = Scalar::new(42u8, 0u8, 0u8, 0u8);
+        let m = Matrix::new_with_scalar(2, 3, 1, s);
+        assert_eq!(m.rows, 2);
+        assert_eq!(m.cols, 3);
+        assert_eq!(m.channels, 1);
+        assert!(m.data.iter().all(|&v| v == 42));
+    }
+
+    #[test]
+    fn test_matrix_new_with_scalar_3ch() {
+        let s = Scalar::new(10u8, 20u8, 30u8, 0u8);
+        let m = Matrix::new_with_scalar(1, 2, 3, s);
+        // pixel (0,0): [10,20,30]  pixel (0,1): [10,20,30]
+        assert_eq!(m.data, vec![10, 20, 30, 10, 20, 30]);
+    }
+
+    #[test]
+    fn test_matrix_new_with_scalar_channels_beyond_4() {
+        let s = Scalar::new(1u8, 2u8, 3u8, 4u8);
+        let m = Matrix::new_with_scalar(1, 1, 6, s);
+        // channels 4 and 5 default to 0
+        assert_eq!(m.data, vec![1, 2, 3, 4, 0, 0]);
+    }
+
+    #[test]
+    fn test_matrix_new_with_scalar_from_size() {
+        use crate::core::Size;
+        let s = Scalar::new(7u8, 8u8, 9u8, 0u8);
+        let m = Matrix::new_with_scalar_from_size(Size::new(3usize, 2usize), 3, s);
+        assert_eq!(m.rows, 2);
+        assert_eq!(m.cols, 3);
+        assert_eq!(m.channels, 3);
+        assert_eq!(m.data.len(), 2 * 3 * 3);
+    }
+
+    #[test]
+    fn test_matrix_new_with_scalar_typed_from_size_ok() {
+        use crate::core::matrix::{CV_32FC1, CV_8UC3};
+        use crate::core::Size;
+
+        let s = Scalar::new(128u8, 64u8, 32u8, 0u8);
+        let m =
+            Matrix::<u8>::new_with_scalar_typed_from_size(Size::new(4usize, 4usize), CV_8UC3, s)
+                .unwrap();
+        assert_eq!(m.rows, 4);
+        assert_eq!(m.cols, 4);
+        assert_eq!(m.channels, 3);
+        // spot-check first pixel
+        assert_eq!(m.data[0], 128);
+        assert_eq!(m.data[1], 64);
+        assert_eq!(m.data[2], 32);
+
+        let sf = Scalar::new(1.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let mf =
+            Matrix::<f32>::new_with_scalar_typed_from_size(Size::new(2usize, 2usize), CV_32FC1, sf)
+                .unwrap();
+        assert_eq!(mf.channels, 1);
+        assert!(mf.data.iter().all(|&v| v == 1.0));
+    }
+
+    #[test]
+    fn test_matrix_new_with_scalar_typed_from_size_depth_mismatch() {
+        use crate::core::matrix::CV_32FC1;
+        use crate::core::Size;
+
+        // u8 matrix but CV_32FC1 (f32 depth) → error
+        let s = Scalar::new(0u8, 0u8, 0u8, 0u8);
+        let result =
+            Matrix::<u8>::new_with_scalar_typed_from_size(Size::new(2usize, 2usize), CV_32FC1, s);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_matrix_set_to() {
+        let mut m = Matrix::<u8>::zeros(2, 2, 3);
+        m.set_to(Scalar::new(10u8, 20u8, 30u8, 0u8));
+        // every pixel should be [10, 20, 30]
+        for i in (0..m.data.len()).step_by(3) {
+            assert_eq!(m.data[i], 10);
+            assert_eq!(m.data[i + 1], 20);
+            assert_eq!(m.data[i + 2], 30);
+        }
+    }
+
+    #[test]
+    fn test_matrix_set_to_masked_ok() {
+        let mut m = Matrix::<u8>::zeros(2, 2, 1);
+        // mask: only (0,0) and (1,1) are non-zero
+        let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0u8, 0u8, 1u8]);
+        m.set_to_masked(Scalar::new(255u8, 0u8, 0u8, 0u8), &mask)
+            .unwrap();
+        assert_eq!(m.data, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_matrix_set_to_masked_size_mismatch() {
+        let mut m = Matrix::<u8>::zeros(3, 3, 1);
+        let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0u8, 0u8, 1u8]);
+        assert!(m
+            .set_to_masked(Scalar::new(255u8, 0u8, 0u8, 0u8), &mask)
+            .is_err());
+    }
+
+    #[test]
+    fn test_matrix_set_to_f32() {
+        let mut m = Matrix::<f32>::zeros(1, 2, 2);
+        m.set_to(Scalar::new(0.5f32, 1.5f32, 0.0f32, 0.0f32));
+        assert_eq!(m.data, vec![0.5, 1.5, 0.5, 1.5]);
+    }
 }
