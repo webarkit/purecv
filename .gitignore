@@ -20,7 +20,13 @@ cpp_ref/opencv
 
 # AI
 .agents/*
+!.agents/rules/purecv.md
+!.agents/skills/
+!.agents/skills/license-header-adder/SKILL.md
+!.agents/skills/license-header-adder/resources/HEADER.txt
 !.agents/instructions.md
+!.agents/workflows/
+!.agents/workflows/add-license-headers.md
 
 # Examples
 examples/data/out/
