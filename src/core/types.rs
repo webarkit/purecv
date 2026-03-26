@@ -125,9 +125,38 @@ pub type Size2i = Size<i32>;
 pub type Size2f = Size<f32>;
 pub type Size2d = Size<f64>;
 
-/// Scalar represents a 4-element vector.
+/// A 4-element value used to represent pixel colours, per-channel constants,
+/// and range bounds — mirroring `cv::Scalar_<T>` in OpenCV.
 ///
-/// It is widely used in OpenCV to pass pixel values and for range checks.
+/// The four components are stored in `v[0..=3]` and correspond to channels
+/// 0–3 (e.g. B, G, R, A for a BGR image).  When a matrix has fewer than 4
+/// channels only the leading `channels` entries are used; the rest are ignored.
+///
+/// # Convenience constructors
+///
+/// | Constructor | Meaning |
+/// |---|---|
+/// | `Scalar::new(v0, v1, v2, v3)` | explicit four-channel value |
+/// | `Scalar::all(v)` | broadcast `v` to all four channels |
+/// | `Scalar::from_value(v)` | `v` in channel 0, zero elsewhere |
+/// | `Scalar::from_array([a, b, c, d])` | from a raw `[T; 4]` |
+/// | `[a, b, c, d].into()` | same, via `From<[T; 4]>` |
+/// | `v.into()` | `from_value(v)` via `From<T>` |
+///
+/// # Example
+/// ```
+/// use purecv::core::Scalar;
+///
+/// let s = Scalar::new(255u8, 128, 0, 255);
+/// assert_eq!(s[0], 255);
+/// assert_eq!(s[3], 255);
+///
+/// let gray = Scalar::all(128u8);
+/// assert_eq!(gray.to_array(), [128, 128, 128, 128]);
+///
+/// let doubled = gray.map(|x| x as u16 * 2);
+/// assert_eq!(doubled[0], 256u16);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Scalar<T> {
     pub v: [T; 4],
@@ -154,16 +183,34 @@ where
     }
 
     /// Creates a `Scalar` from a 4-element array.
+    ///
+    /// Equivalent to the `From<[T; 4]>` impl; prefer the `into()` syntax for
+    /// brevity unless the explicit call improves readability.
     pub fn from_array(arr: [T; 4]) -> Self {
         Self { v: arr }
     }
 
-    /// Returns the underlying 4-element array.
+    /// Returns the underlying 4-element array, consuming `self`.
+    ///
+    /// Useful when you need to pass the raw values to an API that
+    /// does not accept `Scalar`.
     pub fn to_array(self) -> [T; 4] {
         self.v
     }
 
-    /// Transforms each channel using the given closure, producing a `Scalar<U>`.
+    /// Applies `f` to each channel, producing a `Scalar<U>`.
+    ///
+    /// Useful for type conversions or per-channel transformations without
+    /// manually unpacking the array.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::Scalar;
+    /// let s = Scalar::new(0u8, 128u8, 255u8, 0u8);
+    /// // Normalise to [0.0, 1.0]
+    /// let norm: Scalar<f32> = s.map(|x| x as f32 / 255.0);
+    /// assert!((norm[1] - 128.0 / 255.0).abs() < 1e-6);
+    /// ```
     pub fn map<U, F: Fn(T) -> U>(self, f: F) -> Scalar<U> {
         Scalar {
             v: [f(self.v[0]), f(self.v[1]), f(self.v[2]), f(self.v[3])],
@@ -171,6 +218,10 @@ where
     }
 }
 
+/// Accesses channel `i` by index (`s[0]` … `s[3]`).
+///
+/// # Panics
+/// Panics if `i >= 4`.
 impl<T> Index<usize> for Scalar<T> {
     type Output = T;
     fn index(&self, i: usize) -> &T {
@@ -178,25 +229,34 @@ impl<T> Index<usize> for Scalar<T> {
     }
 }
 
+/// Mutably accesses channel `i` by index (`s[0]` … `s[3]`).
+///
+/// # Panics
+/// Panics if `i >= 4`.
 impl<T> IndexMut<usize> for Scalar<T> {
     fn index_mut(&mut self, i: usize) -> &mut T {
         &mut self.v[i]
     }
 }
 
+/// Converts a `[T; 4]` array directly into a `Scalar<T>`.
 impl<T: Copy + Default> From<[T; 4]> for Scalar<T> {
     fn from(arr: [T; 4]) -> Self {
         Self::from_array(arr)
     }
 }
 
-/// Mirrors OpenCV's `cv::Scalar(v)`: first channel = `v`, rest = zero.
+/// Mirrors OpenCV's `cv::Scalar(v)`: channel 0 = `v`, channels 1–3 = zero.
+///
+/// This is the idiomatic way to create a single-channel constant, e.g.
+/// `Scalar::from(128u8)` for a grayscale value.
 impl<T: Copy + Default> From<T> for Scalar<T> {
     fn from(v: T) -> Self {
         Self::from_value(v)
     }
 }
 
+/// Per-channel addition: `result[c] = self[c] + rhs[c]`.
 impl<T: Copy + Default + Add<Output = T>> Add for Scalar<T> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
@@ -209,6 +269,7 @@ impl<T: Copy + Default + Add<Output = T>> Add for Scalar<T> {
     }
 }
 
+/// Per-channel subtraction: `result[c] = self[c] - rhs[c]`.
 impl<T: Copy + Default + Sub<Output = T>> Sub for Scalar<T> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
@@ -221,7 +282,9 @@ impl<T: Copy + Default + Sub<Output = T>> Sub for Scalar<T> {
     }
 }
 
-/// Multiplies each channel by a scalar value.
+/// Broadcast multiply: scales every channel by the same value `rhs`.
+///
+/// `result[c] = self[c] * rhs`
 impl<T: Copy + Default + Mul<Output = T>> Mul<T> for Scalar<T> {
     type Output = Self;
     fn mul(self, rhs: T) -> Self {
@@ -234,7 +297,7 @@ impl<T: Copy + Default + Mul<Output = T>> Mul<T> for Scalar<T> {
     }
 }
 
-/// Element-wise multiplication of two `Scalar`s.
+/// Element-wise multiply: `result[c] = self[c] * rhs[c]`.
 impl<T: Copy + Default + Mul<Output = T>> Mul<Scalar<T>> for Scalar<T> {
     type Output = Self;
     fn mul(self, rhs: Scalar<T>) -> Self {
@@ -247,8 +310,12 @@ impl<T: Copy + Default + Mul<Output = T>> Mul<Scalar<T>> for Scalar<T> {
     }
 }
 
-/// Divides each channel by a scalar value.
-/// Division by zero returns `T::default()` (zero) instead of panicking.
+/// Broadcast divide: `result[c] = self[c] / rhs`.
+///
+/// **Zero-safe:** if `rhs` is zero every channel is set to `T::default()` (zero)
+/// rather than panicking or producing `NaN`/`Inf`.  For floating-point types
+/// this deviates from IEEE 754; use plain `/` on the raw values if you need
+/// `Inf` semantics.  For checked integer division see [`Scalar::checked_div`].
 impl<T: Copy + Default + PartialEq + Zero + Div<Output = T>> Div<T> for Scalar<T> {
     type Output = Self;
     fn div(self, rhs: T) -> Self {
@@ -260,13 +327,20 @@ impl<T: Copy + Default + PartialEq + Zero + Div<Output = T>> Div<T> for Scalar<T
             }
         };
         Self {
-            v: [safe(self.v[0]), safe(self.v[1]), safe(self.v[2]), safe(self.v[3])],
+            v: [
+                safe(self.v[0]),
+                safe(self.v[1]),
+                safe(self.v[2]),
+                safe(self.v[3]),
+            ],
         }
     }
 }
 
-/// Element-wise division of two `Scalar`s.
-/// Per-channel division by zero returns `T::default()` (zero) instead of panicking.
+/// Element-wise divide: `result[c] = self[c] / rhs[c]`.
+///
+/// **Zero-safe:** any channel whose divisor is zero produces `T::default()` (zero).
+/// For integer types that need an error on division-by-zero use [`Scalar::checked_div`].
 impl<T: Copy + Default + PartialEq + Zero + Div<Output = T>> Div<Scalar<T>> for Scalar<T> {
     type Output = Self;
     fn div(self, rhs: Scalar<T>) -> Self {
@@ -289,8 +363,27 @@ impl<T: Copy + Default + PartialEq + Zero + Div<Output = T>> Div<Scalar<T>> for 
 }
 
 impl<T: Copy + Default + CheckedDiv> Scalar<T> {
-    /// Divides element-wise, returning an error if any divisor channel is zero.
-    /// Available for integer types only (via `num_traits::CheckedDiv`).
+    /// Element-wise division that returns an error instead of zero on
+    /// division-by-zero.
+    ///
+    /// Only available for integer types that implement [`num_traits::CheckedDiv`]
+    /// (e.g. `u8`, `i32`).  For floating-point types use the infallible
+    /// `Div<Scalar<T>>` impl.
+    ///
+    /// # Errors
+    /// Returns [`PureCvError::InvalidInput`] naming the first channel whose
+    /// divisor is zero.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::Scalar;
+    /// let a = Scalar::new(10u8, 20, 30, 40);
+    /// let b = Scalar::new(2u8,  4,  5, 8);
+    /// assert_eq!(a.checked_div(b).unwrap().v, [5, 5, 6, 5]);
+    ///
+    /// let bad = Scalar::new(2u8, 0, 1, 1);
+    /// assert!(a.checked_div(bad).is_err());
+    /// ```
     pub fn checked_div(self, rhs: Scalar<T>) -> Result<Self> {
         let div_ch = |a: T, b: T, ch: usize| {
             a.checked_div(&b).ok_or_else(|| {

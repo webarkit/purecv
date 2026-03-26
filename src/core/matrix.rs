@@ -394,9 +394,24 @@ impl<T: Default + Clone> Matrix<T> {
         Ok(())
     }
 
-    /// Creates a new `Matrix` with all pixels initialised to the given `Scalar`.
+    /// Creates a new `Matrix` with every pixel initialised to the given [`Scalar`].
     ///
-    /// Channels beyond 4 are set to `T::default()` (zero), mirroring OpenCV.
+    /// Each pixel stores `channels` values; channel `c` is taken from `s[c]`.
+    /// For matrices with more than 4 channels, channels ≥ 4 are filled with
+    /// `T::default()` (i.e. zero), matching OpenCV's behaviour.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::{Matrix, Scalar};
+    /// // 2×3 single-channel matrix filled with 7.0
+    /// let m = Matrix::<f32>::new_with_scalar(2, 3, 1, Scalar::all(7.0));
+    /// assert_eq!(m.get(0, 0, 0), Some(&7.0_f32));
+    ///
+    /// // 1×1 BGR matrix filled with blue (255, 0, 0)
+    /// let blue = Matrix::<u8>::new_with_scalar(1, 1, 3, Scalar::new(255, 0, 0, 0));
+    /// assert_eq!(blue.get(0, 0, 0), Some(&255_u8));
+    /// assert_eq!(blue.get(0, 0, 1), Some(&0_u8));
+    /// ```
     pub fn new_with_scalar(rows: usize, cols: usize, channels: usize, s: Scalar<T>) -> Self {
         let mut data = Vec::with_capacity(rows * cols * channels);
         for _ in 0..rows * cols {
@@ -412,7 +427,19 @@ impl<T: Default + Clone> Matrix<T> {
         }
     }
 
-    /// Creates a new `Matrix` from a `Size` with all pixels set to `s`.
+    /// Creates a new `Matrix` from a [`Size`] with every pixel initialised to `s`.
+    ///
+    /// Convenience wrapper around [`new_with_scalar`](Self::new_with_scalar) that
+    /// accepts a `Size<U>` instead of separate `rows`/`cols` arguments.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::{Matrix, Scalar, Size};
+    /// let size = Size::new(640_usize, 480_usize);
+    /// let m = Matrix::<f32>::new_with_scalar_from_size(size, 1, Scalar::all(1.0));
+    /// assert_eq!(m.rows, 480);
+    /// assert_eq!(m.cols, 640);
+    /// ```
     pub fn new_with_scalar_from_size<U: Into<usize>>(
         size: crate::core::Size<U>,
         channels: usize,
@@ -421,9 +448,19 @@ impl<T: Default + Clone> Matrix<T> {
         Self::new_with_scalar(size.height.into(), size.width.into(), channels, s)
     }
 
-    /// Sets every pixel in this matrix to the values in `s`.
+    /// Overwrites every pixel in this matrix with the channel values from `s`.
     ///
-    /// Channels beyond 4 are set to `T::default()`.
+    /// For matrices with more than 4 channels, channels ≥ 4 are set to
+    /// `T::default()` (zero).  Equivalent to OpenCV's `Mat::setTo(scalar)`.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::{Matrix, Scalar};
+    /// let mut m = Matrix::<u8>::zeros(4, 4, 3);
+    /// m.set_to(Scalar::new(255, 128, 0, 0)); // fill every pixel with (R=255, G=128, B=0)
+    /// assert_eq!(m.get(2, 2, 0), Some(&255_u8));
+    /// assert_eq!(m.get(2, 2, 1), Some(&128_u8));
+    /// ```
     pub fn set_to(&mut self, s: Scalar<T>) {
         for row in 0..self.rows {
             for col in 0..self.cols {
@@ -434,10 +471,27 @@ impl<T: Default + Clone> Matrix<T> {
         }
     }
 
-    /// Sets pixels to `s` where `mask` is non-zero.
+    /// Overwrites pixels with `s` at every position where `mask` is non-zero.
+    ///
+    /// Pixels where `mask == 0` are left unchanged.  This mirrors
+    /// OpenCV's `Mat::setTo(scalar, mask)`.
+    ///
+    /// Channels beyond 4 are set to `T::default()` (zero).
     ///
     /// # Errors
-    /// Returns `PureCvError::InvalidDimensions` if the mask rows/cols differ from this matrix.
+    /// Returns [`PureCvError::InvalidDimensions`] if `mask` does not have the
+    /// same number of rows and columns as `self`.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::{Matrix, Scalar};
+    /// let mut m = Matrix::<u8>::zeros(2, 2, 1);
+    /// // mask: only top-left pixel is set
+    /// let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0, 0, 0]);
+    /// m.set_to_masked(Scalar::all(42), &mask).unwrap();
+    /// assert_eq!(m.get(0, 0, 0), Some(&42_u8));
+    /// assert_eq!(m.get(0, 1, 0), Some(&0_u8));  // unchanged
+    /// ```
     pub fn set_to_masked(&mut self, s: Scalar<T>, mask: &Matrix<u8>) -> Result<()> {
         if self.rows != mask.rows || self.cols != mask.cols {
             return Err(PureCvError::InvalidDimensions(format!(
@@ -573,11 +627,28 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 impl<T: Default + Clone + DataType> Matrix<T> {
-    /// Creates a new `Matrix` from a `Size` and `MatType` with all pixels set to `s`.
+    /// Creates a new `Matrix` from a [`Size`] and [`MatType`] with every pixel set to `s`.
+    ///
+    /// The number of channels is taken from `mat_type.channels()`.  This is the
+    /// type-safe variant: the element depth encoded in `mat_type` must match the
+    /// concrete element type `T`; otherwise an error is returned so that
+    /// mismatches are caught at runtime rather than producing silent garbage.
     ///
     /// # Errors
-    /// Returns `PureCvError::InvalidInput` if the depth encoded in `mat_type` does not
-    /// match the element type `T`.
+    /// Returns [`PureCvError::InvalidInput`] when `mat_type.depth() != T::depth()`.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::{Matrix, Scalar, Size, CV_32FC3};
+    /// let size = Size::new(320_usize, 240_usize);
+    /// let m = Matrix::<f32>::new_with_scalar_typed_from_size(
+    ///     size,
+    ///     CV_32FC3,
+    ///     Scalar::new(1.0, 0.5, 0.0, 0.0),
+    /// )
+    /// .unwrap();
+    /// assert_eq!(m.channels, 3);
+    /// ```
     pub fn new_with_scalar_typed_from_size<U: Into<usize>>(
         size: crate::core::Size<U>,
         mat_type: MatType,
