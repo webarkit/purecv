@@ -27,6 +27,8 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 ### `purecv-core`
 - **Matrix Operations:** Multi-dimensional `Matrix<T>` with support for common arithmetic (`add`, `subtract`, `multiply`, `divide`) and bitwise logic (`bitwise_and`, `bitwise_or`, `bitwise_xor`, `bitwise_not`). Matrix and scalar variants for all operations.
 - **Factory Methods:** Intuitive initialization with `zeros`, `ones`, `eye`, and `diag`.
+- **Scalar constructors:** `Matrix::new_with_scalar` (fill all pixels from a `Scalar<T>`), `new_with_scalar_from_size`, and `new_with_scalar_typed_from_size`. `set_to` and `set_to_masked` assign a `Scalar<T>` to every pixel (optionally masked); channels beyond 4 default to `T::default()`.
+- **Scalar type:** `Scalar<T>` — a 4-channel value — now supports `Index`/`IndexMut` for channel access, `from_array`/`to_array`, `From<[T;4]>` and `From<T>` conversions, and a `map()` helper for per-channel type transforms. Arithmetic traits: per-channel `Add`/`Sub`; `Mul<T>`/`Mul<Scalar<T>>` for scaling and element-wise multiply; safe `Div<T>`/`Div<Scalar<T>>` (returns zero on divide-by-zero); `checked_div()` returning `Result` for integer types.
 - **Comparison:** `compare`, `compare_scalar`, `min`, `max`, `abs_diff`, `in_range`.
 - **Structural:** `flip`, `rotate`, `transpose`, `repeat`, `reshape`, `hconcat`, `vconcat`, `copy_make_border`, `extract_channel`, `insert_channel`.
 - **Math:** `sqrt`, `exp`, `log`, `pow`, `magnitude`, `phase`, `cart_to_polar`, `polar_to_cart`, `convert_scale_abs`.
@@ -91,10 +93,44 @@ use purecv::imgproc::{cvt_color, ColorConversionCodes};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a 3-channel matrix initialized to ones
     let mat = Matrix::<f32>::ones(480, 640, 3);
-    
+
     // Create an identity matrix
     let identity = Matrix::<f32>::eye(3, 3, 1);
-    
+
+    // --- Scalar API ---
+
+    // Build a Scalar from individual channels or a single broadcast value
+    let blue = Scalar::new(255.0f32, 0.0, 0.0, 0.0);
+    let gray = Scalar::all(128.0f32);   // all four channels = 128
+
+    // Index channels directly
+    assert_eq!(blue[0], 255.0);
+
+    // Conversions
+    let from_arr: Scalar<f32> = [1.0, 2.0, 3.0, 4.0].into();
+    let arr = from_arr.to_array();          // → [1.0, 2.0, 3.0, 4.0]
+
+    // Per-channel arithmetic
+    let a = Scalar::new(10.0f32, 20.0, 30.0, 40.0);
+    let b = Scalar::new(1.0f32,  2.0,  3.0,  4.0);
+    let sum   = a + b;                      // per-channel add
+    let diff  = a - b;                      // per-channel sub
+    let scaled = a * 2.0f32;               // broadcast multiply
+    let prod  = a * b;                      // element-wise multiply
+    let div   = a / 2.0f32;               // broadcast divide (zero-safe)
+
+    // Map channels to another type
+    let as_u8: Scalar<u8> = a.map(|x| x as u8);
+
+    // --- Matrix scalar constructors ---
+
+    // Fill an entire matrix with a constant Scalar value
+    let filled = Matrix::<f32>::new_with_scalar(480, 640, 3, blue);
+
+    // Use set_to to overwrite an existing matrix
+    let mut mat2 = Matrix::<f32>::zeros(480, 640, 3);
+    mat2.set_to(gray);
+
     println!("Matrix size: {}x{}", mat.cols, mat.rows);
     Ok(())
 }

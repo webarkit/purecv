@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_matrix_new_with_scalar_typed_from_size_ok() {
-        use crate::core::matrix::{CV_8UC3, CV_32FC1};
+        use crate::core::matrix::{CV_32FC1, CV_8UC3};
         use crate::core::Size;
 
         let s = Scalar::new(128u8, 64u8, 32u8, 0u8);
@@ -723,12 +723,9 @@ mod tests {
         assert_eq!(m.data[2], 32);
 
         let sf = Scalar::new(1.0f32, 0.0f32, 0.0f32, 0.0f32);
-        let mf = Matrix::<f32>::new_with_scalar_typed_from_size(
-            Size::new(2usize, 2usize),
-            CV_32FC1,
-            sf,
-        )
-        .unwrap();
+        let mf =
+            Matrix::<f32>::new_with_scalar_typed_from_size(Size::new(2usize, 2usize), CV_32FC1, sf)
+                .unwrap();
         assert_eq!(mf.channels, 1);
         assert!(mf.data.iter().all(|&v| v == 1.0));
     }
