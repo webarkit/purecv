@@ -38,9 +38,9 @@ use wasm_bindgen::prelude::*;
 
 use purecv::core::arithm;
 use purecv::core::dynamic::{DynamicData, DynamicMatrix};
-use purecv::core::matrix::MatType;
+use purecv::core::matrix::{Depth, MatType};
 use purecv::core::structural;
-use purecv::core::types::{BorderTypes, Point2i, Size2i};
+use purecv::core::types::{BorderTypes, Point2i, Scalar as CoreScalar, Size2i};
 use purecv::core::Matrix;
 use purecv::imgproc::color::{cvt_color, ColorConversionCode};
 use purecv::imgproc::derivatives;
@@ -348,6 +348,237 @@ impl Mat {
             .convert_to(depth)
             .map_err(|e| JsError::new(&format!("{e}")))?;
         Ok(Mat { inner: dm })
+    }
+
+    // -- Scalar constructors / fill -----------------------------------------
+
+    /// Creates a new Mat with every pixel set to the given `Scalar`.
+    ///
+    /// Channel values in `s` are cast to the element depth encoded in `mat_type`.
+    ///
+    /// ```js
+    /// // 480×640 BGR u8 image filled with blue (255, 0, 0)
+    /// const blue = new Scalar(255, 0, 0, 0);
+    /// const img  = Mat.newWithScalar(480, 640, CV_8UC3(), blue);
+    /// ```
+    #[wasm_bindgen(js_name = "newWithScalar")]
+    pub fn new_with_scalar(
+        rows: usize,
+        cols: usize,
+        mat_type: i32,
+        s: &Scalar,
+    ) -> Result<Mat, JsError> {
+        let mt = MatType(mat_type);
+        let ch = mt.channels();
+        let data = match mt.depth() {
+            Depth::CV_8U => DynamicData::U8(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as u8, s.v1 as u8, s.v2 as u8, s.v3 as u8),
+            )),
+            Depth::CV_8S => DynamicData::I8(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as i8, s.v1 as i8, s.v2 as i8, s.v3 as i8),
+            )),
+            Depth::CV_16U => DynamicData::U16(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as u16, s.v1 as u16, s.v2 as u16, s.v3 as u16),
+            )),
+            Depth::CV_16S => DynamicData::I16(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as i16, s.v1 as i16, s.v2 as i16, s.v3 as i16),
+            )),
+            Depth::CV_32S => DynamicData::I32(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as i32, s.v1 as i32, s.v2 as i32, s.v3 as i32),
+            )),
+            Depth::CV_32F => DynamicData::F32(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0 as f32, s.v1 as f32, s.v2 as f32, s.v3 as f32),
+            )),
+            Depth::CV_64F => DynamicData::F64(Matrix::new_with_scalar(
+                rows,
+                cols,
+                ch,
+                CoreScalar::new(s.v0, s.v1, s.v2, s.v3),
+            )),
+            Depth::CV_16F => return Err(JsError::new("CV_16F is not yet supported")),
+        };
+        Ok(Mat {
+            inner: DynamicMatrix { data },
+        })
+    }
+
+    /// Fills every pixel of this Mat with the given `Scalar`.
+    ///
+    /// Channel values are cast to the element depth of this Mat.
+    ///
+    /// ```js
+    /// const gray = new Scalar(128, 128, 128, 255);
+    /// mat.setTo(gray);
+    /// ```
+    #[wasm_bindgen(js_name = "setTo")]
+    pub fn set_to(&mut self, s: &Scalar) {
+        match &mut self.inner.data {
+            DynamicData::U8(m) => m.set_to(CoreScalar::new(
+                s.v0 as u8, s.v1 as u8, s.v2 as u8, s.v3 as u8,
+            )),
+            DynamicData::I8(m) => m.set_to(CoreScalar::new(
+                s.v0 as i8, s.v1 as i8, s.v2 as i8, s.v3 as i8,
+            )),
+            DynamicData::U16(m) => m.set_to(CoreScalar::new(
+                s.v0 as u16,
+                s.v1 as u16,
+                s.v2 as u16,
+                s.v3 as u16,
+            )),
+            DynamicData::I16(m) => m.set_to(CoreScalar::new(
+                s.v0 as i16,
+                s.v1 as i16,
+                s.v2 as i16,
+                s.v3 as i16,
+            )),
+            DynamicData::I32(m) => m.set_to(CoreScalar::new(
+                s.v0 as i32,
+                s.v1 as i32,
+                s.v2 as i32,
+                s.v3 as i32,
+            )),
+            DynamicData::F32(m) => m.set_to(CoreScalar::new(
+                s.v0 as f32,
+                s.v1 as f32,
+                s.v2 as f32,
+                s.v3 as f32,
+            )),
+            DynamicData::F64(m) => m.set_to(CoreScalar::new(s.v0, s.v1, s.v2, s.v3)),
+        }
+    }
+
+    /// Fills pixels with the given `Scalar` where `mask` is non-zero.
+    ///
+    /// `mask` must be a single-channel `u8` Mat with the same dimensions as `self`.
+    ///
+    /// ```js
+    /// const white = new Scalar(255, 255, 255, 255);
+    /// mat.setToMasked(white, mask);  // only pixels where mask != 0 are filled
+    /// ```
+    #[wasm_bindgen(js_name = "setToMasked")]
+    pub fn set_to_masked(&mut self, s: &Scalar, mask: &Mat) -> Result<(), JsError> {
+        let mask_m = require_u8(mask, "setToMasked")?;
+        match &mut self.inner.data {
+            DynamicData::U8(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as u8, s.v1 as u8, s.v2 as u8, s.v3 as u8),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::I8(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as i8, s.v1 as i8, s.v2 as i8, s.v3 as i8),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::U16(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as u16, s.v1 as u16, s.v2 as u16, s.v3 as u16),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::I16(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as i16, s.v1 as i16, s.v2 as i16, s.v3 as i16),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::I32(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as i32, s.v1 as i32, s.v2 as i32, s.v3 as i32),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::F32(m) => m
+                .set_to_masked(
+                    CoreScalar::new(s.v0 as f32, s.v1 as f32, s.v2 as f32, s.v3 as f32),
+                    mask_m,
+                )
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+            DynamicData::F64(m) => m
+                .set_to_masked(CoreScalar::new(s.v0, s.v1, s.v2, s.v3), mask_m)
+                .map_err(|e| JsError::new(&format!("{e}")))?,
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Scalar — 4-channel value type
+// ---------------------------------------------------------------------------
+
+/// A 4-channel value for initialising or filling matrices.
+///
+/// Channel values are `f64` and are cast to the element depth of the target
+/// `Mat` when passed to `newWithScalar`, `setTo`, or `setToMasked`.
+///
+/// ```js
+/// const blue  = new Scalar(255, 0, 0, 0);      // BGR blue
+/// const gray  = new Scalar(128, 128, 128, 255); // RGBA mid-gray
+/// const white = Scalar.all(255);                // broadcast
+/// ```
+#[wasm_bindgen(js_name = "Scalar")]
+pub struct Scalar {
+    pub v0: f64,
+    pub v1: f64,
+    pub v2: f64,
+    pub v3: f64,
+}
+
+#[wasm_bindgen(js_name = "Scalar")]
+impl Scalar {
+    /// Creates a Scalar from four channel values.
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64, v2: f64, v3: f64) -> Scalar {
+        Scalar { v0, v1, v2, v3 }
+    }
+
+    /// Creates a Scalar with the same value broadcast to all four channels.
+    ///
+    /// ```js
+    /// const white = Scalar.all(255); // [255, 255, 255, 255]
+    /// ```
+    pub fn all(v: f64) -> Scalar {
+        Scalar {
+            v0: v,
+            v1: v,
+            v2: v,
+            v3: v,
+        }
+    }
+
+    /// Creates a Scalar with `v` in channel 0 and zero in channels 1–3.
+    /// Mirrors OpenCV's `cv::Scalar(v)`.
+    ///
+    /// ```js
+    /// const luma = Scalar.fromValue(128); // [128, 0, 0, 0]
+    /// ```
+    #[wasm_bindgen(js_name = "fromValue")]
+    pub fn from_value(v: f64) -> Scalar {
+        Scalar {
+            v0: v,
+            v1: 0.0,
+            v2: 0.0,
+            v3: 0.0,
+        }
     }
 }
 
