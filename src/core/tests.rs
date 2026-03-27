@@ -968,4 +968,369 @@ mod tests {
         m.set_to(Scalar::new(0.5f32, 1.5f32, 0.0f32, 0.0f32));
         assert_eq!(m.data, vec![0.5, 1.5, 0.5, 1.5]);
     }
+
+    // -----------------------------------------------------------------------
+    // Scalar arithmetic variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scalar_arithmetic() {
+        let m = Matrix::from_vec(2, 2, 1, vec![10u8, 20, 30, 40]);
+        let s = Scalar::<f64>::all(5.0);
+
+        let r = add_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![15u8, 25, 35, 45]);
+
+        let r = subtract_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![5u8, 15, 25, 35]);
+
+        let r = multiply_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![50u8, 100, 150, 200]);
+
+        let r = divide_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![2u8, 4, 6, 8]);
+    }
+
+    #[test]
+    fn test_abs_diff_scalar() {
+        let m = Matrix::from_vec(1, 4, 1, vec![10u8, 20, 30, 40]);
+        let s = Scalar::<u8>::all(25);
+        let r = abs_diff_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![15u8, 5, 5, 15]);
+    }
+
+    #[test]
+    fn test_bitwise_scalar() {
+        let m = Matrix::from_vec(1, 4, 1, vec![0b1010u8, 0b1100, 0b1111, 0b0000]);
+        let s = Scalar::<u8>::all(0b0101);
+
+        let r = bitwise_and_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![0b0000u8, 0b0100, 0b0101, 0b0000]);
+
+        let r = bitwise_or_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![0b1111u8, 0b1101, 0b1111, 0b0101]);
+
+        let r = bitwise_xor_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![0b1111u8, 0b1001, 0b1010, 0b0101]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Min / Max
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_min_max() {
+        let m1 = Matrix::from_vec(2, 2, 1, vec![1i32, 5, 3, 7]);
+        let m2 = Matrix::from_vec(2, 2, 1, vec![4i32, 2, 6, 0]);
+
+        let r = min(&m1, &m2).unwrap();
+        assert_eq!(r.data, vec![1i32, 2, 3, 0]);
+
+        let r = max(&m1, &m2).unwrap();
+        assert_eq!(r.data, vec![4i32, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_min_max_scalar() {
+        let m = Matrix::from_vec(1, 4, 1, vec![1i32, 5, 3, 7]);
+        let s = Scalar::<i32>::all(4);
+
+        let r = min_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![1i32, 4, 3, 4]);
+
+        let r = max_scalar(&m, s).unwrap();
+        assert_eq!(r.data, vec![4i32, 5, 4, 7]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Comparison operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compare() {
+        let m1 = Matrix::from_vec(1, 4, 1, vec![1i32, 2, 3, 4]);
+        let m2 = Matrix::from_vec(1, 4, 1, vec![2i32, 2, 2, 2]);
+
+        let r = compare(&m1, &m2, CmpTypes::Eq).unwrap();
+        assert_eq!(r.data, vec![0u8, 255, 0, 0]);
+
+        let r = compare(&m1, &m2, CmpTypes::Gt).unwrap();
+        assert_eq!(r.data, vec![0u8, 0, 255, 255]);
+
+        let r = compare(&m1, &m2, CmpTypes::Ge).unwrap();
+        assert_eq!(r.data, vec![0u8, 255, 255, 255]);
+
+        let r = compare(&m1, &m2, CmpTypes::Lt).unwrap();
+        assert_eq!(r.data, vec![255u8, 0, 0, 0]);
+
+        let r = compare(&m1, &m2, CmpTypes::Le).unwrap();
+        assert_eq!(r.data, vec![255u8, 255, 0, 0]);
+
+        let r = compare(&m1, &m2, CmpTypes::Ne).unwrap();
+        assert_eq!(r.data, vec![255u8, 0, 255, 255]);
+    }
+
+    #[test]
+    fn test_compare_scalar() {
+        let m = Matrix::from_vec(1, 4, 1, vec![1i32, 2, 3, 4]);
+        let s = Scalar::<i32>::all(2);
+
+        let r = compare_scalar(&m, s, CmpTypes::Eq).unwrap();
+        assert_eq!(r.data, vec![0u8, 255, 0, 0]);
+
+        let r = compare_scalar(&m, s, CmpTypes::Gt).unwrap();
+        assert_eq!(r.data, vec![0u8, 0, 255, 255]);
+    }
+
+    #[test]
+    fn test_in_range() {
+        let src = Matrix::from_vec(1, 4, 1, vec![10u8, 50, 100, 200]);
+        let lower = Matrix::from_vec(1, 4, 1, vec![20u8, 20, 20, 20]);
+        let upper = Matrix::from_vec(1, 4, 1, vec![150u8, 150, 150, 150]);
+        let mut dst = Matrix::<u8>::zeros(1, 4, 1);
+
+        in_range(&src, &lower, &upper, &mut dst).unwrap();
+        assert_eq!(dst.data, vec![0u8, 255, 255, 0]);
+    }
+
+    #[test]
+    fn test_in_range_scalar() {
+        let src = Matrix::from_vec(1, 4, 1, vec![10u8, 50, 100, 200]);
+        let mut dst = Matrix::<u8>::zeros(1, 4, 1);
+
+        in_range_scalar(&src, &[20u8], &[150u8], &mut dst).unwrap();
+        assert_eq!(dst.data, vec![0u8, 255, 255, 0]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Reduction operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_reduce_sum_avg() {
+        let m = Matrix::from_vec(2, 3, 1, vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+        // Reduce along rows (dim=0) → 1×3
+        let r = reduce(&m, 0, ReduceTypes::Sum).unwrap();
+        assert_eq!(r.rows, 1);
+        assert_eq!(r.cols, 3);
+        assert_eq!(r.data, vec![5.0, 7.0, 9.0]);
+
+        // Reduce along cols (dim=1) → 2×1
+        let r = reduce(&m, 1, ReduceTypes::Sum).unwrap();
+        assert_eq!(r.rows, 2);
+        assert_eq!(r.cols, 1);
+        assert_eq!(r.data, vec![6.0, 15.0]);
+
+        // Average along rows
+        let r = reduce(&m, 0, ReduceTypes::Avg).unwrap();
+        assert_eq!(r.data, vec![2.5, 3.5, 4.5]);
+    }
+
+    #[test]
+    fn test_reduce_min_max() {
+        let m = Matrix::from_vec(2, 3, 1, vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+        let r = reduce(&m, 0, ReduceTypes::Max).unwrap();
+        assert_eq!(r.data, vec![4.0, 5.0, 6.0]);
+
+        let r = reduce(&m, 0, ReduceTypes::Min).unwrap();
+        assert_eq!(r.data, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_count_non_zero() {
+        let m = Matrix::from_vec(1, 6, 1, vec![0i32, 1, 0, 3, 0, 5]);
+        assert_eq!(count_non_zero(&m), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Polar / Cartesian conversions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_magnitude() {
+        let x = Matrix::from_vec(1, 3, 1, vec![3.0f64, 0.0, 1.0]);
+        let y = Matrix::from_vec(1, 3, 1, vec![4.0f64, 5.0, 0.0]);
+        let mut dst = Matrix::<f64>::new(1, 3, 1);
+
+        magnitude(&x, &y, &mut dst).unwrap();
+        assert!((dst.data[0] - 5.0).abs() < 1e-9);
+        assert!((dst.data[1] - 5.0).abs() < 1e-9);
+        assert!((dst.data[2] - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_phase() {
+        let x = Matrix::from_vec(1, 2, 1, vec![1.0f64, 0.0]);
+        let y = Matrix::from_vec(1, 2, 1, vec![0.0f64, 1.0]);
+        let mut angle = Matrix::<f64>::new(1, 2, 1);
+
+        // Degrees
+        phase(&x, &y, &mut angle, true).unwrap();
+        assert!((angle.data[0] - 0.0).abs() < 1e-9);
+        assert!((angle.data[1] - 90.0).abs() < 1e-9);
+
+        // Radians
+        phase(&x, &y, &mut angle, false).unwrap();
+        assert!((angle.data[0] - 0.0).abs() < 1e-9);
+        assert!((angle.data[1] - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cart_to_polar() {
+        let x = Matrix::from_vec(1, 2, 1, vec![3.0f64, 0.0]);
+        let y = Matrix::from_vec(1, 2, 1, vec![4.0f64, 5.0]);
+        let mut mag = Matrix::<f64>::new(1, 2, 1);
+        let mut ang = Matrix::<f64>::new(1, 2, 1);
+
+        cart_to_polar(&x, &y, &mut mag, &mut ang, true).unwrap();
+        assert!((mag.data[0] - 5.0).abs() < 1e-9);
+        assert!((mag.data[1] - 5.0).abs() < 1e-9);
+        // atan2(4,3) ≈ 53.13°
+        assert!((ang.data[0] - 53.13010235415598).abs() < 1e-6);
+        assert!((ang.data[1] - 90.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_polar_to_cart() {
+        let mag = Matrix::from_vec(1, 2, 1, vec![5.0f64, 1.0]);
+        let ang = Matrix::from_vec(1, 2, 1, vec![0.0f64, 90.0]);
+        let mut x_out = Matrix::<f64>::new(1, 2, 1);
+        let mut y_out = Matrix::<f64>::new(1, 2, 1);
+
+        polar_to_cart(&mag, &ang, &mut x_out, &mut y_out, true).unwrap();
+        assert!((x_out.data[0] - 5.0).abs() < 1e-9);
+        assert!((y_out.data[0] - 0.0).abs() < 1e-9);
+        assert!((x_out.data[1] - 0.0).abs() < 1e-9);
+        assert!((y_out.data[1] - 1.0).abs() < 1e-9);
+    }
+
+    // -----------------------------------------------------------------------
+    // Linear algebra
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_determinant() {
+        // 2×2: det([1,2;3,4]) = 1*4 - 2*3 = -2
+        let m2 = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 3.0, 4.0]);
+        assert!((determinant(&m2) - (-2.0)).abs() < 1e-9);
+
+        // 3×3: det([1,2,3;0,1,4;5,6,0]) = 1
+        let m3 = Matrix::from_vec(
+            3,
+            3,
+            1,
+            vec![1.0f64, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0],
+        );
+        assert!((determinant(&m3) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_invert() {
+        // inv([4,7;2,6]) = [0.6,-0.7;-0.2,0.4], det = 10
+        let m = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
+        let mut dst = Matrix::<f64>::new(2, 2, 1);
+
+        let det = invert(&m, &mut dst, DecompTypes::DECOMP_LU).unwrap();
+        assert!((det - 10.0).abs() < 1e-9);
+        assert!((dst.data[0] - 0.6).abs() < 1e-9);
+        assert!((dst.data[1] - (-0.7)).abs() < 1e-9);
+        assert!((dst.data[2] - (-0.2)).abs() < 1e-9);
+        assert!((dst.data[3] - 0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_solve() {
+        // x + y = 2, x - y = 0 => x=1, y=1
+        let a = Matrix::from_vec(2, 2, 1, vec![1.0f64, 1.0, 1.0, -1.0]);
+        let b = Matrix::from_vec(2, 1, 1, vec![2.0f64, 0.0]);
+        let mut x = Matrix::<f64>::new(2, 1, 1);
+
+        assert!(solve(&a, &b, &mut x, DecompTypes::DECOMP_LU).unwrap());
+        assert!((x.data[0] - 1.0).abs() < 1e-9);
+        assert!((x.data[1] - 1.0).abs() < 1e-9);
+    }
+
+    // -----------------------------------------------------------------------
+    // Channel operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_extract_insert_channel() {
+        use crate::core::structural::{extract_channel, insert_channel};
+
+        // 1×2, 3 channels: pixel0=[10,20,30], pixel1=[40,50,60]
+        let m = Matrix::from_vec(1, 2, 3, vec![10u8, 20, 30, 40, 50, 60]);
+
+        let ch0 = extract_channel(&m, 0).unwrap();
+        assert_eq!(ch0.channels, 1);
+        assert_eq!(ch0.data, vec![10u8, 40]);
+
+        let ch1 = extract_channel(&m, 1).unwrap();
+        assert_eq!(ch1.data, vec![20u8, 50]);
+
+        let ch2 = extract_channel(&m, 2).unwrap();
+        assert_eq!(ch2.data, vec![30u8, 60]);
+
+        // Out-of-bounds channel should error
+        assert!(extract_channel(&m, 3).is_err());
+
+        // Insert channel: place [99, 88] at channel 1 of a zero matrix
+        let src_ch = Matrix::from_vec(1, 2, 1, vec![99u8, 88]);
+        let mut dst = Matrix::<u8>::zeros(1, 2, 3);
+        insert_channel(&src_ch, &mut dst, 1).unwrap();
+        assert_eq!(dst.data, vec![0u8, 99, 0, 0, 88, 0]);
+    }
+
+    // -----------------------------------------------------------------------
+    // DynamicMatrix
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_dynamic_matrix() {
+        // Constructor via MatType
+        let dm = DynamicMatrix::new(2, 3, CV_8UC3).unwrap();
+        assert_eq!(dm.rows(), 2);
+        assert_eq!(dm.cols(), 3);
+        assert_eq!(dm.channels(), 3);
+        assert_eq!(dm.depth_name(), "u8");
+        assert_eq!(dm.total(), 18);
+
+        // zeros
+        let dm = DynamicMatrix::zeros(2, 2, CV_8UC1).unwrap();
+        assert_eq!(dm.data_u8(), Some(&[0u8, 0, 0, 0][..]));
+
+        // ones
+        let dm = DynamicMatrix::ones(2, 2, CV_32FC1).unwrap();
+        assert_eq!(dm.data_f32(), Some(&[1.0f32, 1.0, 1.0, 1.0][..]));
+
+        // new_u8 + at_f64
+        let dm = DynamicMatrix::new_u8(1, 2, 1, vec![10, 20]).unwrap();
+        assert_eq!(dm.at_f64(0, 0, 0), Some(10.0));
+        assert_eq!(dm.at_f64(0, 1, 0), Some(20.0));
+
+        // as_matrix_u8 / as_matrix_f32 type checks
+        assert!(dm.as_matrix_u8().is_some());
+        assert!(dm.as_matrix_f32().is_none());
+
+        // new_f32 + as_matrix_f32
+        let dm = DynamicMatrix::new_f32(1, 2, 1, vec![1.5, 2.5]).unwrap();
+        let mat = dm.as_matrix_f32().unwrap();
+        assert_eq!(mat.data, vec![1.5f32, 2.5]);
+
+        // mat_type
+        let dm = DynamicMatrix::new(1, 1, CV_8UC3).unwrap();
+        let mt = dm.mat_type();
+        assert_eq!(mt.channels(), 3);
+
+        // convert_to
+        let dm = DynamicMatrix::new_u8(1, 2, 1, vec![10, 20]).unwrap();
+        let converted = dm.convert_to("f32").unwrap();
+        assert_eq!(converted.depth_name(), "f32");
+        assert_eq!(converted.data_f32(), Some(&[10.0f32, 20.0][..]));
+
+        // Error: length mismatch
+        assert!(DynamicMatrix::new_u8(1, 2, 1, vec![10]).is_err());
+    }
 }

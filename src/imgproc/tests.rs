@@ -429,4 +429,83 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Gray-to-color conversions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cvt_color_gray_to_rgb() {
+        let m = Matrix::from_vec(1, 2, 1, vec![100u8, 200]);
+        let r = cvt_color_gray_to_rgb(&m).unwrap();
+        assert_eq!(r.channels, 3);
+        assert_eq!(r.data, vec![100u8, 100, 100, 200, 200, 200]);
+    }
+
+    #[test]
+    fn test_cvt_color_gray_to_bgr() {
+        let m = Matrix::from_vec(1, 2, 1, vec![100u8, 200]);
+        let r = cvt_color_gray_to_bgr(&m).unwrap();
+        assert_eq!(r.channels, 3);
+        assert_eq!(r.data, vec![100u8, 100, 100, 200, 200, 200]);
+    }
+
+    #[test]
+    fn test_cvt_color_gray_to_rgba() {
+        let m = Matrix::from_vec(1, 2, 1, vec![100u8, 200]);
+        let r = cvt_color_gray_to_rgba(&m).unwrap();
+        assert_eq!(r.channels, 4);
+        assert_eq!(r.data, vec![100u8, 100, 100, 255, 200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn test_cvt_color_gray_to_bgra() {
+        let m = Matrix::from_vec(1, 2, 1, vec![100u8, 200]);
+        let r = cvt_color_gray_to_bgra(&m).unwrap();
+        assert_eq!(r.channels, 4);
+        assert_eq!(r.data, vec![100u8, 100, 100, 255, 200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn test_gray_to_color_error() {
+        // Non-grayscale input (3 channels) should error
+        let m = Matrix::from_vec(1, 1, 3, vec![1u8, 2, 3]);
+        assert!(cvt_color_gray_to_rgb(&m).is_err());
+        assert!(cvt_color_gray_to_bgr(&m).is_err());
+        assert!(cvt_color_gray_to_rgba(&m).is_err());
+        assert!(cvt_color_gray_to_bgra(&m).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Kernel helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_get_gaussian_kernel() {
+        // Single element
+        let k = get_gaussian_kernel(1, 1.0);
+        assert_eq!(k.len(), 1);
+        assert!((k[0] - 1.0).abs() < 1e-9);
+
+        // 3-element kernel: symmetric, sums to ~1.0, center is max
+        let k = get_gaussian_kernel(3, 1.0);
+        assert_eq!(k.len(), 3);
+        let sum: f64 = k.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+        assert!((k[0] - k[2]).abs() < 1e-9); // symmetric
+        assert!(k[1] > k[0]); // center is max
+    }
+
+    #[test]
+    fn test_get_sobel_kernels() {
+        // dx=1, dy=0: Sobel X derivative
+        let (kx, ky) = get_sobel_kernels(3, 1, 0);
+        assert_eq!(kx, vec![-1.0, 0.0, 1.0]);
+        assert_eq!(ky, vec![1.0, 2.0, 1.0]);
+
+        // dx=0, dy=1: Sobel Y derivative
+        let (kx, ky) = get_sobel_kernels(3, 0, 1);
+        assert_eq!(kx, vec![1.0, 2.0, 1.0]);
+        assert_eq!(ky, vec![-1.0, 0.0, 1.0]);
+    }
 }
