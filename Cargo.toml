@@ -17,7 +17,7 @@ path = "src/lib.rs"
 rayon = { version = "1.10", optional = true }
 ndarray = { version = "0.17", optional = true }
 num-traits = "0.2"
-pulp = { version = "0.18", optional = true }
+pulp = { version = "0.22", optional = true }
 log = "0.4"
 
 [dev-dependencies]
