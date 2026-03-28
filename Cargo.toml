@@ -57,7 +57,7 @@ panic = "abort"
 members = ["crates/wasm"]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.2.1"
 authors = ["Walter Perdan <https://github.com/kalwalt>"]
 edition = "2021"
 description = "A pure Rust, high-performance computer vision library focused on safety and portability."

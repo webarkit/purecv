@@ -1,6 +1,6 @@
 {
   "name": "purecv",
-  "version": "0.1.4",
+  "version": "0.2.1",
   "description": "A pure Rust, high-performance computer vision library focused on safety and portability.",
   "private": true,
   "scripts": {
