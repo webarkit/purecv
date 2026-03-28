@@ -11,11 +11,6 @@
                        "type":  "git",
                        "url":  "https://github.com/webarkit/purecv"
                    },
-    "files":  [
-                  "purecv_wasm_bg.wasm",
-                  "purecv_wasm.js",
-                  "purecv_wasm.d.ts"
-              ],
     "main":  "purecv_wasm.js",
     "types":  "purecv_wasm.d.ts",
     "sideEffects":  [

@@ -10,7 +10,7 @@
     "test": "cargo test",
     "bench": "cargo bench",
     "publish:core": "cargo publish -p purecv",
-    "publish:wasm": "wasm-pack publish crates/wasm --access public"
+    "publish:wasm": "npm publish crates/wasm/pkg --access public"
   },
   "author": "kalwalt <github@kalwaltart.it>",
   "license": "LGPL-3.0-or-later",
