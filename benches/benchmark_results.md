@@ -9,6 +9,39 @@ This document highlights the performance evaluation of the `purecv` library acro
 
 All tests operate on `1024x1024` image/matrix tensors using `f32` (or `u8` depending on the domain context). Times shown represent the median calculation calculated by `Criterion.rs`.
 
+---
+
+## New Benchmarks — count_non_zero, LUT & DFT
+
+*Execution Date: 2026-03-31 (CET)*
+
+Three new function groups have been benchmarked: `count_non_zero`, `lut` (Look-Up Table), and `dft` (Discrete Fourier Transform via `rustfft`). DFT benchmarks require the `fft` feature flag.
+
+> **Note:** The 4-strategy comparison table (Standard / SIMD Only / Parallel / Parallel+SIMD) does not apply to the LUT and DFT benchmarks below. LUT is a pure table lookup where SIMD provides no benefit, and DFT delegates to `rustfft` which manages its own internal SIMD — the `parallel` and `simd` feature flags have no effect on either. Results shown are with default features (Parallel enabled).
+
+### Arithm — count_non_zero & LUT
+
+| Benchmark / Operation                  | Parallel (default) |
+| :------------------------------------- | :----------------- |
+| `count_non_zero_1024×1024_i32`         | 116.03 µs          |
+| `lut_1024×1024_u8` (1ch)              | 501.25 µs          |
+| `lut_1024×1024×3_u8_broadcast` (3ch)  | 855.86 µs          |
+
+`count_non_zero` is a simple reduction — very fast with rayon parallelism. LUT is a pure table lookup (memory-bound), scaling linearly with channel count (3ch ≈ 1.7× of 1ch).
+
+### DFT — Discrete Fourier Transform (`--features fft`)
+
+| Benchmark / Operation                  | Time        |
+| :------------------------------------- | :---------- |
+| `get_optimal_dft_size`                 | 18.76 ns    |
+| `dft_forward_256×256_f32`              | 454.03 µs   |
+| `dft_inverse_256×256_f32`              | 514.82 µs   |
+| `dft_forward_512×512_f32`              | 3.80 ms     |
+| `dft_forward_1024×1024_f64`            | 28.21 ms    |
+
+DFT scales as O(n² log n) for 2D transforms: 512×512 is ~8× slower than 256×256, consistent with the 4× data increase and logarithmic factor growth. `get_optimal_dft_size` is a trivial binary search (~19 ns).
+
+---
 
 *Execution Date: 2026-03-17 (CET)*
 ---

@@ -48,6 +48,12 @@ name = "structural_bench"
 path = "benches/structural_bench.rs"
 harness = false
 
+[[bench]]
+name = "dft_bench"
+path = "benches/dft_bench.rs"
+harness = false
+required-features = ["fft"]
+
 [profile.release]
 opt-level = 3
 lto = true

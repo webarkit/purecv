@@ -36,8 +36,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use purecv::core::arithm::{
-    absdiff, add, add_weighted, bitwise_and, convert_scale_abs, divide, dot, gemm, magnitude, mean,
-    min, multiply, norm, normalize, sqrt, subtract, sum,
+    absdiff, add, add_weighted, bitwise_and, convert_scale_abs, count_non_zero, divide, dot, gemm,
+    lut, magnitude, mean, min, multiply, norm, normalize, sqrt, subtract, sum,
 };
 use purecv::core::types::NormTypes;
 use purecv::core::Matrix;
@@ -168,6 +168,36 @@ fn bench_arithm(c: &mut Criterion) {
             )
             .unwrap()
         })
+    });
+
+    // --- count_non_zero ---
+    let mut v1_i32 = Matrix::<i32>::new(size, size, 1);
+    for (i, v) in v1_i32.data.iter_mut().enumerate() {
+        *v = if i % 3 == 0 { 0 } else { (i as i32) + 1 };
+    }
+
+    c.bench_function("count_non_zero_1024x1024_i32", |b| {
+        b.iter(|| count_non_zero(black_box(&v1_i32)).unwrap())
+    });
+
+    // --- LUT ---
+    // Build a gamma-correction-style LUT: out = (in/255)^2.2 * 255
+    let lut_data: Vec<u8> = (0..256)
+        .map(|i| ((i as f64 / 255.0).powf(2.2) * 255.0) as u8)
+        .collect();
+    let lut_table = Matrix::from_vec(1, 256, 1, lut_data);
+
+    // Single-channel LUT
+    c.bench_function("lut_1024x1024_u8", |b| {
+        b.iter(|| lut(black_box(&u1), black_box(&lut_table)).unwrap())
+    });
+
+    // 3-channel LUT (broadcast)
+    let mut u3 = Matrix::<u8>::new(size, size, 3);
+    u3.data.fill(128);
+
+    c.bench_function("lut_1024x1024x3_u8_broadcast", |b| {
+        b.iter(|| lut(black_box(&u3), black_box(&lut_table)).unwrap())
     });
 }
 
