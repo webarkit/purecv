@@ -1402,17 +1402,24 @@ where
 }
 
 /// Counts non-zero array elements.
-pub fn count_non_zero<T>(src: &Matrix<T>) -> i32
+///
+/// The input matrix must be single-channel.
+pub fn count_non_zero<T>(src: &Matrix<T>) -> Result<i32>
 where
     T: Num + Copy + Send + Sync + 'static,
 {
+    if src.channels != 1 {
+        return Err(PureCvError::InvalidInput(
+            "countNonZero requires single-channel matrix".into(),
+        ));
+    }
     #[cfg(feature = "parallel")]
     {
-        src.data.par_iter().filter(|&&x| !x.is_zero()).count() as i32
+        Ok(src.data.par_iter().filter(|&&x| !x.is_zero()).count() as i32)
     }
     #[cfg(not(feature = "parallel"))]
     {
-        src.data.iter().filter(|&&x| !x.is_zero()).count() as i32
+        Ok(src.data.iter().filter(|&&x| !x.is_zero()).count() as i32)
     }
 }
 
@@ -3429,6 +3436,80 @@ fn kmeans_pp_init(
         centers[c_idx * dims..(c_idx + 1) * dims]
             .copy_from_slice(&samples[chosen * dims..(chosen + 1) * dims]);
     }
+}
+
+/// Performs a look-up table transform of a matrix.
+///
+/// The source matrix must have `u8` depth. The look-up table must contain
+/// exactly 256 entries. If `lut_table` has one channel it is applied to every
+/// channel of `src`; otherwise the number of channels must match.
+pub fn lut<T>(src: &Matrix<u8>, lut_table: &Matrix<T>) -> Result<Matrix<T>>
+where
+    T: Copy + Clone + Default + Send + Sync + 'static,
+{
+    let lut_entries = lut_table.rows * lut_table.cols;
+    if lut_entries != 256 {
+        return Err(PureCvError::InvalidInput(format!(
+            "LUT must have exactly 256 entries, got {}",
+            lut_entries
+        )));
+    }
+    let lut_cn = lut_table.channels;
+    let src_cn = src.channels;
+    if lut_cn != 1 && lut_cn != src_cn {
+        return Err(PureCvError::IncompatibleChannels(format!(
+            "LUT channels ({}) must be 1 or match source channels ({})",
+            lut_cn, src_cn
+        )));
+    }
+
+    let total = src.rows * src.cols * src_cn;
+    let mut dst_data = vec![T::default(); total];
+    let lut_data = &lut_table.data;
+
+    if lut_cn == 1 {
+        // Broadcast: same LUT for all channels
+        #[cfg(feature = "parallel")]
+        {
+            dst_data
+                .par_iter_mut()
+                .zip(src.data.par_iter())
+                .for_each(|(d, &s)| {
+                    *d = lut_data[s as usize];
+                });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (d, &s) in dst_data.iter_mut().zip(src.data.iter()) {
+                *d = lut_data[s as usize];
+            }
+        }
+    } else {
+        // Per-channel LUT
+        #[cfg(feature = "parallel")]
+        {
+            dst_data.par_iter_mut().enumerate().for_each(|(i, d)| {
+                let ch = i % src_cn;
+                let idx = src.data[i] as usize;
+                *d = lut_data[idx * lut_cn + ch];
+            });
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (i, d) in dst_data.iter_mut().enumerate() {
+                let ch = i % src_cn;
+                let idx = src.data[i] as usize;
+                *d = lut_data[idx * lut_cn + ch];
+            }
+        }
+    }
+
+    Ok(Matrix {
+        rows: src.rows,
+        cols: src.cols,
+        channels: src_cn,
+        data: dst_data,
+    })
 }
 
 #[cfg(test)]

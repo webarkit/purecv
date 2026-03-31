@@ -1141,7 +1141,77 @@ mod tests {
     #[test]
     fn test_count_non_zero() {
         let m = Matrix::from_vec(1, 6, 1, vec![0i32, 1, 0, 3, 0, 5]);
-        assert_eq!(count_non_zero(&m), 3);
+        assert_eq!(count_non_zero(&m).unwrap(), 3);
+
+        // All zeros
+        let m_zeros = Matrix::from_vec(1, 4, 1, vec![0i32, 0, 0, 0]);
+        assert_eq!(count_non_zero(&m_zeros).unwrap(), 0);
+
+        // All non-zero
+        let m_all = Matrix::from_vec(1, 3, 1, vec![1i32, 2, 3]);
+        assert_eq!(count_non_zero(&m_all).unwrap(), 3);
+
+        // Multi-channel should error
+        let m_multi = Matrix::from_vec(1, 3, 2, vec![0i32, 1, 0, 3, 0, 5]);
+        assert!(count_non_zero(&m_multi).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // LUT (Look-Up Table)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lut_identity() {
+        // Identity LUT: output should equal input
+        let src = Matrix::from_vec(1, 5, 1, vec![0u8, 50, 100, 200, 255]);
+        let table_data: Vec<u8> = (0..=255).collect();
+        let table = Matrix::from_vec(1, 256, 1, table_data);
+        let dst = lut(&src, &table).unwrap();
+        assert_eq!(dst.data, vec![0u8, 50, 100, 200, 255]);
+    }
+
+    #[test]
+    fn test_lut_invert() {
+        // Invert LUT: 255 - x
+        let src = Matrix::from_vec(1, 3, 1, vec![0u8, 127, 255]);
+        let table_data: Vec<u8> = (0..=255).rev().collect();
+        let table = Matrix::from_vec(1, 256, 1, table_data);
+        let dst = lut(&src, &table).unwrap();
+        assert_eq!(dst.data, vec![255u8, 128, 0]);
+    }
+
+    #[test]
+    fn test_lut_type_conversion() {
+        // u8 src -> f32 output via LUT
+        let src = Matrix::from_vec(1, 3, 1, vec![0u8, 1, 2]);
+        let table_data: Vec<f32> = (0..256).map(|x| x as f32 * 0.5).collect();
+        let table = Matrix::from_vec(1, 256, 1, table_data);
+        let dst = lut(&src, &table).unwrap();
+        assert_eq!(dst.data, vec![0.0f32, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn test_lut_multichannel_broadcast() {
+        // 3-channel src with 1-channel LUT (broadcast)
+        let src = Matrix::from_vec(1, 2, 3, vec![0u8, 1, 2, 10, 20, 30]);
+        let table_data: Vec<u8> = (0..=255).map(|x: u8| x.wrapping_mul(2)).collect();
+        let table = Matrix::from_vec(1, 256, 1, table_data);
+        let dst = lut(&src, &table).unwrap();
+        assert_eq!(dst.data, vec![0u8, 2, 4, 20, 40, 60]);
+    }
+
+    #[test]
+    fn test_lut_wrong_size_error() {
+        let src = Matrix::from_vec(1, 3, 1, vec![0u8, 1, 2]);
+        let table = Matrix::from_vec(1, 128, 1, vec![0u8; 128]);
+        assert!(lut(&src, &table).is_err());
+    }
+
+    #[test]
+    fn test_lut_channel_mismatch_error() {
+        let src = Matrix::from_vec(1, 2, 3, vec![0u8; 6]);
+        let table = Matrix::from_vec(1, 256, 2, vec![0u8; 512]);
+        assert!(lut(&src, &table).is_err());
     }
 
     // -----------------------------------------------------------------------

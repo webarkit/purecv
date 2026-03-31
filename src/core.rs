@@ -36,6 +36,8 @@
 
 pub mod arithm;
 pub mod constants;
+#[cfg(feature = "fft")]
+pub mod dft;
 pub mod dynamic;
 pub mod error;
 pub mod matrix;
@@ -56,12 +58,17 @@ mod tests;
 // Re-exports for easier access
 pub use self::arithm::{
     absdiff, add, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
-    count_non_zero, cross, determinant, divide, dot, gemm, invert, kmeans, magnitude, mean,
+    count_non_zero, cross, determinant, divide, dot, gemm, invert, kmeans, lut, magnitude, mean,
     mean_std_dev, min_max_loc, multiply, norm, normalize, perspective_transform, phase,
     polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum, trace,
     transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
 pub use self::constants::{CV_2PI, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4};
+#[cfg(feature = "fft")]
+pub use self::dft::{
+    dft, get_optimal_dft_size, DftFloat, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_REAL_OUTPUT,
+    DFT_ROWS, DFT_SCALE,
+};
 pub use self::dynamic::{DynamicData, DynamicMatrix};
 pub use self::error::{PureCvError, Result};
 pub use self::matrix::{
