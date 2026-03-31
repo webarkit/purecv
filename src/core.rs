@@ -35,6 +35,7 @@
  */
 
 pub mod arithm;
+pub mod constants;
 pub mod dynamic;
 pub mod error;
 pub mod matrix;
@@ -60,6 +61,7 @@ pub use self::arithm::{
     polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum, trace,
     transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
+pub use self::constants::{CV_2PI, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4};
 pub use self::dynamic::{DynamicData, DynamicMatrix};
 pub use self::error::{PureCvError, Result};
 pub use self::matrix::{

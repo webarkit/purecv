@@ -1333,4 +1333,56 @@ mod tests {
         // Error: length mismatch
         assert!(DynamicMatrix::new_u8(1, 2, 1, vec![10]).is_err());
     }
+
+    // ---------------------------------------------------------------
+    // Mathematical constants (constants.rs)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_cv_pi_value() {
+        assert_eq!(CV_PI, std::f64::consts::PI);
+    }
+
+    #[test]
+    fn test_cv_pi_2_value() {
+        assert_eq!(CV_PI_2, std::f64::consts::FRAC_PI_2);
+    }
+
+    #[test]
+    fn test_cv_2pi_value() {
+        assert_eq!(CV_2PI, 2.0 * std::f64::consts::PI);
+    }
+
+    #[test]
+    fn test_cv_pi_4_value() {
+        assert_eq!(CV_PI_4, std::f64::consts::FRAC_PI_4);
+    }
+
+    #[test]
+    fn test_cv_log2_value() {
+        assert_eq!(CV_LOG2, std::f64::consts::LOG2_E);
+    }
+
+    #[test]
+    fn test_cv_ln2_value() {
+        assert_eq!(CV_LN2, std::f64::consts::LN_2);
+    }
+
+    #[test]
+    fn test_constants_are_f64() {
+        let _: f64 = CV_PI;
+        let _: f64 = CV_PI_2;
+        let _: f64 = CV_2PI;
+        let _: f64 = CV_PI_4;
+        let _: f64 = CV_LOG2;
+        let _: f64 = CV_LN2;
+    }
+
+    #[test]
+    fn test_constants_mathematical_relationships() {
+        assert!((CV_PI / 2.0 - CV_PI_2).abs() < 1e-15);
+        assert!((CV_2PI - 2.0 * CV_PI).abs() < 1e-15);
+        assert!((CV_PI / 4.0 - CV_PI_4).abs() < 1e-15);
+        assert!((CV_LOG2 * CV_LN2 - 1.0).abs() < 1e-15);
+    }
 }
