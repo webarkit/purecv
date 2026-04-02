@@ -535,6 +535,18 @@ impl<T: Default + Clone> Matrix<T> {
             out_data,
         ))
     }
+
+    /// Swaps the underlying buffer array contents and metadata layout matching dimensions directly with another matrix.
+    ///
+    /// This relies efficiently on memory switching rather than deep copies mimicking memory 
+    /// layout transfer bindings traditionally encountered via native pointers on OpenCV C++ bindings natively.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The matrix with which to swap references logic correctly.
+    pub fn swap(&mut self, other: &mut Self) {
+        std::mem::swap(self, other);
+    }
 }
 
 impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {

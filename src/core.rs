@@ -36,13 +36,17 @@
 
 pub mod arithm;
 pub mod constants;
+#[cfg(feature = "transforms")]
+pub mod dct;
 #[cfg(feature = "fft")]
 pub mod dft;
 pub mod dynamic;
 pub mod error;
 pub mod matrix;
+pub mod metrics;
 pub mod rng;
 pub(crate) mod simd;
+pub mod solvers;
 pub mod structural;
 pub mod types;
 pub mod utils;
@@ -58,15 +62,17 @@ mod tests;
 // Re-exports for easier access
 pub use self::arithm::{
     absdiff, add, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
-    count_non_zero, cross, determinant, divide, dot, gemm, invert, kmeans, lut, magnitude, mean,
-    mean_std_dev, min_max_loc, multiply, norm, normalize, perspective_transform, phase,
-    polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum, trace,
-    transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
+    count_non_zero, cross, determinant, divide, dot, gemm, has_no_zero, invert, kmeans, lut,
+    magnitude, mean, mean_std_dev, min_max_loc, multiply, norm, normalize, perspective_transform,
+    phase, polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum,
+    trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
 pub use self::constants::{CV_2PI, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4};
+#[cfg(feature = "transforms")]
+pub use self::dct::{dct, idct};
 #[cfg(feature = "fft")]
 pub use self::dft::{
-    dft, get_optimal_dft_size, DftFloat, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_REAL_OUTPUT,
+    dft, get_optimal_dft_size, idft, DftFloat, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_REAL_OUTPUT,
     DFT_ROWS, DFT_SCALE,
 };
 pub use self::dynamic::{DynamicData, DynamicMatrix};
@@ -77,7 +83,9 @@ pub use self::matrix::{
     CV_32SC1, CV_32SC2, CV_32SC3, CV_32SC4, CV_64F, CV_64FC1, CV_64FC2, CV_64FC3, CV_64FC4, CV_8S,
     CV_8SC1, CV_8SC2, CV_8SC3, CV_8SC4, CV_8U, CV_8UC1, CV_8UC2, CV_8UC3, CV_8UC4,
 };
+pub use self::metrics::{mahalanobis, psnr};
 pub use self::rng::{randn, randu, set_rng_seed};
+pub use self::solvers::{solve_cubic, solve_quadratic};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,
     Point3i, Rect, Rect2d, Rect2f, Rect2i, ReduceTypes, RotatedRect, Scalar, Size, Size2d, Size2f,

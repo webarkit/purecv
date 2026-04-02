@@ -1423,6 +1423,34 @@ where
     }
 }
 
+/// Checks if the array contains no zero elements.
+///
+/// This provides rapid evaluation checking if no exact 'zero' value exists throughout 
+/// the matrix structure natively mapping to OpenCV's iteration check mechanisms without relying on FFI bindings.
+///
+/// Returns true if all elements are non-zero (i.e. it does not contain any zero), false otherwise.
+///
+/// # Arguments
+///
+/// * `src` - A reference to the input Matrix.
+///
+/// # Returns
+///
+/// * `Result<bool>` - Returns true if the matrix is completely non-zero, safely rooted.
+pub fn has_no_zero<T>(src: &Matrix<T>) -> Result<bool>
+where
+    T: Num + Copy + Send + Sync + 'static,
+{
+    #[cfg(feature = "parallel")]
+    {
+        Ok(src.data.par_iter().all(|&x| !x.is_zero()))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        Ok(src.data.iter().all(|&x| !x.is_zero()))
+    }
+}
+
 /// Finds the global minimum and maximum in an array and their locations.
 ///
 /// Returns (min_val, max_val, min_loc, max_loc).

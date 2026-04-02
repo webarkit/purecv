@@ -102,6 +102,38 @@ where
     Ok(dst)
 }
 
+/// Flips an N-Dimensional matrix layout structurally across defined mirroring axes.
+///
+/// This serves as an equivalent logic mapping wrapper addressing OpenCV's natively bound `cv::flipND`
+/// by mirroring dimensional array data seamlessly for our 2D underlying matrix array structure across specified axis parameter bindings natively.
+///
+/// # Arguments
+///
+/// * `src` - A reference to the input Matrix representation.
+/// * `axis` - Specified axis to base mirroring reflections. `0` means flip across rows (vertical axis mirroring), `1` means flip across columns (horizontal axis mirroring), and values strictly `< 0` mirror both axes simultaneously (vertical and horizontal flips).
+///
+/// # Returns
+///
+/// * `Result<Matrix<T>>` - Structural copy output Matrix with transposed data logic.
+///
+/// # Errors
+/// Returns standard matrix operation errors natively.
+pub fn flip_nd<T>(src: &Matrix<T>, axis: i32) -> Result<Matrix<T>>
+where
+    T: Copy + Send + Sync + Default + 'static,
+{
+    // Map N-D axis to flip_code for 2D Matrix
+    // axis = 0 means flip across rows (X-axis, flip_code = 0)
+    // axis = 1 means flip across cols (Y-axis, flip_code = 1)
+    // axis < 0 means both (flip_code = -1)
+    let flip_code = match axis {
+        0 => 0,
+        1 => 1,
+        _ => -1,
+    };
+    flip(src, flip_code)
+}
+
 /// Transposes a matrix.
 pub fn transpose<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where

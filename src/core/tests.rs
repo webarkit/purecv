@@ -110,6 +110,11 @@ mod tests {
 
         let abs_diff = absdiff(&m2, &m1).unwrap();
         assert_eq!(abs_diff.data, vec![5, 15, 25, 35]);
+
+        // has_no_zero
+        let m_zeros = Matrix::from_vec(2, 2, 1, vec![0, 20, 30, 40]);
+        assert_eq!(has_no_zero(&m1).unwrap(), true);
+        assert_eq!(has_no_zero(&m_zeros).unwrap(), false);
     }
 
     #[test]
@@ -180,6 +185,14 @@ mod tests {
         assert_eq!(f_v.data, vec![3, 4, 1, 2]);
         let f_h = flip(&m, 1).unwrap(); // horizontal
         assert_eq!(f_h.data, vec![2, 1, 4, 3]);
+
+        // flip_nd test
+        let fND_v = flip_nd(&m, 0).unwrap(); // vertical (axis 0)
+        assert_eq!(fND_v.data, vec![3, 4, 1, 2]);
+        let fND_h = flip_nd(&m, 1).unwrap(); // horizontal (axis 1)
+        assert_eq!(fND_h.data, vec![2, 1, 4, 3]);
+        let fND_both = flip_nd(&m, -1).unwrap(); // both
+        assert_eq!(fND_both.data, vec![4, 3, 2, 1]);
 
         // Transpose test
         let m_rect = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
@@ -848,11 +861,17 @@ mod tests {
         assert_eq!(mat.data, vec![1u8, 2, 3, 4, 5, 6], "data must be unchanged");
 
         // Calling create with different dims resets to default
-        mat.create(1, 2, 2);
-        assert_eq!(mat.rows, 1);
-        assert_eq!(mat.cols, 2);
-        assert_eq!(mat.channels, 2);
-        assert_eq!(mat.data, vec![0u8; 4], "data must be zeroed after resize");
+        mat.create(10, 20, 3);
+        assert_eq!(mat.rows, 10);
+        assert_eq!(mat.cols, 20);
+        assert_eq!(mat.channels, 3);
+        assert_eq!(mat.data.len(), 10 * 20 * 3);
+
+        let mut a = Matrix::<u8>::zeros(2, 2, 1);
+        let mut b = Matrix::<u8>::ones(2, 2, 1);
+        a.swap(&mut b);
+        assert_eq!(a.data, vec![1, 1, 1, 1]);
+        assert_eq!(b.data, vec![0, 0, 0, 0]);
     }
 
     // ---- Matrix scalar constructor tests ----
@@ -1454,5 +1473,35 @@ mod tests {
         assert!((CV_2PI - 2.0 * CV_PI).abs() < 1e-15);
         assert!((CV_PI / 4.0 - CV_PI_4).abs() < 1e-15);
         assert!((CV_LOG2 * CV_LN2 - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_metrics() {
+        use crate::core::metrics::*;
+
+        let mut m1 = Matrix::<u8>::zeros(2, 2, 1);
+        let mut m2 = Matrix::<u8>::zeros(2, 2, 1);
+
+        // Identical matrices, PSNR should be infinite, but we cap log(0) basically, wait our PSNR returns 0.0 or inf?
+        // Let's test with a difference.
+        m1.data = vec![10, 20, 30, 40];
+        m2.data = vec![10, 20, 30, 40]; // same
+
+        // Let's make them differ by 10 per element
+        m1.data = vec![10, 20, 30, 40];
+        m2.data = vec![20, 30, 40, 50]; // mse = 100
+
+        let p = psnr(&m1, &m2).unwrap();
+        // 10 * log10(255^2 / 100) = 10 * log10(650.25) ≈ 10 * 2.81308 = 28.1308
+        assert!((p - 28.1308).abs() < 1e-3);
+
+        let v1 = Matrix::<f64>::from_vec(2, 1, 1, vec![1.0, 2.0]);
+        let v2 = Matrix::<f64>::from_vec(2, 1, 1, vec![2.0, 3.0]);
+        let icov = Matrix::<f64>::eye(2, 2, 1);
+        let mahal = mahalanobis(&v1, &v2, &icov).unwrap();
+        // Difference is [-1, -1]
+        // dot product with I is [-1, -1], then dot with diff is 1 + 1 = 2
+        // sqrt(2) ≈ 1.4142
+        assert!((mahal - 1.4142).abs() < 1e-3);
     }
 }

@@ -19,6 +19,7 @@ ndarray = { version = "0.17", optional = true }
 num-traits = "0.2"
 pulp = { version = "0.22", optional = true }
 rustfft = { version = "6", optional = true }
+num-complex = { version = "0.4", optional = true }
 log = "0.4"
 
 [dev-dependencies]
@@ -31,7 +32,8 @@ std = []
 parallel = ["rayon"]
 ndarray = ["dep:ndarray"]
 simd = ["dep:pulp"]
-fft = ["dep:rustfft"]
+fft = ["dep:rustfft", "dep:num-complex"]
+transforms = ["fft"]
 
 [[bench]]
 name = "arithm_bench"
