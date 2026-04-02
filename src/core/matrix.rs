@@ -538,7 +538,7 @@ impl<T: Default + Clone> Matrix<T> {
 
     /// Swaps the underlying buffer array contents and metadata layout matching dimensions directly with another matrix.
     ///
-    /// This relies efficiently on memory switching rather than deep copies mimicking memory 
+    /// This relies efficiently on memory switching rather than deep copies mimicking memory
     /// layout transfer bindings traditionally encountered via native pointers on OpenCV C++ bindings natively.
     ///
     /// # Arguments

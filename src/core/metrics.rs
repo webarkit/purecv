@@ -39,9 +39,9 @@ use crate::core::matrix::Matrix;
 
 /// Computes the Peak Signal-to-Noise Ratio (PSNR) between two matrices.
 ///
-/// The PSNR is essentially an evaluation metric used to measure the ratio between the 
-/// maximum possible power of a signal and the power of corrupting noise that affects 
-/// the fidelity of its representation. It’s frequently used to measure the quality of 
+/// The PSNR is essentially an evaluation metric used to measure the ratio between the
+/// maximum possible power of a signal and the power of corrupting noise that affects
+/// the fidelity of its representation. It’s frequently used to measure the quality of
 /// reconstruction of lossy compression codecs (e.g., for image compression).
 ///
 /// In PureCV, it calculates: `10 * log10((255 ^ 2) / MSE)`.
@@ -91,7 +91,7 @@ where
 /// Computes the Mahalanobis distance between two vectors.
 ///
 /// The Mahalanobis distance is a multi-dimensional distance measure that evaluates how distant
-/// a point is from a distribution. It is often useful in robust statistical settings compared to 
+/// a point is from a distribution. It is often useful in robust statistical settings compared to
 /// checking simple Euclidean distances.
 /// For exact tracking against `cv::Mahalanobis()`, this expects matching 1-Dimensional column inputs.
 ///
