@@ -54,6 +54,10 @@ path = "benches/dft_bench.rs"
 harness = false
 required-features = ["fft"]
 
+[[example]]
+name = "dft_example"
+required-features = ["fft"]
+
 [profile.release]
 opt-level = 3
 lto = true
