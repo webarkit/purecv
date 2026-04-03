@@ -34,9 +34,10 @@
  *
  */
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use purecv::core::dft::{dft, get_optimal_dft_size, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_SCALE};
 use purecv::core::Matrix;
+use std::hint::black_box;
 
 fn bench_dft(c: &mut Criterion) {
     // --- get_optimal_dft_size (pure computation, very fast) ---

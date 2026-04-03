@@ -35,7 +35,7 @@
  */
 
 #[cfg(test)]
-mod tests {
+mod core_tests {
     use crate::core::arithm::*;
     use crate::core::types::*;
     use crate::core::utils::*;
@@ -113,8 +113,8 @@ mod tests {
 
         // has_no_zero
         let m_zeros = Matrix::from_vec(2, 2, 1, vec![0, 20, 30, 40]);
-        assert_eq!(has_no_zero(&m1).unwrap(), true);
-        assert_eq!(has_no_zero(&m_zeros).unwrap(), false);
+        assert!(has_no_zero(&m1).unwrap());
+        assert!(!has_no_zero(&m_zeros).unwrap());
     }
 
     #[test]
@@ -187,12 +187,12 @@ mod tests {
         assert_eq!(f_h.data, vec![2, 1, 4, 3]);
 
         // flip_nd test
-        let fND_v = flip_nd(&m, 0).unwrap(); // vertical (axis 0)
-        assert_eq!(fND_v.data, vec![3, 4, 1, 2]);
-        let fND_h = flip_nd(&m, 1).unwrap(); // horizontal (axis 1)
-        assert_eq!(fND_h.data, vec![2, 1, 4, 3]);
-        let fND_both = flip_nd(&m, -1).unwrap(); // both
-        assert_eq!(fND_both.data, vec![4, 3, 2, 1]);
+        let f_nd_v = flip_nd(&m, 0).unwrap(); // vertical (axis 0)
+        assert_eq!(f_nd_v.data, vec![3, 4, 1, 2]);
+        let f_nd_h = flip_nd(&m, 1).unwrap(); // horizontal (axis 1)
+        assert_eq!(f_nd_h.data, vec![2, 1, 4, 3]);
+        let f_nd_both = flip_nd(&m, -1).unwrap(); // both
+        assert_eq!(f_nd_both.data, vec![4, 3, 2, 1]);
 
         // Transpose test
         let m_rect = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
@@ -473,7 +473,7 @@ mod tests {
         randu(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
 
         for &v in &mat.data {
-            assert!(v >= 0.0 && v < 1.0, "value {} out of [0, 1)", v);
+            assert!((0.0..1.0).contains(&v), "value {} out of [0, 1)", v);
         }
     }
 
@@ -757,8 +757,11 @@ mod tests {
         let mut mat = Matrix::<f32>::zeros(3, 3, 1);
 
         // set a value and verify with get
-        mat.set(1, 2, 0, 3.14);
-        assert_eq!(mat.get(1, 2, 0), Some(&3.14f32));
+        mat.set(1, 2, 0, crate::core::constants::CV_PI as f32);
+        assert_eq!(
+            mat.get(1, 2, 0),
+            Some(&(crate::core::constants::CV_PI as f32))
+        );
 
         // set at out-of-bounds: must be a silent no-op, not a panic
         mat.set(99, 99, 0, 1.0);
@@ -1502,6 +1505,6 @@ mod tests {
         // Difference is [-1, -1]
         // dot product with I is [-1, -1], then dot with diff is 1 + 1 = 2
         // sqrt(2) ≈ 1.4142
-        assert!((mahal - 1.4142).abs() < 1e-3);
+        assert!((mahal - crate::core::constants::CV_SQRT2).abs() < 1e-3);
     }
 }

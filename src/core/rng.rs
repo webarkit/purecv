@@ -286,7 +286,7 @@ mod tests {
         randu(&mut mat, Scalar::all(-5.0), Scalar::all(5.0)).unwrap();
 
         for &v in &mat.data {
-            assert!(v >= -5.0 && v < 5.0, "value {} out of range [-5, 5)", v);
+            assert!((-5.0..5.0).contains(&v), "value {} out of range [-5, 5)", v);
         }
     }
 

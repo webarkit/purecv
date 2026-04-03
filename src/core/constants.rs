@@ -56,3 +56,6 @@ pub const CV_LOG2: f64 = std::f64::consts::LOG2_E;
 
 /// Natural logarithm of 2 (same as `std::f64::consts::LN_2`).
 pub const CV_LN2: f64 = std::f64::consts::LN_2;
+
+/// Square root of 2 (same as `std::f64::consts::SQRT_2`).
+pub const CV_SQRT2: f64 = std::f64::consts::SQRT_2;

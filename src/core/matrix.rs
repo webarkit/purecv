@@ -747,9 +747,9 @@ mod tests {
 
     #[test]
     fn test_depth_logic() {
-        assert_eq!(Depth::CV_8U.is_signed(), false);
-        assert_eq!(Depth::CV_8S.is_signed(), true);
-        assert_eq!(Depth::CV_32F.is_float(), true);
+        assert!(!Depth::CV_8U.is_signed());
+        assert!(Depth::CV_8S.is_signed());
+        assert!(Depth::CV_32F.is_float());
         assert_eq!(Depth::CV_8U.byte_size(), 1);
         assert_eq!(Depth::CV_32F.byte_size(), 4);
     }

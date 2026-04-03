@@ -34,13 +34,14 @@
  *
  */
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use purecv::core::arithm::{
     absdiff, add, add_weighted, bitwise_and, convert_scale_abs, count_non_zero, divide, dot, gemm,
     lut, magnitude, mean, min, multiply, norm, normalize, sqrt, subtract, sum,
 };
 use purecv::core::types::NormTypes;
 use purecv::core::Matrix;
+use std::hint::black_box;
 
 fn bench_arithm(c: &mut Criterion) {
     let size = 1024;

@@ -83,7 +83,7 @@ mod tests {
         let v = get_version();
 
         // Only validate the numeric core (major.minor[.patch]) before any pre-release/build suffix.
-        let core = v.split(|c| c == '-' || c == '+').next().unwrap_or(v);
+        let core = v.split(['-', '+']).next().unwrap_or(v);
 
         let parts: Vec<&str> = core.split('.').collect();
         assert!(

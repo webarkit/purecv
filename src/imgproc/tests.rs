@@ -35,7 +35,7 @@
  */
 
 #[cfg(test)]
-mod tests {
+mod imgproc_tests {
     use crate::core::*;
     use crate::imgproc::*;
 
@@ -72,7 +72,7 @@ mod tests {
         let res = gaussian_blur(&m, ksize, 1.0, 1.0, BorderTypes::Reflect101).unwrap();
         // Since all pixels are 100, the result should be 100 (normalized)
         for val in res.data {
-            assert!(val >= 99 && val <= 101); // Allow small deviation for rounding
+            assert!((99..=101).contains(&val)); // Allow small deviation for rounding
         }
     }
 
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_scharr() {
-        let mut data = vec![0u8; 100];
+        let mut data = [0u8; 100];
         for x in 5..10 {
             for y in 0..10 {
                 data[y * 10 + x] = 255;

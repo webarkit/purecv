@@ -34,7 +34,7 @@
  *
  */
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use purecv::core::types::BorderTypes;
 use purecv::core::{Matrix, Point2i, Size2i};
 use purecv::imgproc::derivatives::{laplacian, scharr, sobel};
@@ -42,6 +42,7 @@ use purecv::imgproc::edge::canny;
 use purecv::imgproc::filter::{bilateral_filter, box_filter, gaussian_blur};
 use purecv::imgproc::threshold::{threshold, ThresholdTypes};
 use purecv::imgproc::{cvt_color, ColorConversionCode};
+use std::hint::black_box;
 
 fn bench_imgproc(c: &mut Criterion) {
     let size = 1024;
