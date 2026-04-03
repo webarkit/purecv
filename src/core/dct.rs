@@ -36,7 +36,7 @@
 
 use crate::core::error::{PureCvError, Result};
 use crate::core::matrix::Matrix;
-use std::f64::consts::PI;
+use crate::core::constants::CV_PI;
 
 /// Discrete Cosine Transform.
 /// Currently implemented using a straightforward algorithm.
@@ -73,7 +73,7 @@ where
             let mut sum_val = 0.0;
             for n_idx in 0..length {
                 sum_val += src.data[n_idx].into()
-                    * (PI / (length as f64) * (n_idx as f64 + 0.5) * k as f64).cos();
+                    * (CV_PI / (length as f64) * (n_idx as f64 + 0.5) * k as f64).cos();
             }
             let alpha = if k == 0 {
                 1.0 / (length as f64).sqrt()
@@ -97,8 +97,8 @@ where
             for x in 0..rows {
                 for y in 0..cols {
                     sum_val += src.data[x * cols + y].into()
-                        * (PI / (rows as f64) * (x as f64 + 0.5) * u as f64).cos()
-                        * (PI / (cols as f64) * (y as f64 + 0.5) * v as f64).cos();
+                        * (CV_PI / (rows as f64) * (x as f64 + 0.5) * u as f64).cos()
+                        * (CV_PI / (cols as f64) * (y as f64 + 0.5) * v as f64).cos();
                 }
             }
             let au = if u == 0 {
@@ -160,7 +160,7 @@ where
                 };
                 sum_val += alpha
                     * src.data[k].into()
-                    * (PI / (length as f64) * (n_idx as f64 + 0.5) * k as f64).cos();
+                    * (CV_PI / (length as f64) * (n_idx as f64 + 0.5) * k as f64).cos();
             }
             dst[n_idx] = sum_val;
         }
@@ -192,8 +192,8 @@ where
                     sum_val += au
                         * av
                         * src.data[u * cols + v].into()
-                        * (PI / (rows as f64) * (x as f64 + 0.5) * u as f64).cos()
-                        * (PI / (cols as f64) * (y as f64 + 0.5) * v as f64).cos();
+                        * (CV_PI / (rows as f64) * (x as f64 + 0.5) * u as f64).cos()
+                        * (CV_PI / (cols as f64) * (y as f64 + 0.5) * v as f64).cos();
                 }
             }
             dst[x * cols + y] = sum_val;

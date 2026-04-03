@@ -36,6 +36,7 @@
 
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
+use crate::core::constants::{CV_PI, CV_2PI};
 use crate::core::{DataType, Matrix};
 use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
 use std::ops::{BitAnd, BitOr, BitXor, Not, Sub};
@@ -2410,7 +2411,7 @@ where
                 let yf = yv.to_f64().unwrap_or(0.0);
                 let mut a = yf.atan2(xf);
                 if a < 0.0 {
-                    a += 2.0 * std::f64::consts::PI;
+                    a += CV_2PI;
                 }
                 if angle_in_degrees {
                     a = a.to_degrees();
@@ -2431,7 +2432,7 @@ where
                 let yf = yv.to_f64().unwrap_or(0.0);
                 let mut a = yf.atan2(xf);
                 if a < 0.0 {
-                    a += 2.0 * std::f64::consts::PI;
+                    a += CV_2PI;
                 }
                 if angle_in_degrees {
                     a = a.to_degrees();
@@ -2486,7 +2487,7 @@ where
                 *m = T::from_f64((xf * xf + yf * yf).sqrt()).unwrap_or_default();
                 let mut angle = yf.atan2(xf);
                 if angle < 0.0 {
-                    angle += 2.0 * std::f64::consts::PI;
+                    angle += CV_2PI;
                 }
                 if angle_in_degrees {
                     angle = angle.to_degrees();
@@ -2508,7 +2509,7 @@ where
                 *m = T::from_f64((xf * xf + yf * yf).sqrt()).unwrap_or_default();
                 let mut angle = yf.atan2(xf);
                 if angle < 0.0 {
-                    angle += 2.0 * std::f64::consts::PI;
+                    angle += CV_2PI;
                 }
                 if angle_in_degrees {
                     angle = angle.to_degrees();

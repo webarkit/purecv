@@ -34,6 +34,7 @@
  *
  */
 
+use crate::core::constants::CV_PI;
 use crate::core::error::Result;
 
 /// Solves quadratic equation: a*x^2 + b*x + c = 0
@@ -89,11 +90,9 @@ pub fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Result<Vec<f64>> {
         // Three real roots
         let th = (r / (-q3).sqrt()).acos();
         let factor = 2.0 * (-q).sqrt();
-        let pi = std::f64::consts::PI;
-
         let x1 = factor * (th / 3.0).cos() - offset;
-        let x2 = factor * ((th - 2.0 * pi) / 3.0).cos() - offset;
-        let x3 = factor * ((th + 2.0 * pi) / 3.0).cos() - offset;
+        let x2 = factor * ((th - 2.0 * CV_PI) / 3.0).cos() - offset;
+        let x3 = factor * ((th + 2.0 * CV_PI) / 3.0).cos() - offset;
 
         Ok(vec![x1, x2, x3])
     }

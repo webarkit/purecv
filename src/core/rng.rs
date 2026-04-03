@@ -34,6 +34,7 @@
  *
  */
 
+use crate::core::constants::CV_2PI;
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::Scalar;
 use crate::core::Matrix;
@@ -110,7 +111,7 @@ impl Xoshiro256 {
             // Reject the degenerate case u1 == 0 (log(0) is -inf).
             if u1 > f64::EPSILON {
                 let r = (-2.0 * u1.ln()).sqrt();
-                let theta = std::f64::consts::TAU * u2;
+                let theta = CV_2PI * u2;
                 return (r * theta.cos(), r * theta.sin());
             }
         }
