@@ -34,9 +34,9 @@
  *
  */
 
+use crate::core::constants::CV_PI;
 use crate::core::error::{PureCvError, Result};
 use crate::core::matrix::Matrix;
-use crate::core::constants::CV_PI;
 
 /// Discrete Cosine Transform.
 /// Currently implemented using a straightforward algorithm.

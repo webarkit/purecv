@@ -34,9 +34,9 @@
  *
  */
 
+use crate::core::constants::CV_2PI;
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
-use crate::core::constants::{CV_PI, CV_2PI};
 use crate::core::{DataType, Matrix};
 use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
 use std::ops::{BitAnd, BitOr, BitXor, Not, Sub};
