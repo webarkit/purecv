@@ -67,7 +67,9 @@ pub use self::arithm::{
     phase, polar_to_cart, reduce, set_identity, solve, solve_poly, sort, sort_idx, subtract, sum,
     trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
 };
-pub use self::constants::{CV_2PI, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4};
+pub use self::constants::{
+    CV_2PI, CV_E, CV_LN10, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4, CV_SQRT2,
+};
 #[cfg(feature = "transforms")]
 pub use self::dct::{dct, idct};
 #[cfg(feature = "fft")]

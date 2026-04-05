@@ -1507,4 +1507,18 @@ mod core_tests {
         // sqrt(2) ≈ 1.4142
         assert!((mahal - crate::core::constants::CV_SQRT2).abs() < 1e-3);
     }
+
+    #[test]
+    fn test_math_constants() {
+        use crate::core::constants::*;
+        assert!((CV_PI - std::f64::consts::PI).abs() < f64::EPSILON);
+        assert!((CV_2PI - 2.0 * std::f64::consts::PI).abs() < f64::EPSILON);
+        assert!((CV_PI_2 - std::f64::consts::FRAC_PI_2).abs() < f64::EPSILON);
+        assert!((CV_PI_4 - std::f64::consts::FRAC_PI_4).abs() < f64::EPSILON);
+        assert!((CV_LOG2 - std::f64::consts::LOG2_E).abs() < f64::EPSILON);
+        assert!((CV_LN2 - std::f64::consts::LN_2).abs() < f64::EPSILON);
+        assert!((CV_SQRT2 - std::f64::consts::SQRT_2).abs() < f64::EPSILON);
+        assert!((CV_E - std::f64::consts::E).abs() < f64::EPSILON);
+        assert!((CV_LN10 - std::f64::consts::LN_10).abs() < f64::EPSILON);
+    }
 }

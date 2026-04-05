@@ -59,3 +59,9 @@ pub const CV_LN2: f64 = std::f64::consts::LN_2;
 
 /// Square root of 2 (same as `std::f64::consts::SQRT_2`).
 pub const CV_SQRT2: f64 = std::f64::consts::SQRT_2;
+
+/// Euler's number (same as `std::f64::consts::E`).
+pub const CV_E: f64 = std::f64::consts::E;
+
+/// Natural logarithm of 10 (same as `std::f64::consts::LN_10`).
+pub const CV_LN10: f64 = std::f64::consts::LN_10;
