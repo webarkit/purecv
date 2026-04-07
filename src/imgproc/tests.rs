@@ -508,4 +508,341 @@ mod imgproc_tests {
         assert_eq!(kx, vec![1.0, 2.0, 1.0]);
         assert_eq!(ky, vec![-1.0, 0.0, 1.0]);
     }
+
+    // -------------------------------------------------------------------
+    //  Morphological operations
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_get_structuring_element_rect() {
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+        assert_eq!(kernel.rows, 3);
+        assert_eq!(kernel.cols, 3);
+        // A 3×3 rect kernel should be all 1s
+        assert!(kernel.data.iter().all(|&v| v == 1));
+    }
+
+    #[test]
+    fn test_get_structuring_element_cross() {
+        let kernel = get_structuring_element(
+            MorphShapes::Cross,
+            types::Size::new(5_usize, 5_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+        assert_eq!(kernel.rows, 5);
+        assert_eq!(kernel.cols, 5);
+
+        // Centre row (row 2) should be all 1s
+        for c in 0..5 {
+            assert_eq!(*kernel.get(2, c, 0).unwrap(), 1, "centre row col {c}");
+        }
+        // Centre column (col 2) in non-centre rows should be 1
+        for r in 0..5 {
+            assert_eq!(*kernel.get(r, 2, 0).unwrap(), 1, "centre col row {r}");
+        }
+        // Corners should be 0
+        assert_eq!(*kernel.get(0, 0, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(0, 4, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(4, 0, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(4, 4, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_structuring_element_ellipse() {
+        let kernel = get_structuring_element(
+            MorphShapes::Ellipse,
+            types::Size::new(5_usize, 5_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+        assert_eq!(kernel.rows, 5);
+        assert_eq!(kernel.cols, 5);
+
+        // Centre pixel should always be 1
+        assert_eq!(*kernel.get(2, 2, 0).unwrap(), 1);
+        // Corners of a 5×5 ellipse should be 0
+        assert_eq!(*kernel.get(0, 0, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(0, 4, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(4, 0, 0).unwrap(), 0);
+        assert_eq!(*kernel.get(4, 4, 0).unwrap(), 0);
+        // Centre row should be fully filled
+        for c in 0..5 {
+            assert_eq!(*kernel.get(2, c, 0).unwrap(), 1, "centre row col {c}");
+        }
+    }
+
+    #[test]
+    fn test_erode_basic() {
+        // 5×5 image with a bright 3×3 block in the centre
+        let mut data = vec![0u8; 25];
+        for r in 1..4 {
+            for c in 1..4 {
+                data[r * 5 + c] = 255;
+            }
+        }
+        let src = Matrix::from_vec(5, 5, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let eroded = erode(
+            &src,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // After erosion with 3×3 rect, only the very centre pixel survives
+        assert_eq!(*eroded.get(2, 2, 0).unwrap(), 255);
+        // Edge pixels of the block should be eroded to 0
+        assert_eq!(*eroded.get(1, 1, 0).unwrap(), 0);
+        assert_eq!(*eroded.get(1, 2, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_dilate_basic() {
+        // 5×5 image with a single bright pixel at the centre
+        let mut data = vec![0u8; 25];
+        data[2 * 5 + 2] = 255;
+        let src = Matrix::from_vec(5, 5, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let dilated = dilate(
+            &src,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // After dilation with 3×3 rect, the centre pixel should spread to a 3×3 block
+        for r in 1..4 {
+            for c in 1..4 {
+                assert_eq!(
+                    *dilated.get(r, c, 0).unwrap(),
+                    255,
+                    "should be 255 at ({r},{c})"
+                );
+            }
+        }
+        // Corners should remain 0
+        assert_eq!(*dilated.get(0, 0, 0).unwrap(), 0);
+        assert_eq!(*dilated.get(4, 4, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_erode_iterations() {
+        // 7×7 image with a 5×5 bright block in the centre
+        let mut data = vec![0u8; 49];
+        for r in 1..6 {
+            for c in 1..6 {
+                data[r * 7 + c] = 255;
+            }
+        }
+        let src = Matrix::from_vec(7, 7, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let eroded1 = erode(
+            &src,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+        let eroded2 = erode(
+            &src,
+            &kernel,
+            types::Point::new(-1, -1),
+            2,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // 1 iteration: 5×5 → 3×3 bright block remains
+        let sum1: u32 = eroded1.data.iter().map(|&v| v as u32).sum();
+        // 2 iterations: 5×5 → 1×1 bright block remains
+        let sum2: u32 = eroded2.data.iter().map(|&v| v as u32).sum();
+
+        assert!(sum1 > sum2, "2 iterations should erode more than 1");
+        assert_eq!(sum2, 255); // Only centre pixel
+    }
+
+    #[test]
+    fn test_morphology_ex_open() {
+        // Open = erode → dilate → removes isolated bright noise
+        let mut data = vec![0u8; 49];
+        // Single bright pixel (noise)
+        data[3 * 7 + 3] = 255;
+        let src = Matrix::from_vec(7, 7, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let opened = morphology_ex(
+            &src,
+            MorphTypes::Open,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // A single pixel should be removed by opening
+        assert!(opened.data.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn test_morphology_ex_close() {
+        // Close = dilate → erode → fills isolated dark holes
+        let mut data = vec![255u8; 49];
+        // Single dark pixel (hole)
+        data[3 * 7 + 3] = 0;
+        let src = Matrix::from_vec(7, 7, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let closed = morphology_ex(
+            &src,
+            MorphTypes::Close,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // The dark hole should be filled; all interior pixels should be 255
+        // (edges may be affected by border)
+        assert_eq!(*closed.get(3, 3, 0).unwrap(), 255);
+    }
+
+    #[test]
+    fn test_morphology_ex_gradient() {
+        // Gradient = dilate − erode → detects edges
+        let mut data = vec![0u8; 49];
+        for r in 2..5 {
+            for c in 2..5 {
+                data[r * 7 + c] = 255;
+            }
+        }
+        let src = Matrix::from_vec(7, 7, 1, data);
+        let kernel = get_structuring_element(
+            MorphShapes::Rect,
+            types::Size::new(3_usize, 3_usize),
+            types::Point::new(-1_i32, -1_i32),
+        )
+        .unwrap();
+
+        let gradient = morphology_ex(
+            &src,
+            MorphTypes::Gradient,
+            &kernel,
+            types::Point::new(-1, -1),
+            1,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+
+        // Interior of the block should be 0 (dilate == erode for interior)
+        assert_eq!(*gradient.get(3, 3, 0).unwrap(), 0);
+        // Edges should be non-zero
+        let edge_sum: u32 = gradient.data.iter().map(|&v| v as u32).sum();
+        assert!(edge_sum > 0);
+    }
+
+    // -------------------------------------------------------------------
+    //  Pyramid operations
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_pyr_down_size() {
+        let src = Matrix::<u8>::new(8, 8, 1);
+        let dst = pyr_down(&src, None, BorderTypes::Reflect101).unwrap();
+        assert_eq!(dst.rows, 4);
+        assert_eq!(dst.cols, 4);
+    }
+
+    #[test]
+    fn test_pyr_up_size() {
+        let src = Matrix::<u8>::new(4, 4, 1);
+        let dst = pyr_up(&src, None, BorderTypes::Reflect101).unwrap();
+        assert_eq!(dst.rows, 8);
+        assert_eq!(dst.cols, 8);
+    }
+
+    #[test]
+    fn test_pyr_down_uniform() {
+        // A uniform image should remain uniform after pyr_down
+        let src = Matrix::<u8>::from_vec(8, 8, 1, vec![100u8; 64]);
+        let dst = pyr_down(&src, None, BorderTypes::Reflect101).unwrap();
+        for &v in &dst.data {
+            assert!(
+                (v as i16 - 100).abs() <= 1,
+                "Uniform pyr_down should preserve value, got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pyr_down_odd_size() {
+        // 7×9 → (7+1)/2 × (9+1)/2 = 4×5
+        let src = Matrix::<u8>::new(9, 7, 1);
+        let dst = pyr_down(&src, None, BorderTypes::Reflect101).unwrap();
+        assert_eq!(dst.rows, 5);
+        assert_eq!(dst.cols, 4);
+    }
+
+    #[test]
+    fn test_build_pyramid_levels() {
+        let src = Matrix::<u8>::new(64, 64, 1);
+        let pyramid = build_pyramid(&src, 3, BorderTypes::Reflect101).unwrap();
+        assert_eq!(pyramid.len(), 4);
+        assert_eq!(pyramid[0].rows, 64);
+        assert_eq!(pyramid[1].rows, 32);
+        assert_eq!(pyramid[2].rows, 16);
+        assert_eq!(pyramid[3].rows, 8);
+    }
+
+    #[test]
+    fn test_build_pyramid_multichannel() {
+        let src = Matrix::<u8>::new(32, 32, 3);
+        let pyramid = build_pyramid(&src, 2, BorderTypes::Reflect101).unwrap();
+        assert_eq!(pyramid.len(), 3);
+        assert_eq!(pyramid[0].channels, 3);
+        assert_eq!(pyramid[1].channels, 3);
+        assert_eq!(pyramid[2].channels, 3);
+        assert_eq!(pyramid[1].rows, 16);
+        assert_eq!(pyramid[2].rows, 8);
+    }
 }
