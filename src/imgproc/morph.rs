@@ -207,7 +207,7 @@ fn morph_op<T>(
     is_erode: bool,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + 'static,
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + SimdElement + 'static,
 {
     let rows = src.rows;
     let cols = src.cols;
@@ -226,6 +226,21 @@ where
     } else {
         anchor.y
     };
+
+    // -----------------------------------------------------------------------
+    // SIMD separable fast-path for rectangular (all-1s) kernels
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "simd")]
+    {
+        let is_rect = kernel.data.iter().all(|&v| v != 0);
+        if is_rect && T::has_simd() && channels > 0 {
+            return morph_op_separable_simd(src, krows, kcols, ax, ay, border_type, is_erode);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Generic offset-based path (non-rectangular kernels or no SIMD)
+    // -----------------------------------------------------------------------
 
     // Pre-compute active kernel positions (where kernel value != 0)
     let mut kernel_offsets: Vec<(i32, i32)> = Vec::new();
@@ -314,6 +329,202 @@ where
 }
 
 // ---------------------------------------------------------------------------
+//  Separable SIMD morphology for rectangular kernels
+// ---------------------------------------------------------------------------
+
+/// SIMD-accelerated separable morphology for rectangular (all-1s) kernels.
+///
+/// Pass 1: Horizontal min/max → intermediate buffer.
+/// Pass 2: Vertical min/max → final output.
+#[cfg(feature = "simd")]
+fn morph_op_separable_simd<T>(
+    src: &Matrix<T>,
+    krows: usize,
+    kcols: usize,
+    ax: i32,
+    ay: i32,
+    border_type: BorderTypes,
+    is_erode: bool,
+) -> Result<Matrix<T>>
+where
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + SimdElement + 'static,
+{
+    let rows = src.rows;
+    let cols = src.cols;
+    let channels = src.channels;
+    let row_stride = cols * channels;
+
+    // Step 1: Horizontal min/max into `tmp`
+    // We pad each source row by kcols-1 elements using border interpolation,
+    // then run simd_row_min_max across the padded row.
+    let mut tmp = vec![
+        if is_erode {
+            T::max_value()
+        } else {
+            T::min_value()
+        };
+        rows * row_stride
+    ];
+
+    let process_row_h = |row: usize, dst_row: &mut [T]| {
+        let pad_left = ax as usize;
+        let pad_right = (kcols as i32 - 1 - ax) as usize;
+        let padded_len = pad_left + cols * channels + pad_right;
+        let mut padded = vec![
+            if is_erode {
+                T::max_value()
+            } else {
+                T::min_value()
+            };
+            padded_len
+        ];
+
+        // Fill padded buffer
+        for col in 0..cols {
+            for ch in 0..channels {
+                padded[pad_left + col * channels + ch] =
+                    *src.get(row, col, ch).unwrap_or(&T::default());
+            }
+        }
+
+        // Fill left border
+        for i in 0..pad_left {
+            let src_col = -(pad_left as i32) + i as i32;
+            for ch in 0..channels {
+                let bc = border_interpolate(src_col, cols as i32, border_type);
+                if bc >= 0 {
+                    padded[i * channels + ch] =
+                        *src.get(row, bc as usize, ch).unwrap_or(&T::default());
+                }
+            }
+        }
+
+        // Fill right border
+        for i in 0..pad_right {
+            let src_col = cols as i32 + i as i32;
+            for ch in 0..channels {
+                let bc = border_interpolate(src_col, cols as i32, border_type);
+                if bc >= 0 {
+                    padded[(pad_left + cols * channels) + i * channels + ch] =
+                        *src.get(row, bc as usize, ch).unwrap_or(&T::default());
+                }
+            }
+        }
+
+        // SIMD horizontal min/max
+        if channels == 1 {
+            T::simd_row_min_max(dst_row, &padded, kcols, is_erode);
+        } else {
+            // Per-channel: stride through padded to extract single-channel strips
+            for ch in 0..channels {
+                // For multi-channel, we process element-by-element with the stride
+                for col in 0..cols {
+                    let mut acc = padded[col * channels + ch];
+                    for k in 1..kcols {
+                        let val = padded[(col + k) * channels + ch];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst_row[col * channels + ch] = acc;
+                }
+            }
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        tmp.par_chunks_mut(row_stride)
+            .enumerate()
+            .for_each(|(row, out)| {
+                process_row_h(row, out);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for row in 0..rows {
+            let start = row * row_stride;
+            let end = start + row_stride;
+            process_row_h(row, &mut tmp[start..end]);
+        }
+    }
+
+    // Step 2: Vertical min/max from `tmp` → `dst`
+    let mut dst = Matrix::<T>::new(rows, cols, channels);
+
+    let process_row_v = |row: usize, dst_row: &mut [T]| {
+        // Gather row slices (with border handling)
+        let mut row_ptrs: Vec<usize> = Vec::with_capacity(krows);
+        for k in 0..krows {
+            let sr = row as i32 + k as i32 - ay;
+            let br = border_interpolate(sr, rows as i32, border_type);
+            let r = if br < 0 { row } else { br as usize };
+            row_ptrs.push(r);
+        }
+
+        // Check if all rows are in-bounds (can skip border handling)
+        let first_sr = row as i32 - ay;
+        let last_sr = row as i32 + (krows as i32 - 1 - ay);
+        let all_interior = first_sr >= 0 && last_sr < rows as i32;
+
+        if all_interior {
+            // Gather slices for SIMD
+            let slices: Vec<&[T]> = row_ptrs
+                .iter()
+                .map(|&r| &tmp[r * row_stride..(r + 1) * row_stride])
+                .collect();
+            T::simd_min_max_col(dst_row, &slices, is_erode);
+        } else {
+            // Scalar fallback for boundary rows
+            let slices: Vec<&[T]> = row_ptrs
+                .iter()
+                .map(|&r| &tmp[r * row_stride..(r + 1) * row_stride])
+                .collect();
+            for i in 0..row_stride {
+                let mut acc = slices[0][i];
+                for s in &slices[1..] {
+                    let val = s[i];
+                    if is_erode {
+                        if val < acc {
+                            acc = val;
+                        }
+                    } else if val > acc {
+                        acc = val;
+                    }
+                }
+                dst_row[i] = acc;
+            }
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_mut(row_stride)
+            .enumerate()
+            .for_each(|(row, out)| {
+                process_row_v(row, out);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for row in 0..rows {
+            let start = row * row_stride;
+            let end = start + row_stride;
+            process_row_v(row, &mut dst.data[start..end]);
+        }
+    }
+
+    Ok(dst)
+}
+
+// ---------------------------------------------------------------------------
 //  Erode & Dilate
 // ---------------------------------------------------------------------------
 
@@ -340,7 +551,7 @@ pub fn erode<T>(
     border_type: BorderTypes,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + 'static,
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + SimdElement + 'static,
 {
     if kernel.data.is_empty() {
         return Err(PureCvError::InvalidInput(
@@ -381,7 +592,7 @@ pub fn dilate<T>(
     border_type: BorderTypes,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + 'static,
+    T: Default + Clone + Copy + PartialOrd + Send + Sync + Bounded + SimdElement + 'static,
 {
     if kernel.data.is_empty() {
         return Err(PureCvError::InvalidInput(

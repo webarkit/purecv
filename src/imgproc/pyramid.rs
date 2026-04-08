@@ -40,6 +40,7 @@
 //! kernel `[1, 4, 6, 4, 1]` (sum = 16, outer product sum = 256).
 
 use crate::core::error::{PureCvError, Result};
+use crate::core::simd::SimdElement;
 use crate::core::types::{BorderTypes, Size};
 use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
@@ -76,7 +77,7 @@ pub fn pyr_down<T>(
     border_type: BorderTypes,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + 'static,
+    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + SimdElement + 'static,
 {
     let src_rows = src.rows;
     let src_cols = src.cols;
@@ -94,7 +95,8 @@ where
     // We only need columns that will be subsampled (every other column).
     let mut tmp = vec![0.0f64; src_rows * dst_sz.width * channels];
 
-    let process_row_h = |row: usize, out: &mut [f64]| {
+    // Scalar fallback for boundary pixels
+    let process_row_h_scalar = |row: usize, out: &mut [f64]| {
         for dc in 0..dst_sz.width {
             let sc = (dc * 2) as i32; // source column centre
             for ch in 0..channels {
@@ -115,6 +117,102 @@ where
             }
         }
     };
+
+    // SIMD-accelerated horizontal pass for interior pixels
+    #[cfg(feature = "simd")]
+    let process_row_h = |row: usize, out: &mut [f64]| {
+        if !T::has_simd() || channels == 0 {
+            process_row_h_scalar(row, out);
+            return;
+        }
+
+        let row_start = row * src_cols * channels;
+        let src_row = &src.data[row_start..row_start + src_cols * channels];
+
+        // Process interior columns where the 5-tap window fits
+        // dc maps to source column sc = dc * 2, window is [sc-2 .. sc+2]
+        // Interior when sc >= 2 and sc + 2 < src_cols → dc >= 1 and dc * 2 + 2 < src_cols
+        let dc_start = 1usize;
+        let dc_end = if src_cols >= 4 {
+            ((src_cols - 3) / 2) + 1
+        } else {
+            0
+        };
+
+        // Process boundary columns (left) with scalar
+        for dc in 0..dc_start.min(dst_sz.width) {
+            let sc = (dc * 2) as i32;
+            for ch in 0..channels {
+                let mut sum = 0.0f64;
+                for k in 0..5i32 {
+                    let col_idx = sc + k - 2;
+                    let bc = border_interpolate(col_idx, src_cols as i32, border_type);
+                    let val = if bc < 0 {
+                        0.0
+                    } else {
+                        src.get(row, bc as usize, ch)
+                            .map(|v| v.to_f64().unwrap_or(0.0))
+                            .unwrap_or(0.0)
+                    };
+                    sum += val * GAUSS5[k as usize] as f64;
+                }
+                out[dc * channels + ch] = sum;
+            }
+        }
+
+        // Interior columns via SIMD
+        if dc_end > dc_start {
+            for ch in 0..channels {
+                // Build a channel-specific contiguous slice for the SIMD kernel
+                // For single-channel images, we can use the row directly
+                if channels == 1 {
+                    #[allow(clippy::needless_range_loop)]
+                    for dc in dc_start..dc_end.min(dst_sz.width) {
+                        let sc = dc * 2;
+                        let src_offset = sc - 2; // start of 5-tap window
+                        let src_slice = &src_row[src_offset..src_offset + 5];
+                        let mut dst_val = [0.0f64; 1];
+                        T::simd_gaussian_5tap_h(&mut dst_val, src_slice, 1);
+                        out[dc] = dst_val[0];
+                    }
+                } else {
+                    // Multi-channel: use stride = channels
+                    for dc in dc_start..dc_end.min(dst_sz.width) {
+                        let sc = dc * 2;
+                        let src_offset = (sc - 2) * channels + ch;
+                        let src_slice = &src_row[src_offset..src_offset + 4 * channels + 1];
+                        let mut dst_val = [0.0f64; 1];
+                        T::simd_gaussian_5tap_h(&mut dst_val, src_slice, channels);
+                        out[dc * channels + ch] = dst_val[0];
+                    }
+                }
+            }
+        }
+
+        // Process boundary columns (right) with scalar
+        for dc in dc_end.max(dc_start)..dst_sz.width {
+            let sc = (dc * 2) as i32;
+            for ch in 0..channels {
+                let mut sum = 0.0f64;
+                for k in 0..5i32 {
+                    let col_idx = sc + k - 2;
+                    let bc = border_interpolate(col_idx, src_cols as i32, border_type);
+                    let val = if bc < 0 {
+                        0.0
+                    } else {
+                        src.get(row, bc as usize, ch)
+                            .map(|v| v.to_f64().unwrap_or(0.0))
+                            .unwrap_or(0.0)
+                    };
+                    sum += val * GAUSS5[k as usize] as f64;
+                }
+                out[dc * channels + ch] = sum;
+            }
+        }
+    };
+
+    #[cfg(not(feature = "simd"))]
+    let process_row_h = process_row_h_scalar;
 
     // Run horizontal pass
     #[cfg(feature = "parallel")]
@@ -150,6 +248,51 @@ where
         }
     };
 
+    // Scalar vertical pass for one destination row
+    let vert_scalar = |dr: usize, dst_row: &mut [T]| {
+        let sr = (dr * 2) as i32;
+        for dc in 0..dst_sz.width {
+            for ch in 0..channels {
+                let mut sum = 0.0f64;
+                for k in 0..5i32 {
+                    let row_idx = sr + k - 2;
+                    sum += get_tmp_val(row_idx, dc, ch) * GAUSS5[k as usize] as f64;
+                }
+                // Normalize by 256 (16 × 16 from separable kernel)
+                let val = (sum / 256.0).round();
+                dst_row[dc * channels + ch] = T::from_f64(val).unwrap_or_else(T::default);
+            }
+        }
+    };
+
+    // SIMD vertical pass: process entire row at once when all 5 source rows
+    // are in-bounds (no border handling needed).
+    #[cfg(feature = "simd")]
+    let vert_row = |dr: usize, dst_row: &mut [T]| {
+        if !T::has_simd() {
+            vert_scalar(dr, dst_row);
+            return;
+        }
+        let sr = dr * 2;
+        // Interior check: all 5 rows (sr-2..sr+2) must be in [0, src_rows)
+        if sr >= 2 && sr + 2 < src_rows {
+            // Gather 5 row slices from tmp
+            let r0 = &tmp[(sr - 2) * tmp_row_stride..(sr - 1) * tmp_row_stride];
+            let r1 = &tmp[(sr - 1) * tmp_row_stride..sr * tmp_row_stride];
+            let r2 = &tmp[sr * tmp_row_stride..(sr + 1) * tmp_row_stride];
+            let r3 = &tmp[(sr + 1) * tmp_row_stride..(sr + 2) * tmp_row_stride];
+            let r4 = &tmp[(sr + 2) * tmp_row_stride..(sr + 3) * tmp_row_stride];
+            let rows: [&[f64]; 5] = [r0, r1, r2, r3, r4];
+
+            T::simd_gaussian_5tap_v(dst_row, &rows);
+        } else {
+            vert_scalar(dr, dst_row);
+        }
+    };
+
+    #[cfg(not(feature = "simd"))]
+    let vert_row = vert_scalar;
+
     #[cfg(feature = "parallel")]
     {
         let dst_row_stride = dst_sz.width * channels;
@@ -157,37 +300,17 @@ where
             .par_chunks_mut(dst_row_stride)
             .enumerate()
             .for_each(|(dr, dst_row)| {
-                let sr = (dr * 2) as i32;
-                for dc in 0..dst_sz.width {
-                    for ch in 0..channels {
-                        let mut sum = 0.0f64;
-                        for k in 0..5i32 {
-                            let row_idx = sr + k - 2;
-                            sum += get_tmp_val(row_idx, dc, ch) * GAUSS5[k as usize] as f64;
-                        }
-                        // Normalize by 256 (16 × 16 from separable kernel)
-                        let val = (sum / 256.0).round();
-                        dst_row[dc * channels + ch] = T::from_f64(val).unwrap_or_else(T::default);
-                    }
-                }
+                vert_row(dr, dst_row);
             });
     }
 
     #[cfg(not(feature = "parallel"))]
     {
+        let dst_row_stride = dst_sz.width * channels;
         for dr in 0..dst_sz.height {
-            let sr = (dr * 2) as i32;
-            for dc in 0..dst_sz.width {
-                for ch in 0..channels {
-                    let mut sum = 0.0f64;
-                    for k in 0..5i32 {
-                        let row_idx = sr + k - 2;
-                        sum += get_tmp_val(row_idx, dc, ch) * GAUSS5[k as usize] as f64;
-                    }
-                    let val = (sum / 256.0).round();
-                    dst.set(dr, dc, ch, T::from_f64(val).unwrap_or_else(T::default));
-                }
-            }
+            let start = dr * dst_row_stride;
+            let end = start + dst_row_stride;
+            vert_row(dr, &mut dst.data[start..end]);
         }
     }
 
@@ -218,7 +341,7 @@ pub fn pyr_up<T>(
     border_type: BorderTypes,
 ) -> Result<Matrix<T>>
 where
-    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + 'static,
+    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + SimdElement + 'static,
 {
     let src_rows = src.rows;
     let src_cols = src.cols;
@@ -399,7 +522,7 @@ pub fn build_pyramid<T>(
     border_type: BorderTypes,
 ) -> Result<Vec<Matrix<T>>>
 where
-    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + 'static,
+    T: Default + Clone + Copy + Send + Sync + ToPrimitive + FromPrimitive + SimdElement + 'static,
 {
     let mut pyramid = Vec::with_capacity(max_level + 1);
     pyramid.push(src.clone());

@@ -186,6 +186,31 @@ pub trait SimdElement: Copy + Send + Sync + 'static {
     ) -> bool {
         false
     }
+
+    // -- Pyramid kernels (5-tap Gaussian) --
+
+    /// Horizontal pass: dst[i] = sum(src[i - 2*stride .. i + 2*stride] * [1, 4, 6, 4, 1])
+    fn simd_gaussian_5tap_h(_dst: &mut [f64], _src: &[Self], _stride: usize) -> bool {
+        false
+    }
+
+    /// Vertical pass: dst[i] = sum(rows[k][i] * GAUSS5[k]) / 256
+    /// Input is 5 rows of intermediate f64, output is final T.
+    fn simd_gaussian_5tap_v(_dst: &mut [Self], _rows: &[&[f64]]) -> bool {
+        false
+    }
+
+    // -- Morphology kernels (Row-wise min/max) --
+
+    /// Horizontal pass: dst[i] = min/max(src[i-ksize/2..i+ksize/2])
+    fn simd_row_min_max(_dst: &mut [Self], _src: &[Self], _ksize: usize, _is_erode: bool) -> bool {
+        false
+    }
+
+    /// Vertical pass: dst[i] = min/max of rows[0..ksize][i]
+    fn simd_min_max_col(_dst: &mut [Self], _rows: &[&[Self]], _is_erode: bool) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +459,83 @@ mod simd_impls {
             }
             true
         }
+
+        fn simd_gaussian_5tap_h(dst: &mut [f64], src: &[Self], stride: usize) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                let s1 = stride;
+                let s2 = stride * 2;
+                let s3 = stride * 3;
+                let s4 = stride * 4;
+                for i in 0..dst.len() {
+                    let v0 = src[i] as f64;
+                    let v1 = src[i + s1] as f64;
+                    let v2 = src[i + s2] as f64;
+                    let v3 = src[i + s3] as f64;
+                    let v4 = src[i + s4] as f64;
+                    dst[i] = v0 + v1 * 4.0 + v2 * 6.0 + v3 * 4.0 + v4;
+                }
+            });
+            true
+        }
+
+        fn simd_gaussian_5tap_v(dst: &mut [Self], rows: &[&[f64]]) -> bool {
+            let arch = pulp::Arch::new();
+            let r0 = rows[0];
+            let r1 = rows[1];
+            let r2 = rows[2];
+            let r3 = rows[3];
+            let r4 = rows[4];
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let sum = r0[i] + r1[i] * 4.0 + r2[i] * 6.0 + r3[i] * 4.0 + r4[i];
+                    dst[i] = (sum / 256.0).round() as f32;
+                }
+            });
+            true
+        }
+
+        fn simd_row_min_max(dst: &mut [Self], src: &[Self], ksize: usize, is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = src[i];
+                    for j in 1..ksize {
+                        let val = src[i + j];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
+            true
+        }
+
+        fn simd_min_max_col(dst: &mut [Self], rows: &[&[Self]], is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = rows[0][i];
+                    for row in &rows[1..] {
+                        let val = row[i];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
+            true
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -647,6 +749,83 @@ mod simd_impls {
             }
             true
         }
+
+        fn simd_gaussian_5tap_h(dst: &mut [f64], src: &[Self], stride: usize) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                let s1 = stride;
+                let s2 = stride * 2;
+                let s3 = stride * 3;
+                let s4 = stride * 4;
+                for i in 0..dst.len() {
+                    let v0 = src[i];
+                    let v1 = src[i + s1];
+                    let v2 = src[i + s2];
+                    let v3 = src[i + s3];
+                    let v4 = src[i + s4];
+                    dst[i] = v0 + v1 * 4.0 + v2 * 6.0 + v3 * 4.0 + v4;
+                }
+            });
+            true
+        }
+
+        fn simd_gaussian_5tap_v(dst: &mut [Self], rows: &[&[f64]]) -> bool {
+            let arch = pulp::Arch::new();
+            let r0 = rows[0];
+            let r1 = rows[1];
+            let r2 = rows[2];
+            let r3 = rows[3];
+            let r4 = rows[4];
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let sum = r0[i] + r1[i] * 4.0 + r2[i] * 6.0 + r3[i] * 4.0 + r4[i];
+                    dst[i] = (sum / 256.0).round();
+                }
+            });
+            true
+        }
+
+        fn simd_row_min_max(dst: &mut [Self], src: &[Self], ksize: usize, is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = src[i];
+                    for j in 1..ksize {
+                        let val = src[i + j];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
+            true
+        }
+
+        fn simd_min_max_col(dst: &mut [Self], rows: &[&[Self]], is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = rows[0][i];
+                    for row in &rows[1..] {
+                        let val = row[i];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
+            true
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -806,6 +985,83 @@ mod simd_impls {
                 }),
                 _ => return false,
             }
+            true
+        }
+
+        fn simd_gaussian_5tap_h(dst: &mut [f64], src: &[Self], stride: usize) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                let s1 = stride;
+                let s2 = stride * 2;
+                let s3 = stride * 3;
+                let s4 = stride * 4;
+                for i in 0..dst.len() {
+                    let v0 = src[i] as f64;
+                    let v1 = src[i + s1] as f64;
+                    let v2 = src[i + s2] as f64;
+                    let v3 = src[i + s3] as f64;
+                    let v4 = src[i + s4] as f64;
+                    dst[i] = v0 + v1 * 4.0 + v2 * 6.0 + v3 * 4.0 + v4;
+                }
+            });
+            true
+        }
+
+        fn simd_gaussian_5tap_v(dst: &mut [Self], rows: &[&[f64]]) -> bool {
+            let arch = pulp::Arch::new();
+            let r0 = rows[0];
+            let r1 = rows[1];
+            let r2 = rows[2];
+            let r3 = rows[3];
+            let r4 = rows[4];
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let sum = r0[i] + r1[i] * 4.0 + r2[i] * 6.0 + r3[i] * 4.0 + r4[i];
+                    dst[i] = (sum / 256.0).round() as u8;
+                }
+            });
+            true
+        }
+
+        fn simd_row_min_max(dst: &mut [Self], src: &[Self], ksize: usize, is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = src[i];
+                    for j in 1..ksize {
+                        let val = src[i + j];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
+            true
+        }
+
+        fn simd_min_max_col(dst: &mut [Self], rows: &[&[Self]], is_erode: bool) -> bool {
+            let arch = pulp::Arch::new();
+            arch.dispatch(|| {
+                for i in 0..dst.len() {
+                    let mut acc = rows[0][i];
+                    for row in &rows[1..] {
+                        let val = row[i];
+                        if is_erode {
+                            if val < acc {
+                                acc = val;
+                            }
+                        } else if val > acc {
+                            acc = val;
+                        }
+                    }
+                    dst[i] = acc;
+                }
+            });
             true
         }
     }
