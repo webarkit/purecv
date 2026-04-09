@@ -43,11 +43,16 @@ pub mod version;
 /// Prelude to easily import common structures
 pub mod prelude {
     pub use crate::core::types::{
-        BorderTypes, Point2f, Point2i, Rect2f, Rect2i, Scalar, Size2f, Size2i,
+        BorderTypes, Point2f, Point2i, Rect2f, Rect2i, Scalar, Size2f, Size2i, TermCriteria,
+        TermType,
     };
     pub use crate::core::Matrix;
     pub use crate::imgproc::derivatives::{laplacian, scharr, sobel};
     pub use crate::imgproc::edge::canny;
+    pub use crate::imgproc::feature::{
+        corner_eigen_vals_and_vecs, corner_harris, corner_min_eigen_val, corner_sub_pix,
+        good_features_to_track, pre_corner_detect,
+    };
     pub use crate::imgproc::filter::{bilateral_filter, box_filter, gaussian_blur};
     pub use crate::imgproc::threshold::{threshold, ThresholdTypes};
     pub use crate::imgproc::{cvt_color, ColorConversionCode};

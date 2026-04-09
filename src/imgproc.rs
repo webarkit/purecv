@@ -37,6 +37,7 @@
 pub mod color;
 pub mod derivatives;
 pub mod edge;
+pub mod feature;
 pub mod filter;
 pub mod threshold;
 
@@ -53,5 +54,6 @@ pub use color::{
 };
 pub use derivatives::*;
 pub use edge::*;
+pub use feature::*;
 pub use filter::*;
 pub use threshold::*;

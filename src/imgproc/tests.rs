@@ -508,4 +508,228 @@ mod imgproc_tests {
         assert_eq!(kx, vec![1.0, 2.0, 1.0]);
         assert_eq!(ky, vec![-1.0, 0.0, 1.0]);
     }
+
+    // -----------------------------------------------------------------------
+    // Feature / corner detection tests
+    // -----------------------------------------------------------------------
+
+    /// Build a 20×20 image with a bright square (corners visible at four locations).
+    fn make_corner_image() -> Matrix<f32> {
+        let rows = 20;
+        let cols = 20;
+        let mut data = vec![0.0f32; rows * cols];
+        // Fill the interior rectangle [6..14, 6..14] with 255.
+        for y in 6..14 {
+            for x in 6..14 {
+                data[y * cols + x] = 255.0;
+            }
+        }
+        Matrix::from_vec(rows, cols, 1, data)
+    }
+
+    #[test]
+    fn test_corner_harris_uniform_image() {
+        // Uniform image → no corners → Harris response should be near zero everywhere.
+        let src = Matrix::<f32>::from_vec(10, 10, 1, vec![50.0; 100]);
+        let result = corner_harris(&src, 3, 3, 0.04, BorderTypes::Reflect101).unwrap();
+        for &v in &result.data {
+            assert!(
+                v.abs() < 1e-3,
+                "uniform image Harris response {v} not near 0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_corner_harris_detects_corners() {
+        let src = make_corner_image();
+        let response = corner_harris(&src, 3, 3, 0.04, BorderTypes::Reflect101).unwrap();
+
+        // The four actual corners of the bright rectangle are at approximately
+        // (6,6), (6,13), (13,6), (13,13).  Harris response should be positive there.
+        for &(row, col) in &[(6usize, 6usize), (6, 13), (13, 6), (13, 13)] {
+            let v = *response.at(row as i32, col as i32, 0).unwrap();
+            assert!(
+                v > 0.0,
+                "expected positive Harris response at ({row},{col}), got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_corner_min_eigen_val_uniform() {
+        let src = Matrix::<f32>::from_vec(10, 10, 1, vec![128.0; 100]);
+        let result = corner_min_eigen_val(&src, 3, 3, BorderTypes::Reflect101).unwrap();
+        for &v in &result.data {
+            assert!(v.abs() < 1e-3, "uniform image min-eigenval {v} not near 0");
+        }
+    }
+
+    #[test]
+    fn test_corner_min_eigen_val_detects_corners() {
+        let src = make_corner_image();
+        let response = corner_min_eigen_val(&src, 3, 3, BorderTypes::Reflect101).unwrap();
+
+        // Min-eigenvalue (Shi-Tomasi) should be positive at actual corners.
+        for &(row, col) in &[(6usize, 6usize), (6, 13), (13, 6), (13, 13)] {
+            let v = *response.at(row as i32, col as i32, 0).unwrap();
+            assert!(
+                v > 0.0,
+                "expected positive min-eigenval at ({row},{col}), got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_corner_eigen_vals_and_vecs_shape() {
+        let src = make_corner_image();
+        let result = corner_eigen_vals_and_vecs(&src, 3, 3, BorderTypes::Reflect101).unwrap();
+
+        // Output must be 6-channel, same spatial size as input.
+        assert_eq!(result.rows, src.rows);
+        assert_eq!(result.cols, src.cols);
+        assert_eq!(result.channels, 6);
+    }
+
+    #[test]
+    fn test_corner_eigen_vals_and_vecs_ordering() {
+        let src = make_corner_image();
+        let result = corner_eigen_vals_and_vecs(&src, 3, 3, BorderTypes::Reflect101).unwrap();
+
+        // λ1 ≥ λ2 everywhere.
+        for i in 0..src.rows * src.cols {
+            let lambda1 = result.data[i * 6];
+            let lambda2 = result.data[i * 6 + 1];
+            assert!(
+                lambda1 >= lambda2 - 1e-5,
+                "pixel {i}: λ1={lambda1} < λ2={lambda2}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_good_features_to_track_count() {
+        let src = make_corner_image();
+        let corners = good_features_to_track(&src, 10, 0.01, 3.0, 3, false, 0.04).unwrap();
+
+        // The bright square has 4 visible corners; we should detect at least some.
+        assert!(!corners.is_empty(), "expected at least one corner detected");
+        assert!(
+            corners.len() <= 10,
+            "more corners than max_corners: {}",
+            corners.len()
+        );
+    }
+
+    #[test]
+    fn test_good_features_to_track_min_distance() {
+        let src = make_corner_image();
+        let corners = good_features_to_track(&src, 20, 0.01, 5.0, 3, false, 0.04).unwrap();
+
+        // Check that no two corners are within min_distance of each other.
+        for i in 0..corners.len() {
+            for j in (i + 1)..corners.len() {
+                let dx = corners[i].x - corners[j].x;
+                let dy = corners[i].y - corners[j].y;
+                let dist = ((dx * dx + dy * dy) as f64).sqrt();
+                assert!(
+                    dist >= 4.9,
+                    "corners {i} and {j} are too close: dist={dist:.3}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_good_features_to_track_invalid_quality() {
+        let src = make_corner_image();
+        assert!(good_features_to_track(&src, 10, 0.0, 3.0, 3, false, 0.04).is_err());
+        assert!(good_features_to_track(&src, 10, 1.5, 3.0, 3, false, 0.04).is_err());
+    }
+
+    #[test]
+    fn test_corner_sub_pix_empty_corners() {
+        use crate::core::types::{TermCriteria, TermType};
+        let src = make_corner_image();
+        let mut corners: Vec<crate::core::Point2f> = Vec::new();
+        let result = corner_sub_pix(
+            &src,
+            &mut corners,
+            crate::core::Size2i::new(5, 5),
+            crate::core::Size2i::new(-1, -1),
+            TermCriteria::new(TermType::Both, 30, 0.01),
+        );
+        assert!(result.is_ok());
+        assert!(corners.is_empty());
+    }
+
+    #[test]
+    fn test_corner_sub_pix_refines_toward_corner() {
+        use crate::core::types::{TermCriteria, TermType};
+
+        let src = make_corner_image();
+
+        // Detect corners first.
+        let mut corners = good_features_to_track(&src, 4, 0.01, 3.0, 3, false, 0.04).unwrap();
+        if corners.is_empty() {
+            return; // no corners detected — skip refinement test
+        }
+
+        let initial_x = corners[0].x;
+        let initial_y = corners[0].y;
+
+        corner_sub_pix(
+            &src,
+            &mut corners,
+            crate::core::Size2i::new(5, 5),
+            crate::core::Size2i::new(-1, -1),
+            TermCriteria::new(TermType::Both, 40, 0.001),
+        )
+        .unwrap();
+
+        let refined_x = corners[0].x;
+        let refined_y = corners[0].y;
+
+        // Refined position must remain within the image bounds.
+        assert!(
+            refined_x >= 0.0 && refined_x < src.cols as f32,
+            "refined x {refined_x} out of image width {}",
+            src.cols
+        );
+        assert!(
+            refined_y >= 0.0 && refined_y < src.rows as f32,
+            "refined y {refined_y} out of image height {}",
+            src.rows
+        );
+
+        // The refinement should not move the corner by more than win_size pixels.
+        let dx = (refined_x - initial_x).abs();
+        let dy = (refined_y - initial_y).abs();
+        assert!(
+            dx <= 6.0 && dy <= 6.0,
+            "corner moved too far: Δx={dx:.2}, Δy={dy:.2}"
+        );
+    }
+
+    #[test]
+    fn test_pre_corner_detect_uniform_image() {
+        // Uniform image → all derivatives are zero → pre_corner_detect result ≈ 0.
+        let src = Matrix::<f32>::from_vec(10, 10, 1, vec![100.0; 100]);
+        let result = pre_corner_detect(&src, 3, BorderTypes::Reflect101).unwrap();
+        for &v in &result.data {
+            assert!(
+                v.abs() < 1e-2,
+                "uniform image pre_corner_detect {v} not near 0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pre_corner_detect_output_shape() {
+        let src = make_corner_image();
+        let result = pre_corner_detect(&src, 3, BorderTypes::Reflect101).unwrap();
+        assert_eq!(result.rows, src.rows);
+        assert_eq!(result.cols, src.cols);
+        assert_eq!(result.channels, 1);
+    }
 }
