@@ -60,6 +60,6 @@ Because WebAssembly runs linearly in memory and holds pointers to Rust `Vec` obj
 Right now we have covered a large majority of operations for `core` and `imgproc`:
 
 - **Core**: Arithmetic (`add`, `subtract`, `multiply`, `absDiff` etc.), Structural (`hconcat`, `vconcat`, `flip`), Geometry, constants etc.
-- **ImgProc**: Filters (`blur`, `gaussianBlur`, `bilateralFilter`), Thresholding (`threshold`), Coloring (`cvtColor`), Edge Derivatives (`canny`, `sobel`, `laplacian`).
+- **ImgProc**: Filters (`blur`, `gaussianBlur`, `bilateralFilter`), Thresholding (`threshold`), Coloring (`cvtColor`), Edge Derivatives (`canny`, `sobel`, `laplacian`), Morphology (`erode`, `dilate`, `morphologyEx`, `getStructuringElement`), Pyramids (`pyrDown`, `pyrUp`, `buildPyramid`).
 
 Note: To interface between JavaScript Typed Arrays and `purecv-wasm`, please use the available getter functions (`.data()`) which directly retrieve a Float32Array or Uint8Array view into WASM memory.
