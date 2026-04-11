@@ -46,6 +46,8 @@ use purecv::imgproc::color::{cvt_color, ColorConversionCode};
 use purecv::imgproc::derivatives;
 use purecv::imgproc::edge;
 use purecv::imgproc::filter;
+use purecv::imgproc::morph::{self, MorphShapes, MorphTypes};
+use purecv::imgproc::pyramid;
 use purecv::imgproc::threshold::{threshold, ThresholdTypes};
 use purecv::version;
 
@@ -1183,4 +1185,253 @@ pub fn rotate_180() -> i32 {
 #[wasm_bindgen(js_name = "ROTATE_90_COUNTERCLOCKWISE")]
 pub fn rotate_90_counterclockwise() -> i32 {
     2
+}
+
+// ---------------------------------------------------------------------------
+//  Morphological operations (require u8 depth)
+// ---------------------------------------------------------------------------
+
+/// Helper to convert a JS integer into a `MorphShapes`.
+fn morph_shape_from_i32(s: i32) -> Result<MorphShapes, JsError> {
+    match s {
+        0 => Ok(MorphShapes::Rect),
+        1 => Ok(MorphShapes::Cross),
+        2 => Ok(MorphShapes::Ellipse),
+        _ => Err(JsError::new(&format!("Unknown morph shape: {s}"))),
+    }
+}
+
+/// Helper to convert a JS integer into a `MorphTypes`.
+fn morph_type_from_i32(t: i32) -> Result<MorphTypes, JsError> {
+    match t {
+        0 => Ok(MorphTypes::Erode),
+        1 => Ok(MorphTypes::Dilate),
+        2 => Ok(MorphTypes::Open),
+        3 => Ok(MorphTypes::Close),
+        4 => Ok(MorphTypes::Gradient),
+        5 => Ok(MorphTypes::TopHat),
+        6 => Ok(MorphTypes::BlackHat),
+        _ => Err(JsError::new(&format!("Unknown morph type: {t}"))),
+    }
+}
+
+/// Creates a structuring element for morphological operations.
+///
+/// * `shape`   – 0 = RECT, 1 = CROSS, 2 = ELLIPSE.
+/// * `ksize_w` – Kernel width.
+/// * `ksize_h` – Kernel height.
+///
+/// Returns a single-channel u8 Mat (0/1 values).
+#[wasm_bindgen(js_name = "getStructuringElement")]
+pub fn get_structuring_element(shape: i32, ksize_w: usize, ksize_h: usize) -> Result<Mat, JsError> {
+    let s = morph_shape_from_i32(shape)?;
+    let ksize = purecv::core::types::Size::new(ksize_w, ksize_h);
+    let anchor = purecv::core::types::Point::new(-1_i32, -1_i32);
+    let kernel = morph::get_structuring_element(s, ksize, anchor)
+        .map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(kernel),
+        },
+    })
+}
+
+/// Erodes an image using a structuring element.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `kernel`      – Structuring element (from `getStructuringElement`).
+/// * `iterations`  – Number of times erosion is applied.
+/// * `border_type` – Border interpolation (integer).
+#[wasm_bindgen(js_name = "erode")]
+pub fn wasm_erode(
+    src: &Mat,
+    kernel: &Mat,
+    iterations: usize,
+    border_type: i32,
+) -> Result<Mat, JsError> {
+    let m = require_u8(src, "erode")?;
+    let k = require_u8(kernel, "erode (kernel)")?;
+    let bt = border_type_from_i32(border_type)?;
+    let anchor = purecv::core::types::Point::new(-1_i32, -1_i32);
+    let result =
+        morph::erode(m, k, anchor, iterations, bt).map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(result),
+        },
+    })
+}
+
+/// Dilates an image using a structuring element.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `kernel`      – Structuring element (from `getStructuringElement`).
+/// * `iterations`  – Number of times dilation is applied.
+/// * `border_type` – Border interpolation (integer).
+#[wasm_bindgen(js_name = "dilate")]
+pub fn wasm_dilate(
+    src: &Mat,
+    kernel: &Mat,
+    iterations: usize,
+    border_type: i32,
+) -> Result<Mat, JsError> {
+    let m = require_u8(src, "dilate")?;
+    let k = require_u8(kernel, "dilate (kernel)")?;
+    let bt = border_type_from_i32(border_type)?;
+    let anchor = purecv::core::types::Point::new(-1_i32, -1_i32);
+    let result =
+        morph::dilate(m, k, anchor, iterations, bt).map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(result),
+        },
+    })
+}
+
+/// Performs advanced morphological transformations.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `op`          – 0=ERODE, 1=DILATE, 2=OPEN, 3=CLOSE,
+///                   4=GRADIENT, 5=TOPHAT, 6=BLACKHAT.
+/// * `kernel`      – Structuring element.
+/// * `iterations`  – Number of times the base operation is applied.
+/// * `border_type` – Border interpolation (integer).
+#[wasm_bindgen(js_name = "morphologyEx")]
+pub fn wasm_morphology_ex(
+    src: &Mat,
+    op: i32,
+    kernel: &Mat,
+    iterations: usize,
+    border_type: i32,
+) -> Result<Mat, JsError> {
+    let m = require_u8(src, "morphologyEx")?;
+    let k = require_u8(kernel, "morphologyEx (kernel)")?;
+    let mt = morph_type_from_i32(op)?;
+    let bt = border_type_from_i32(border_type)?;
+    let anchor = purecv::core::types::Point::new(-1_i32, -1_i32);
+    let result = morph::morphology_ex(m, mt, k, anchor, iterations, bt)
+        .map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(result),
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+//  Pyramid operations (require u8 depth)
+// ---------------------------------------------------------------------------
+
+/// Downsamples an image (Gaussian pyramid).
+///
+/// Output size is `((cols+1)/2, (rows+1)/2)`.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `border_type` – Border interpolation (integer).
+#[wasm_bindgen(js_name = "pyrDown")]
+pub fn wasm_pyr_down(src: &Mat, border_type: i32) -> Result<Mat, JsError> {
+    let m = require_u8(src, "pyrDown")?;
+    let bt = border_type_from_i32(border_type)?;
+    let result = pyramid::pyr_down(m, None, bt).map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(result),
+        },
+    })
+}
+
+/// Upsamples an image (Gaussian pyramid).
+///
+/// Output size is `(cols*2, rows*2)`.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `border_type` – Border interpolation (integer).
+#[wasm_bindgen(js_name = "pyrUp")]
+pub fn wasm_pyr_up(src: &Mat, border_type: i32) -> Result<Mat, JsError> {
+    let m = require_u8(src, "pyrUp")?;
+    let bt = border_type_from_i32(border_type)?;
+    let result = pyramid::pyr_up(m, None, bt).map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(result),
+        },
+    })
+}
+
+/// Constructs a Gaussian pyramid for an image.
+///
+/// * `src`         – Input image (u8 depth).
+/// * `max_level`   – Maximum level (0-based).
+/// * `border_type` – Border interpolation (integer).
+///
+/// Returns an array of Mats.
+#[wasm_bindgen(js_name = "buildPyramid")]
+pub fn wasm_build_pyramid(
+    src: &Mat,
+    max_level: usize,
+    border_type: i32,
+) -> Result<Vec<Mat>, JsError> {
+    let m = require_u8(src, "buildPyramid")?;
+    let bt = border_type_from_i32(border_type)?;
+    let levels =
+        pyramid::build_pyramid(m, max_level, bt).map_err(|e| JsError::new(&format!("{e}")))?;
+
+    Ok(levels
+        .into_iter()
+        .map(|lvl| Mat {
+            inner: DynamicMatrix {
+                data: DynamicData::U8(lvl),
+            },
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+//  JS-side enum constants: Morph shapes
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "MORPH_RECT")]
+pub fn morph_rect() -> i32 {
+    0
+}
+#[wasm_bindgen(js_name = "MORPH_CROSS")]
+pub fn morph_cross() -> i32 {
+    1
+}
+#[wasm_bindgen(js_name = "MORPH_ELLIPSE")]
+pub fn morph_ellipse() -> i32 {
+    2
+}
+
+// ---------------------------------------------------------------------------
+//  JS-side enum constants: Morph types
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "MORPH_ERODE")]
+pub fn morph_erode() -> i32 {
+    0
+}
+#[wasm_bindgen(js_name = "MORPH_DILATE")]
+pub fn morph_dilate_op() -> i32 {
+    1
+}
+#[wasm_bindgen(js_name = "MORPH_OPEN")]
+pub fn morph_open() -> i32 {
+    2
+}
+#[wasm_bindgen(js_name = "MORPH_CLOSE")]
+pub fn morph_close() -> i32 {
+    3
+}
+#[wasm_bindgen(js_name = "MORPH_GRADIENT")]
+pub fn morph_gradient() -> i32 {
+    4
+}
+#[wasm_bindgen(js_name = "MORPH_TOPHAT")]
+pub fn morph_tophat() -> i32 {
+    5
+}
+#[wasm_bindgen(js_name = "MORPH_BLACKHAT")]
+pub fn morph_blackhat() -> i32 {
+    6
 }

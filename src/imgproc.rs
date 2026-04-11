@@ -39,6 +39,8 @@ pub mod derivatives;
 pub mod edge;
 pub mod feature;
 pub mod filter;
+pub mod morph;
+pub mod pyramid;
 pub mod threshold;
 
 pub(crate) mod simd;
@@ -56,4 +58,6 @@ pub use derivatives::*;
 pub use edge::*;
 pub use feature::*;
 pub use filter::*;
+pub use morph::{dilate, erode, get_structuring_element, morphology_ex, MorphShapes, MorphTypes};
+pub use pyramid::{build_pyramid, pyr_down, pyr_up};
 pub use threshold::*;

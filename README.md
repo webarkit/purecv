@@ -43,12 +43,14 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Utilities:** `add_weighted`, `check_range`, `absdiff`, `get_tick_count`, `get_tick_frequency`.
 - **Mathematical Constants:** OpenCV-compatible constants — `CV_PI`, `CV_PI_2`, `CV_2PI`, `CV_PI_4`, `CV_LOG2`, `CV_LN2`, `CV_E`, `CV_LN10`, `CV_SQRT2` — backed by `std::f64::consts` for maximum precision.
 - **ndarray Interop:** Optional, zero-cost conversions to/from `ndarray::Array3` via the `ndarray` feature flag.
-- **SIMD Acceleration** (`simd` feature): Trait-based dispatch via `pulp` for `f32`, `f64`, and `u8` types. Accelerated operations include `add`, `sub`, `mul`, `div`, `min`, `max`, `sqrt`, `dot`, `sum`, `add_weighted`, `convert_scale_abs`, and `magnitude`. Falls back to scalar loops at zero cost when disabled.
+- **SIMD Acceleration** (`simd` feature): Trait-based dispatch via `pulp` for `f32`, `f64`, and `u8` types. Accelerated operations include `add`, `sub`, `mul`, `div`, `min`, `max`, `sqrt`, `dot`, `sum`, `add_weighted`, `convert_scale_abs`, `magnitude`, `simd_row_min_max`, `simd_min_max_col`, and `simd_gaussian_5tap_h/v`. Falls back to scalar loops at zero cost when disabled.
 
 ### `purecv-imgproc`
 - **Color Conversions:** High-performance `cvt_color` supporting RGB, BGR, Gray, RGBA, BGRA and more. Up to **6.6× speedup** with Parallel + SIMD. SIMD-accelerated paths (`simd` feature) use fixed-point integer arithmetic (coefficients 77/150/29 ≈ 0.299/0.587/0.114 × 256) for all `*_to_gray` conversions — portable to x86 SSE/AVX, ARM NEON, and WASM `simd128` via `pulp`.
 - **Edge Detection:** `canny`, `sobel`, `scharr`, `laplacian`. Optimized `fast_deriv_3x3` kernel delivers up to **12× speedup** with Parallel. For `f32` inputs, the `pulp`-powered `simd_deriv_3x3_row_f32` interior kernel adds a further **1.5× boost**, reaching **22× total speedup** (28.59 ms → 1.28 ms) with Parallel + SIMD — the highest combined speedup in the project.
 - **Filtering:** `blur`, `box_filter`, `gaussian_blur`, `median_blur`, `bilateral_filter`. The bilateral filter achieves **7.1× speedup** with Parallel (1.43 s → 202 ms on 512×512); SIMD provides no additional gain due to the non-vectorizable per-pixel exponential weight computation.
+- **Morphology:** `erode`, `dilate`, `morph_op` (supports Rect, Cross, Ellipse kernels) and `get_structuring_element`. Features a **separable SIMD fast-path** for rectangular kernels using `simd_row_min_max` and `simd_min_max_col` for `f32`, `f64`, and `u8`.
+- **Pyramids:** `pyr_down`, `pyr_up` (Gaussian 5x5 kernel), and `build_pyramid`. `pyr_down` is fully SIMD-accelerated via `simd_gaussian_5tap_h` and `simd_gaussian_5tap_v`, providing significant speedups for multi-channel images.
 - **Thresholding:** `threshold` with all 5 OpenCV-compatible types (`BINARY`, `BINARY_INV`, `TRUNC`, `TOZERO`, `TOZERO_INV`). SIMD-accelerated fast path for `u8`, `f32`, and `f64` via the `SimdElement::simd_threshold()` trait method. Works seamlessly with `parallel` feature for row-level Rayon dispatch.
 
 ## 🚀 Getting Started
@@ -192,15 +194,21 @@ cargo run --example threshold
 
 # Image filters (blur, gaussian, canny, sobel, …) — requires examples/data/butterfly.jpg
 cargo run --example filters
+
+# Morphological operations (erode, dilate, morph_op)
+cargo run --example morphology
+
+# Gaussian pyramids (pyr_down, pyr_up)
+cargo run --example pyramids
 ```
 
 ## 🧪 Testing & Benchmarking
 
 ### Running Tests
-PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **197 unit tests** covering:
+PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **242 unit tests** covering:
 
 - **Core module:** Matrix factories, scalar arithmetic variants, bitwise scalar ops, min/max, comparison ops (`compare`, `in_range`), reduction (`reduce`, `count_non_zero`), polar/cartesian conversions, linear algebra (`determinant`, `invert`, `solve`), channel ops (`extract_channel`, `insert_channel`), `DynamicMatrix`, transforms, sorting, clustering, and RNG.
-- **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, and kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`).
+- **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), and kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`).
 
 ```bash
 # Run all tests
@@ -249,9 +257,10 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
   - [x] PR 1 — SIMD infra + `arithm` kernels (`add`, `sub`, `mul`, `div`, `dot`, `magnitude`, `add_weighted`, `convert_scale_abs`, `sqrt`, `min`, `max`, `sum`).
   - [x] PR 2 — Color + Threshold SIMD: fixed-point `cvt_color_*_to_gray` kernels, `simd_threshold()` for all 5 types on `u8`/`f32`/`f64`, new `threshold` example.
   - [x] PR 3 — Derivatives SIMD: `fast_deriv_3x3` interior SIMD pass (`simd_deriv_3x3_row_f32`) achieving **22× speedup** on `sobel_3x3_f32`; new benchmarks for `sobel_3x3_f32_dx/dy` and `bilateral_filter`.
+  - [x] PR 4 — Pyramids + Morphology SIMD: Separable 5-tap Gaussian kernels for pyramids and separable min/max kernels for rectangular morphology; new `pyramids` and `morphology` examples.
 - [x] **Phase 3: WebAssembly** - `wasm-bindgen` wrappers, `wasm-pack` build, CI matrix with `wasm32-unknown-unknown` + `simd128`.
-- [ ] **Phase 4: Image Processing** - Advanced filtering, convolutions, and feature detection.
-- [ ] **Visual examples** — Load real images, apply `threshold` + `cvt_color`, save PNG output (follow-up to `filters.rs`).
+- [x] **Phase 4: Image Processing** - Advanced filtering, convolutions, morphology, pyramids and feature detection.
+- [x] **Visual examples** — Load real images, apply `threshold`, `cvt_color`, `erode`/`dilate` and `pyr_down`, save PNG output (see `examples/`).
 
 ## 📄 License
 
