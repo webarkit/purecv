@@ -126,7 +126,7 @@ pub type Size2f = Size<f32>;
 pub type Size2d = Size<f64>;
 
 /// A 4-element value used to represent pixel colours, per-channel constants,
-/// and range bounds — mirroring `cv::Scalar_<T>` in OpenCV.
+/// and range bounds — mirroring `cv::Scalar_<T>` in WebARKit.
 ///
 /// The four components are stored in `v[0..=3]` and correspond to channels
 /// 0–3 (e.g. B, G, R, A for a BGR image).  When a matrix has fewer than 4
