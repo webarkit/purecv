@@ -566,6 +566,38 @@ impl<T, const N: usize> VecN<T, N> {
     }
 }
 
+impl<T> VecN<T, 2> {
+    /// Creates a 2-element vector — mirrors `cv::Vec2*(v0, v1)`.
+    pub fn new(v0: T, v1: T) -> Self {
+        Self { val: [v0, v1] }
+    }
+}
+
+impl<T> VecN<T, 3> {
+    /// Creates a 3-element vector — mirrors `cv::Vec3*(v0, v1, v2)`.
+    pub fn new(v0: T, v1: T, v2: T) -> Self {
+        Self { val: [v0, v1, v2] }
+    }
+}
+
+impl<T> VecN<T, 4> {
+    /// Creates a 4-element vector — mirrors `cv::Vec4*(v0, v1, v2, v3)`.
+    pub fn new(v0: T, v1: T, v2: T, v3: T) -> Self {
+        Self {
+            val: [v0, v1, v2, v3],
+        }
+    }
+}
+
+impl<T> VecN<T, 6> {
+    /// Creates a 6-element vector — mirrors `cv::Vec6*(v0..v5)`.
+    pub fn new(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T) -> Self {
+        Self {
+            val: [v0, v1, v2, v3, v4, v5],
+        }
+    }
+}
+
 impl<T: Zero, const N: usize> VecN<T, N> {
     /// Returns a zero vector (`T::zero()` in every slot).
     ///
@@ -630,6 +662,30 @@ impl<T: Copy + Sub<Output = T>, const N: usize> Sub for VecN<T, N> {
     fn sub(self, rhs: Self) -> Self {
         Self {
             val: std::array::from_fn(|i| self.val[i] - rhs.val[i]),
+        }
+    }
+}
+
+/// Adds a [`Scalar`] to a `VecN` channel-by-channel, mirroring OpenCV's
+/// `cv::Vec operator+(cv::Vec, cv::Scalar)`.  The scalar carries four channels;
+/// for `N ≤ 4` each element `i` gets `scalar.v[i]`; for `i ≥ 4` (e.g. `Vec6*`)
+/// the scalar contributes `T::default()` (zero for numeric types).
+impl<T: Copy + Default + Add<Output = T>, const N: usize> Add<Scalar<T>> for VecN<T, N> {
+    type Output = Self;
+    fn add(self, rhs: Scalar<T>) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] + if i < 4 { rhs.v[i] } else { T::default() }),
+        }
+    }
+}
+
+/// Subtracts a [`Scalar`] from a `VecN` channel-by-channel, mirroring OpenCV's
+/// `cv::Vec operator-(cv::Vec, cv::Scalar)`.
+impl<T: Copy + Default + Sub<Output = T>, const N: usize> Sub<Scalar<T>> for VecN<T, N> {
+    type Output = Self;
+    fn sub(self, rhs: Scalar<T>) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] - if i < 4 { rhs.v[i] } else { T::default() }),
         }
     }
 }
@@ -792,6 +848,63 @@ mod vecn_tests {
         let a = VecN::from_array([1_i32, 2, 3]);
         let b = a.clone();
         assert_eq!(a, b);
+    }
+
+    // --- new() constructors ---------------------------------------------------
+
+    #[test]
+    fn test_new_2() {
+        let v = Vec2i::new(3, 7);
+        assert_eq!(v.val, [3, 7]);
+    }
+
+    #[test]
+    fn test_new_3() {
+        let v = Vec3f::new(1.0_f32, 2.0, 3.0);
+        assert_eq!(v.val, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_new_4() {
+        let v = Vec4b::new(10, 20, 30, 40);
+        assert_eq!(v.val, [10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn test_new_6() {
+        let v = Vec6d::new(1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0);
+        assert_eq!(v.val, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    // --- Add<Scalar> / Sub<Scalar> -------------------------------------------
+
+    #[test]
+    fn test_add_scalar_3() {
+        let v = Vec3f::new(1.0_f32, 2.0, 3.0);
+        let s = Scalar::new(10.0_f32, 20.0, 30.0, 0.0);
+        assert_eq!((v + s).val, [11.0, 22.0, 33.0]);
+    }
+
+    #[test]
+    fn test_sub_scalar_3() {
+        let v = Vec3f::new(10.0_f32, 20.0, 30.0);
+        let s = Scalar::new(1.0_f32, 2.0, 3.0, 0.0);
+        assert_eq!((v - s).val, [9.0, 18.0, 27.0]);
+    }
+
+    #[test]
+    fn test_add_scalar_4() {
+        let v = Vec4i::new(1, 2, 3, 4);
+        let s = Scalar::new(5_i32, 6, 7, 8);
+        assert_eq!((v + s).val, [6, 8, 10, 12]);
+    }
+
+    #[test]
+    fn test_add_scalar_6_extra_channels_zero() {
+        // Channels 4 and 5 of the Vec get scalar's default (0) added.
+        let v = Vec6f::new(1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0);
+        let s = Scalar::new(10.0_f32, 10.0, 10.0, 10.0);
+        assert_eq!((v + s).val, [11.0, 12.0, 13.0, 14.0, 5.0, 6.0]);
     }
 }
 
