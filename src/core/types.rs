@@ -256,6 +256,21 @@ impl<T: Copy + Default> From<T> for Scalar<T> {
     }
 }
 
+impl<T: Copy + Default> Scalar<T> {
+    /// Returns channel `i` when `i < 4`, otherwise `T::default()`.
+    ///
+    /// Used by `VecN + Scalar` / `VecN - Scalar` to broadcast scalar channels
+    /// onto vectors of arbitrary length without bounds-checking the caller side.
+    #[inline]
+    pub fn channel_or_default(&self, i: usize) -> T {
+        if i < 4 {
+            self.v[i]
+        } else {
+            T::default()
+        }
+    }
+}
+
 /// Per-channel addition: `result[c] = self[c] + rhs[c]`.
 impl<T: Copy + Default + Add<Output = T>> Add for Scalar<T> {
     type Output = Self;
@@ -674,7 +689,7 @@ impl<T: Copy + Default + Add<Output = T>, const N: usize> Add<Scalar<T>> for Vec
     type Output = Self;
     fn add(self, rhs: Scalar<T>) -> Self {
         Self {
-            val: std::array::from_fn(|i| self.val[i] + if i < 4 { rhs.v[i] } else { T::default() }),
+            val: std::array::from_fn(|i| self.val[i] + rhs.channel_or_default(i)),
         }
     }
 }
@@ -685,7 +700,7 @@ impl<T: Copy + Default + Sub<Output = T>, const N: usize> Sub<Scalar<T>> for Vec
     type Output = Self;
     fn sub(self, rhs: Scalar<T>) -> Self {
         Self {
-            val: std::array::from_fn(|i| self.val[i] - if i < 4 { rhs.v[i] } else { T::default() }),
+            val: std::array::from_fn(|i| self.val[i] - rhs.channel_or_default(i)),
         }
     }
 }
@@ -900,7 +915,7 @@ mod vecn_tests {
     }
 
     #[test]
-    fn test_add_scalar_6_extra_channels_zero() {
+    fn test_add_scalar_vec6_zero_pads_extra_channels() {
         // Channels 4 and 5 of the Vec get scalar's default (0) added.
         let v = Vec6f::new(1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0);
         let s = Scalar::new(10.0_f32, 10.0, 10.0, 10.0);
