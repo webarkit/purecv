@@ -261,6 +261,22 @@ impl<T: Copy + Default> Scalar<T> {
     ///
     /// Used by `VecN + Scalar` / `VecN - Scalar` to broadcast scalar channels
     /// onto vectors of arbitrary length without bounds-checking the caller side.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use purecv::core::types::Scalar;
+    ///
+    /// let s = Scalar::new(10.0_f32, 20.0, 30.0, 40.0);
+    ///
+    /// // Channels 0–3 return the stored value.
+    /// assert_eq!(s.channel_or_default(0), 10.0);
+    /// assert_eq!(s.channel_or_default(3), 40.0);
+    ///
+    /// // Channel 4 and beyond return T::default() (0.0 for f32).
+    /// assert_eq!(s.channel_or_default(4), 0.0);
+    /// assert_eq!(s.channel_or_default(100), 0.0);
+    /// ```
     #[inline]
     pub fn channel_or_default(&self, i: usize) -> T {
         if i < 4 {
