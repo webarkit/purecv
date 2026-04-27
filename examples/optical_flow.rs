@@ -284,8 +284,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Saves a copy of `base` with flow arrows overlaid.
 ///
-/// * Green cross + arrow — tracked point
-/// * Red cross            — lost point
+/// For each feature point:
+/// * A small cross (±4 px) is drawn at the previous position.
+/// * A Bresenham line is drawn from the previous to the next position for
+///   tracked points.
+///
+/// Colour coding:
+/// * Green (`[0, 210, 0]`) — point was tracked successfully (`status == 1`).
+/// * Red   (`[210, 0, 0]`) — point was lost (`status == 0`).
+///
+/// # Arguments
+/// * `base`      — Original RGB image used as background.
+/// * `prev_pts`  — Feature positions in the previous frame.
+/// * `next_pts`  — Estimated positions in the next frame (from LK).
+/// * `status`    — Per-point tracking flag: `1` = tracked, `0` = lost.
+/// * `path`      — Destination file path (PNG extension expected).
+///
+/// # Errors
+/// Returns an error if the output file cannot be created or if the `image`
+/// crate fails to encode the PNG.
 fn save_flow_image(
     base: &image::RgbImage,
     prev_pts: &[Point2f],
@@ -336,6 +353,17 @@ fn save_flow_image(
 }
 
 /// Minimal Bresenham line drawing on an `RgbImage`.
+///
+/// Draws a straight line between `(x0, y0)` and `(x1, y1)` using the
+/// standard Bresenham error-accumulation algorithm.  Pixels whose coordinates
+/// fall outside the image bounds `[0, width) × [0, height)` are silently
+/// skipped, so no bounds checking is required by the caller.
+///
+/// # Arguments
+/// * `img`   — Destination image (modified in place).
+/// * `x0`, `y0` — Start point (column, row).
+/// * `x1`, `y1` — End point (column, row).
+/// * `color` — RGB colour to paint every pixel on the line.
 fn draw_line(
     img: &mut image::RgbImage,
     mut x0: i32,
@@ -373,7 +401,24 @@ fn draw_line(
 // Helper: save CSV of flow vectors
 // ---------------------------------------------------------------------------
 
-/// Writes one row per feature point: index, coordinates, flow, status, error.
+/// Writes flow vectors for every feature point to a CSV file.
+///
+/// The output has one header row followed by one data row per point:
+/// ```text
+/// idx,prev_x,prev_y,next_x,next_y,flow_x,flow_y,status,min_eigen
+/// 0,158.000,124.000,162.010,127.000,4.010,3.000,1,88873.757813
+/// …
+/// ```
+///
+/// # Arguments
+/// * `prev_pts`  — Feature positions in the previous frame.
+/// * `next_pts`  — Estimated positions in the next frame.
+/// * `status`    — Per-point tracking flag: `1` = tracked, `0` = lost.
+/// * `err`       — Per-point tracking error / minimum eigenvalue.
+/// * `path`      — Destination file path.
+///
+/// # Errors
+/// Returns an error if the file cannot be created or written.
 fn save_flow_csv(
     prev_pts: &[Point2f],
     next_pts: &[Point2f],
