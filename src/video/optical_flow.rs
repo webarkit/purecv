@@ -434,17 +434,21 @@ fn compute_tracking_error(
 /// # Example
 /// ```
 /// use purecv::core::Matrix;
-/// use purecv::core::types::{BorderTypes, Size2i, TermCriteria, TermType, Point2f};
+/// use purecv::core::types::{Size2i, TermCriteria, TermType, Point2f};
 /// use purecv::video::optical_flow::calc_optical_flow_pyramid_lk;
 ///
-/// let prev = Matrix::<u8>::new(64, 64, 1);
-/// let next = Matrix::<u8>::new(64, 64, 1);
+/// // Build a 64×64 frame with a bright 8×8 square at (28..36, 28..36)
+/// // so the tracker has real gradients to work with.
+/// let mut data = vec![0u8; 64 * 64];
+/// for r in 28..36 { for c in 28..36 { data[r * 64 + c] = 200; } }
+/// let frame = Matrix::<u8>::from_vec(64, 64, 1, data);
+///
 /// let pts = vec![Point2f::new(32.0, 32.0)];
 /// let criteria = TermCriteria::new(TermType::Both, 20, 0.03);
 ///
 /// let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
-///     &prev, &next, &pts, None,
-///     Size2i::new(21, 21), 3, criteria, 0, 1e-4,
+///     &frame, &frame, &pts, None,
+///     Size2i::new(11, 11), 2, criteria, 0, 1e-4,
 /// ).unwrap();
 ///
 /// assert_eq!(status[0], 1);
