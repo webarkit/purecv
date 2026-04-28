@@ -91,8 +91,10 @@ pub use self::solvers::{solve_cubic, solve_quadratic};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,
     Point3i, Rect, Rect2d, Rect2f, Rect2i, ReduceTypes, RotatedRect, Scalar, Size, Size2d, Size2f,
-    Size2i, TermCriteria, TermType, KMEANS_PP_CENTERS, KMEANS_RANDOM_CENTERS,
-    KMEANS_USE_INITIAL_LABELS, SORT_ASCENDING, SORT_DESCENDING, SORT_EVERY_COLUMN, SORT_EVERY_ROW,
+    Size2i, TermCriteria, TermType, Vec2b, Vec2d, Vec2f, Vec2i, Vec2s, Vec3b, Vec3d, Vec3f, Vec3i,
+    Vec3s, Vec4b, Vec4d, Vec4f, Vec4i, Vec4s, Vec6d, Vec6f, VecN, KMEANS_PP_CENTERS,
+    KMEANS_RANDOM_CENTERS, KMEANS_USE_INITIAL_LABELS, SORT_ASCENDING, SORT_DESCENDING,
+    SORT_EVERY_COLUMN, SORT_EVERY_ROW,
 };
 #[cfg(not(feature = "parallel"))]
 pub use self::utils::ParIterFallback;

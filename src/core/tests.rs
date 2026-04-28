@@ -1521,4 +1521,61 @@ mod core_tests {
         assert!((CV_E - std::f64::consts::E).abs() < f64::EPSILON);
         assert!((CV_LN10 - std::f64::consts::LN_10).abs() < f64::EPSILON);
     }
+
+    // ---- data_ptr / data_ptr_mut / copy_to tests ----
+
+    #[test]
+    fn test_data_ptr() {
+        let mat = Matrix::<u8>::from_vec(2, 2, 1, vec![10, 20, 30, 40]);
+        let ptr = mat.data_ptr();
+        assert!(!ptr.is_null());
+        // The pointer should point to the first element
+        unsafe {
+            assert_eq!(*ptr, 10u8);
+        }
+    }
+
+    #[test]
+    fn test_data_ptr_mut() {
+        let mut mat = Matrix::<u8>::from_vec(1, 3, 1, vec![1, 2, 3]);
+        let ptr = mat.data_ptr_mut();
+        assert!(!ptr.is_null());
+        // Mutate through the pointer and verify via safe API
+        unsafe {
+            *ptr = 99;
+        }
+        assert_eq!(mat.get(0, 0, 0), Some(&99u8));
+    }
+
+    #[test]
+    fn test_copy_to_same_shape() {
+        let src = Matrix::<f32>::from_vec(2, 3, 1, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let mut dst = Matrix::<f32>::new(2, 3, 1);
+        src.copy_to(&mut dst).unwrap();
+        assert_eq!(src.data, dst.data);
+        assert_eq!(dst.rows, 2);
+        assert_eq!(dst.cols, 3);
+    }
+
+    #[test]
+    fn test_copy_to_resize() {
+        let src = Matrix::<u8>::from_vec(2, 2, 3, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        let mut dst = Matrix::<u8>::new(0, 0, 0); // empty dst
+        src.copy_to(&mut dst).unwrap();
+        assert_eq!(dst.rows, 2);
+        assert_eq!(dst.cols, 2);
+        assert_eq!(dst.channels, 3);
+        assert_eq!(src.data, dst.data);
+    }
+
+    #[test]
+    fn test_copy_to_independence() {
+        // Verify deep copy — modifying dst does not affect src
+        let src = Matrix::<i32>::from_vec(1, 3, 1, vec![10, 20, 30]);
+        let mut dst = Matrix::<i32>::new(0, 0, 0);
+        src.copy_to(&mut dst).unwrap();
+        dst.set(0, 0, 0, 999);
+        assert_eq!(src.get(0, 0, 0), Some(&10)); // src unchanged
+        assert_eq!(dst.get(0, 0, 0), Some(&999));
+    }
 }
