@@ -61,7 +61,7 @@ fn bench_optical_flow(c: &mut Criterion) {
     let mut next_data = vec![0u8; size * size];
     for r in 0..size {
         for c_idx in 0..size {
-            let src_c = if c_idx >= shift { c_idx - shift } else { 0 };
+            let src_c = c_idx.saturating_sub(shift);
             next_data[r * size + c_idx] = prev_data[r * size + src_c];
         }
     }

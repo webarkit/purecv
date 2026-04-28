@@ -277,7 +277,7 @@ mod video_tests {
         let mut next_data = vec![0u8; rows * cols];
         for r in 0..rows {
             for c in 0..cols {
-                let src_c = if c >= shift { c - shift } else { 0 };
+                let src_c = c.saturating_sub(shift);
                 next_data[r * cols + c] = prev_data[r * cols + src_c];
             }
         }

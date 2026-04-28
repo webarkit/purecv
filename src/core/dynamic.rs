@@ -363,26 +363,26 @@ impl DynamicMatrix {
     /// Returns a raw pointer to the underlying buffer data.
     pub fn data_ptr(&self) -> *const u8 {
         match &self.data {
-            DynamicData::U8(m) => m.data_ptr() as *const u8,
-            DynamicData::I8(m) => m.data_ptr() as *const u8,
-            DynamicData::U16(m) => m.data_ptr() as *const u8,
-            DynamicData::I16(m) => m.data_ptr() as *const u8,
-            DynamicData::I32(m) => m.data_ptr() as *const u8,
-            DynamicData::F32(m) => m.data_ptr() as *const u8,
-            DynamicData::F64(m) => m.data_ptr() as *const u8,
+            DynamicData::U8(m) => m.data_ptr(),
+            DynamicData::I8(m) => m.data_ptr(),
+            DynamicData::U16(m) => m.data_ptr(),
+            DynamicData::I16(m) => m.data_ptr(),
+            DynamicData::I32(m) => m.data_ptr(),
+            DynamicData::F32(m) => m.data_ptr(),
+            DynamicData::F64(m) => m.data_ptr(),
         }
     }
 
     /// Returns a mutable raw pointer to the underlying buffer data.
     pub fn data_ptr_mut(&mut self) -> *mut u8 {
         match &mut self.data {
-            DynamicData::U8(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::I8(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::U16(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::I16(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::I32(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::F32(m) => m.data_ptr_mut() as *mut u8,
-            DynamicData::F64(m) => m.data_ptr_mut() as *mut u8,
+            DynamicData::U8(m) => m.data_ptr_mut(),
+            DynamicData::I8(m) => m.data_ptr_mut(),
+            DynamicData::U16(m) => m.data_ptr_mut(),
+            DynamicData::I16(m) => m.data_ptr_mut(),
+            DynamicData::I32(m) => m.data_ptr_mut(),
+            DynamicData::F32(m) => m.data_ptr_mut(),
+            DynamicData::F64(m) => m.data_ptr_mut(),
         }
     }
 
