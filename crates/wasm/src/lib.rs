@@ -268,6 +268,29 @@ impl Mat {
         })
     }
 
+    /// Returns a pointer to the underlying buffer data.
+    /// This allows zero-copy interoperability with WASM memory.
+    #[wasm_bindgen(js_name = "dataPtr")]
+    pub fn data_ptr(&self) -> usize {
+        self.inner.data_ptr() as usize
+    }
+
+    /// Returns a mutable pointer to the underlying buffer data.
+    /// This allows zero-copy interoperability with WASM memory.
+    #[wasm_bindgen(js_name = "dataPtrMut")]
+    pub fn data_ptr_mut(&mut self) -> usize {
+        self.inner.data_ptr_mut() as usize
+    }
+
+    /// Deep copies the matrix data into `dst`. Resizes `dst` if necessary.
+    /// Errors if the destination matrix does not have the same depth.
+    #[wasm_bindgen(js_name = "copyTo")]
+    pub fn copy_to(&self, dst: &mut Mat) -> Result<(), JsError> {
+        self.inner
+            .copy_to(&mut dst.inner)
+            .map_err(|e| JsError::new(&format!("{e}")))
+    }
+
     /// Sets the underlying data from a `Uint8Array`. Errors if depth is not `u8`.
     #[wasm_bindgen(js_name = "setDataU8")]
     pub fn set_data_u8(&mut self, data: &[u8]) -> Result<(), JsError> {
@@ -584,6 +607,55 @@ impl Scalar {
             v2: 0.0,
             v3: 0.0,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Vec types
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "Vec2")]
+pub struct Vec2 {
+    pub v0: f64,
+    pub v1: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec2")]
+impl Vec2 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64) -> Vec2 {
+        Vec2 { v0, v1 }
+    }
+}
+
+#[wasm_bindgen(js_name = "Vec3")]
+pub struct Vec3 {
+    pub v0: f64,
+    pub v1: f64,
+    pub v2: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec3")]
+impl Vec3 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64, v2: f64) -> Vec3 {
+        Vec3 { v0, v1, v2 }
+    }
+}
+
+#[wasm_bindgen(js_name = "Vec4")]
+pub struct Vec4 {
+    pub v0: f64,
+    pub v1: f64,
+    pub v2: f64,
+    pub v3: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec4")]
+impl Vec4 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64, v2: f64, v3: f64) -> Vec4 {
+        Vec4 { v0, v1, v2, v3 }
     }
 }
 
