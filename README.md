@@ -25,10 +25,11 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 ## ✨ Features
 
 ### `purecv-core`
-- **Matrix Operations:** Multi-dimensional `Matrix<T>` with support for common arithmetic (`add`, `subtract`, `multiply`, `divide`) and bitwise logic (`bitwise_and`, `bitwise_or`, `bitwise_xor`, `bitwise_not`). Matrix and scalar variants for all operations.
+- **Matrix Operations:** Multi-dimensional `Matrix<T>` with support for common arithmetic (`add`, `subtract`, `multiply`, `divide`) and bitwise logic (`bitwise_and`, `bitwise_or`, `bitwise_xor`, `bitwise_not`). Matrix and scalar variants for all operations. Provides safe raw pointer access via `data_ptr` and `data_ptr_mut`, and OpenCV-compliant deep-copying with `copy_to`.
 - **Factory Methods:** Intuitive initialization with `zeros`, `ones`, `eye`, and `diag`.
 - **Scalar constructors:** `Matrix::new_with_scalar` (fill all pixels from a `Scalar<T>`), `new_with_scalar_from_size`, and `new_with_scalar_typed_from_size`. `set_to` and `set_to_masked` assign a `Scalar<T>` to every pixel (optionally masked); channels beyond 4 default to `T::default()`.
 - **Scalar type:** `Scalar<T>` — a 4-channel value — now supports `Index`/`IndexMut` for channel access, `from_array`/`to_array`, `From<[T;4]>` and `From<T>` conversions, and a `map()` helper for per-channel type transforms. Arithmetic traits: per-channel `Add`/`Sub`; `Mul<T>`/`Mul<Scalar<T>>` for scaling and element-wise multiply; safe `Div<T>`/`Div<Scalar<T>>` (returns zero on divide-by-zero); `checked_div()` returning `Result` for integer types.
+- **Vector Types:** N-dimensional vectors via the `VecN` struct (e.g., `Vec2`, `Vec3`, `Vec4`), enabling multi-channel vector math and structural interoperability.
 - **Comparison:** `compare`, `compare_scalar`, `min`, `max`, `abs_diff`, `in_range`.
 - **Structural:** `flip`, `rotate`, `transpose`, `repeat`, `reshape`, `hconcat`, `vconcat`, `copy_make_border`, `extract_channel`, `insert_channel`.
 - **Math:** `sqrt`, `exp`, `log`, `pow`, `magnitude`, `phase`, `cart_to_polar`, `polar_to_cart`, `convert_scale_abs`.
@@ -54,6 +55,9 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Thresholding:** `threshold` with all 5 OpenCV-compatible types (`BINARY`, `BINARY_INV`, `TRUNC`, `TOZERO`, `TOZERO_INV`). SIMD-accelerated fast path for `u8`, `f32`, and `f64` via the `SimdElement::simd_threshold()` trait method. Works seamlessly with `parallel` feature for row-level Rayon dispatch.
 - **Feature Detection:** `corner_harris`, `corner_min_eigen_val` (Shi-Tomasi), `good_features_to_track`, `corner_sub_pix` refinement, and structure tensor computation via `corner_eigen_vals_and_vecs`. Supports both Harris and Shi-Tomasi responses with non-maximum suppression.
 - **Hough Transform:** Standard (`hough_lines`) and Probabilistic (`hough_lines_p`) line detection, plus Hough Circle Transform (`hough_circles`) using internally computed Sobel gradients. Fully parallelized via the `parallel` feature.
+
+### `purecv-video`
+- **Optical Flow:** Pyramidal Lucas-Kanade optical flow implementation with `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid`. Includes robust window-based tracking, sub-pixel accuracy, spatial gradient optimization, and iterative refinement.
 
 ## 🚀 Getting Started
 
@@ -214,6 +218,7 @@ PureCV uses a comprehensive suite of unit tests to ensure correctness and parity
 
 - **Core module:** Matrix factories, scalar arithmetic variants, bitwise scalar ops, min/max, comparison ops (`compare`, `in_range`), reduction (`reduce`, `count_non_zero`), polar/cartesian conversions, linear algebra (`determinant`, `invert`, `solve`), channel ops (`extract_channel`, `insert_channel`), `DynamicMatrix`, transforms, sorting, clustering, and RNG.
 - **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), and kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`).
+- **Video module:** Tracking and optical flow capabilities including `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid` implementations.
 
 ```bash
 # Run all tests
@@ -250,6 +255,7 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 | `dot` | 997 µs | **157 µs** | 6.4× |
 | `gemm_256×256` | 15.71 ms | **4.40 ms** | 3.7× |
 | `canny` | 57.61 ms | **12.54 ms** | 4.6× |
+| `calc_optical_flow_pyr_lk` (512×512, 49 pts) | 27.5 ms | **-** | - |
 
 > ★ Uses non-zero sinusoidal data to exercise the `simd_deriv_3x3_row_f32` SIMD kernel. Best combined speedup in the project.
 >
@@ -257,15 +263,8 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 
 ## 🗺 Roadmap
 
-- [x] **Phase 1: Core Foundation** - Matrix types, arithmetic, geometric utilities, and basic structural transforms.
-- [x] **Phase 2: Performance** - SIMD acceleration via `pulp`, Rayon parallelism, and Criterion benchmarking across 32 operations.
-  - [x] PR 1 — SIMD infra + `arithm` kernels (`add`, `sub`, `mul`, `div`, `dot`, `magnitude`, `add_weighted`, `convert_scale_abs`, `sqrt`, `min`, `max`, `sum`).
-  - [x] PR 2 — Color + Threshold SIMD: fixed-point `cvt_color_*_to_gray` kernels, `simd_threshold()` for all 5 types on `u8`/`f32`/`f64`, new `threshold` example.
-  - [x] PR 3 — Derivatives SIMD: `fast_deriv_3x3` interior SIMD pass (`simd_deriv_3x3_row_f32`) achieving **22× speedup** on `sobel_3x3_f32`; new benchmarks for `sobel_3x3_f32_dx/dy` and `bilateral_filter`.
-  - [x] PR 4 — Pyramids + Morphology SIMD: Separable 5-tap Gaussian kernels for pyramids and separable min/max kernels for rectangular morphology; new `pyramids` and `morphology` examples.
-- [x] **Phase 3: WebAssembly** - `wasm-bindgen` wrappers, `wasm-pack` build, CI matrix with `wasm32-unknown-unknown` + `simd128`.
-- [x] **Phase 4: Image Processing** - Advanced filtering, convolutions, morphology, pyramids, feature detection (Harris/Shi-Tomasi), and Hough Transform.
-- [x] **Visual examples** — Load real images, apply `threshold`, `cvt_color`, `erode`/`dilate` and `pyr_down`, save PNG output (see `examples/`).
+- [ ] [**Milestone 3: Video Processing & Optical Flow**](https://github.com/webarkit/purecv/milestone/3) - Implementation of motion tracking between video frames using optical flow and related algorithms (`calcOpticalFlowPyrLK`).
+- [ ] [**Milestone 4: Camera Calibration & 3D Geometry**](https://github.com/webarkit/purecv/milestone/4) - Implementation of advanced algorithms for camera calibration and 3D geometry (`findHomography`, `estimateAffine2D`, `Rodrigues`, `solvePnP`).
 
 ## 📄 License
 

@@ -222,10 +222,12 @@ fn bench_imgproc(c: &mut Criterion) {
     let mut img_hough = Matrix::<u8>::new(size_hough, size_hough, 1);
     // Add some "lines" to the image
     for i in 0..size_hough {
-        img_hough.at_mut(i as i32, i as i32, 0).map(|v| *v = 255);
-        img_hough
-            .at_mut(i as i32, (size_hough - 1 - i) as i32, 0)
-            .map(|v| *v = 255);
+        if let Some(v) = img_hough.at_mut(i as i32, i as i32, 0) {
+            *v = 255;
+        }
+        if let Some(v) = img_hough.at_mut(i as i32, (size_hough - 1 - i) as i32, 0) {
+            *v = 255;
+        }
     }
 
     c.bench_function("hough_lines_512x512", |b| {

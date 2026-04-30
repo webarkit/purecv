@@ -256,6 +256,37 @@ impl<T: Copy + Default> From<T> for Scalar<T> {
     }
 }
 
+impl<T: Copy + Default> Scalar<T> {
+    /// Returns channel `i` when `i < 4`, otherwise `T::default()`.
+    ///
+    /// Used by `VecN + Scalar` / `VecN - Scalar` to broadcast scalar channels
+    /// onto vectors of arbitrary length without bounds-checking the caller side.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use purecv::core::types::Scalar;
+    ///
+    /// let s = Scalar::new(10.0_f32, 20.0, 30.0, 40.0);
+    ///
+    /// // Channels 0–3 return the stored value.
+    /// assert_eq!(s.channel_or_default(0), 10.0);
+    /// assert_eq!(s.channel_or_default(3), 40.0);
+    ///
+    /// // Channel 4 and beyond return T::default() (0.0 for f32).
+    /// assert_eq!(s.channel_or_default(4), 0.0);
+    /// assert_eq!(s.channel_or_default(100), 0.0);
+    /// ```
+    #[inline]
+    pub fn channel_or_default(&self, i: usize) -> T {
+        if i < 4 {
+            self.v[i]
+        } else {
+            T::default()
+        }
+    }
+}
+
 /// Per-channel addition: `result[c] = self[c] + rhs[c]`.
 impl<T: Copy + Default + Add<Output = T>> Add for Scalar<T> {
     type Output = Self;
@@ -523,6 +554,388 @@ mod scalar_tests {
         // f32 zero-check: 0.0 == Zero::zero() → returns default (0.0)
         let r = s / 0.0f32;
         assert_eq!(r.v, [0.0, 0.0, 0.0, 0.0]);
+    }
+}
+
+/// Generic N-dimensional short numerical vector (mirrors `cv::Vec<Tp, cn>`).
+///
+/// `VecN<T, N>` stores `N` elements of type `T` in a fixed-size array `val`.
+/// It supports element-wise arithmetic, scalar broadcast, indexing, and dot
+/// products. Common OpenCV-style aliases (`Vec2b`, `Vec3f`, …) are provided.
+///
+/// # Example
+/// ```
+/// use purecv::core::types::VecN;
+///
+/// let a = VecN::from_array([1.0_f32, 2.0, 3.0]);
+/// let b = VecN::from_array([4.0_f32, 5.0, 6.0]);
+/// assert!((a.dot(&b) - 32.0_f32).abs() < 1e-6);
+/// let c = a + b;
+/// assert_eq!(c.val, [5.0, 7.0, 9.0]);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct VecN<T, const N: usize> {
+    pub val: [T; N],
+}
+
+impl<T, const N: usize> VecN<T, N> {
+    /// Creates a `VecN` from a fixed-size array.
+    pub fn from_array(val: [T; N]) -> Self {
+        Self { val }
+    }
+
+    /// Returns the underlying array, consuming `self`.
+    pub fn to_array(self) -> [T; N] {
+        self.val
+    }
+
+    /// Applies `f` to each element, producing a `VecN<U, N>`.
+    pub fn map<U, F: FnMut(T) -> U>(self, f: F) -> VecN<U, N> {
+        VecN {
+            val: self.val.map(f),
+        }
+    }
+}
+
+impl<T> VecN<T, 2> {
+    /// Creates a 2-element vector — mirrors `cv::Vec2*(v0, v1)`.
+    pub fn new(v0: T, v1: T) -> Self {
+        Self { val: [v0, v1] }
+    }
+}
+
+impl<T> VecN<T, 3> {
+    /// Creates a 3-element vector — mirrors `cv::Vec3*(v0, v1, v2)`.
+    pub fn new(v0: T, v1: T, v2: T) -> Self {
+        Self { val: [v0, v1, v2] }
+    }
+}
+
+impl<T> VecN<T, 4> {
+    /// Creates a 4-element vector — mirrors `cv::Vec4*(v0, v1, v2, v3)`.
+    pub fn new(v0: T, v1: T, v2: T, v3: T) -> Self {
+        Self {
+            val: [v0, v1, v2, v3],
+        }
+    }
+}
+
+impl<T> VecN<T, 6> {
+    /// Creates a 6-element vector — mirrors `cv::Vec6*(v0..v5)`.
+    pub fn new(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T) -> Self {
+        Self {
+            val: [v0, v1, v2, v3, v4, v5],
+        }
+    }
+}
+
+impl<T: Zero, const N: usize> VecN<T, N> {
+    /// Returns a zero vector (`T::zero()` in every slot).
+    ///
+    /// Requires `T: num_traits::Zero`, which is satisfied by all built-in
+    /// numeric types and guarantees that each element is the additive identity.
+    pub fn zeros() -> Self {
+        Self {
+            val: std::array::from_fn(|_| T::zero()),
+        }
+    }
+}
+
+impl<T: Copy, const N: usize> VecN<T, N> {
+    /// Returns a vector with every element set to `v`.
+    pub fn all(v: T) -> Self {
+        Self {
+            val: std::array::from_fn(|_| v),
+        }
+    }
+}
+
+impl<T: Copy + Zero + Add<Output = T> + Mul<Output = T>, const N: usize> VecN<T, N> {
+    /// Computes the dot product of `self` and `rhs`.
+    pub fn dot(&self, rhs: &Self) -> T {
+        self.val
+            .iter()
+            .zip(rhs.val.iter())
+            .fold(T::zero(), |acc, (&a, &b)| acc + a * b)
+    }
+}
+
+impl<T, const N: usize> Index<usize> for VecN<T, N> {
+    type Output = T;
+    fn index(&self, i: usize) -> &T {
+        &self.val[i]
+    }
+}
+
+impl<T, const N: usize> IndexMut<usize> for VecN<T, N> {
+    fn index_mut(&mut self, i: usize) -> &mut T {
+        &mut self.val[i]
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for VecN<T, N> {
+    fn from(arr: [T; N]) -> Self {
+        Self::from_array(arr)
+    }
+}
+
+impl<T: Copy + Add<Output = T>, const N: usize> Add for VecN<T, N> {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] + rhs.val[i]),
+        }
+    }
+}
+
+impl<T: Copy + Sub<Output = T>, const N: usize> Sub for VecN<T, N> {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] - rhs.val[i]),
+        }
+    }
+}
+
+/// Adds a [`Scalar`] to a `VecN` channel-by-channel, mirroring OpenCV's
+/// `cv::Vec operator+(cv::Vec, cv::Scalar)`.  The scalar carries four channels;
+/// for `N ≤ 4` each element `i` gets `scalar.v[i]`; for `i ≥ 4` (e.g. `Vec6*`)
+/// the scalar contributes `T::default()` (zero for numeric types).
+impl<T: Copy + Default + Add<Output = T>, const N: usize> Add<Scalar<T>> for VecN<T, N> {
+    type Output = Self;
+    fn add(self, rhs: Scalar<T>) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] + rhs.channel_or_default(i)),
+        }
+    }
+}
+
+/// Subtracts a [`Scalar`] from a `VecN` channel-by-channel, mirroring OpenCV's
+/// `cv::Vec operator-(cv::Vec, cv::Scalar)`.
+impl<T: Copy + Default + Sub<Output = T>, const N: usize> Sub<Scalar<T>> for VecN<T, N> {
+    type Output = Self;
+    fn sub(self, rhs: Scalar<T>) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] - rhs.channel_or_default(i)),
+        }
+    }
+}
+
+/// Element-wise multiply: `result[i] = self[i] * rhs[i]`.
+impl<T: Copy + Mul<Output = T>, const N: usize> Mul for VecN<T, N> {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] * rhs.val[i]),
+        }
+    }
+}
+
+/// Scalar broadcast multiply: `result[i] = self[i] * rhs`.
+impl<T: Copy + Mul<Output = T>, const N: usize> Mul<T> for VecN<T, N> {
+    type Output = Self;
+    fn mul(self, rhs: T) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] * rhs),
+        }
+    }
+}
+
+/// Scalar broadcast divide: `result[i] = self[i] / rhs`.
+impl<T: Copy + Div<Output = T>, const N: usize> Div<T> for VecN<T, N> {
+    type Output = Self;
+    fn div(self, rhs: T) -> Self {
+        Self {
+            val: std::array::from_fn(|i| self.val[i] / rhs),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpenCV-compatible type aliases
+// ---------------------------------------------------------------------------
+
+pub type Vec2b = VecN<u8, 2>;
+pub type Vec3b = VecN<u8, 3>;
+pub type Vec4b = VecN<u8, 4>;
+
+pub type Vec2s = VecN<i16, 2>;
+pub type Vec3s = VecN<i16, 3>;
+pub type Vec4s = VecN<i16, 4>;
+
+pub type Vec2i = VecN<i32, 2>;
+pub type Vec3i = VecN<i32, 3>;
+pub type Vec4i = VecN<i32, 4>;
+
+pub type Vec2f = VecN<f32, 2>;
+pub type Vec3f = VecN<f32, 3>;
+pub type Vec4f = VecN<f32, 4>;
+pub type Vec6f = VecN<f32, 6>;
+
+pub type Vec2d = VecN<f64, 2>;
+pub type Vec3d = VecN<f64, 3>;
+pub type Vec4d = VecN<f64, 4>;
+pub type Vec6d = VecN<f64, 6>;
+
+#[cfg(test)]
+mod vecn_tests {
+    use super::*;
+
+    #[test]
+    fn test_from_array_and_index() {
+        let v = VecN::from_array([1_i32, 2, 3]);
+        assert_eq!(v[0], 1);
+        assert_eq!(v[2], 3);
+    }
+
+    #[test]
+    fn test_index_mut() {
+        let mut v = VecN::from_array([0_u8; 3]);
+        v[1] = 42;
+        assert_eq!(v[1], 42);
+    }
+
+    #[test]
+    fn test_zeros() {
+        let v: VecN<f32, 4> = VecN::zeros();
+        assert_eq!(v.val, [0.0; 4]);
+    }
+
+    #[test]
+    fn test_all() {
+        let v: VecN<u8, 3> = VecN::all(7);
+        assert_eq!(v.val, [7, 7, 7]);
+    }
+
+    #[test]
+    fn test_to_array() {
+        let v = VecN::from_array([10_i32, 20, 30]);
+        assert_eq!(v.to_array(), [10, 20, 30]);
+    }
+
+    #[test]
+    fn test_map() {
+        let v = VecN::from_array([1_u8, 2, 3]);
+        let v2: VecN<u16, 3> = v.map(|x| x as u16 * 2);
+        assert_eq!(v2.val, [2_u16, 4, 6]);
+    }
+
+    #[test]
+    fn test_add() {
+        let a = VecN::from_array([1.0_f32, 2.0, 3.0]);
+        let b = VecN::from_array([4.0_f32, 5.0, 6.0]);
+        assert_eq!((a + b).val, [5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_sub() {
+        let a = VecN::from_array([10_i32, 20, 30]);
+        let b = VecN::from_array([1_i32, 2, 3]);
+        assert_eq!((a - b).val, [9, 18, 27]);
+    }
+
+    #[test]
+    fn test_mul_elementwise() {
+        let a = VecN::from_array([2_i32, 3, 4]);
+        let b = VecN::from_array([5_i32, 6, 7]);
+        assert_eq!((a * b).val, [10, 18, 28]);
+    }
+
+    #[test]
+    fn test_mul_scalar() {
+        let v = VecN::from_array([1.0_f32, 2.0, 3.0]);
+        assert_eq!((v * 2.0_f32).val, [2.0, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn test_div_scalar() {
+        let v = VecN::from_array([4.0_f32, 8.0, 12.0]);
+        assert_eq!((v / 4.0_f32).val, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_dot() {
+        let a = VecN::from_array([1.0_f32, 2.0, 3.0]);
+        let b = VecN::from_array([4.0_f32, 5.0, 6.0]);
+        assert!((a.dot(&b) - 32.0_f32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_from_trait() {
+        let v: VecN<i32, 2> = [3, 7].into();
+        assert_eq!(v.val, [3, 7]);
+    }
+
+    #[test]
+    fn test_type_aliases() {
+        let _: Vec3b = VecN::from_array([255_u8, 0, 128]);
+        let _: Vec3f = VecN::from_array([1.0_f32, 2.0, 3.0]);
+        let _: Vec4i = VecN::from_array([1_i32, 2, 3, 4]);
+        let _: Vec6d = VecN::from_array([1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_clone_and_eq() {
+        let a = VecN::from_array([1_i32, 2, 3]);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // --- new() constructors ---------------------------------------------------
+
+    #[test]
+    fn test_new_2() {
+        let v = Vec2i::new(3, 7);
+        assert_eq!(v.val, [3, 7]);
+    }
+
+    #[test]
+    fn test_new_3() {
+        let v = Vec3f::new(1.0_f32, 2.0, 3.0);
+        assert_eq!(v.val, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_new_4() {
+        let v = Vec4b::new(10, 20, 30, 40);
+        assert_eq!(v.val, [10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn test_new_6() {
+        let v = Vec6d::new(1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0);
+        assert_eq!(v.val, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    // --- Add<Scalar> / Sub<Scalar> -------------------------------------------
+
+    #[test]
+    fn test_add_scalar_3() {
+        let v = Vec3f::new(1.0_f32, 2.0, 3.0);
+        let s = Scalar::new(10.0_f32, 20.0, 30.0, 0.0);
+        assert_eq!((v + s).val, [11.0, 22.0, 33.0]);
+    }
+
+    #[test]
+    fn test_sub_scalar_3() {
+        let v = Vec3f::new(10.0_f32, 20.0, 30.0);
+        let s = Scalar::new(1.0_f32, 2.0, 3.0, 0.0);
+        assert_eq!((v - s).val, [9.0, 18.0, 27.0]);
+    }
+
+    #[test]
+    fn test_add_scalar_4() {
+        let v = Vec4i::new(1, 2, 3, 4);
+        let s = Scalar::new(5_i32, 6, 7, 8);
+        assert_eq!((v + s).val, [6, 8, 10, 12]);
+    }
+
+    #[test]
+    fn test_add_scalar_vec6_zero_pads_extra_channels() {
+        // Channels 4 and 5 of the Vec get scalar's default (0) added.
+        let v = Vec6f::new(1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0);
+        let s = Scalar::new(10.0_f32, 10.0, 10.0, 10.0);
+        assert_eq!((v + s).val, [11.0, 12.0, 13.0, 14.0, 5.0, 6.0]);
     }
 }
 

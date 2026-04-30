@@ -52,6 +52,7 @@ use purecv::imgproc::morph::{self, MorphShapes, MorphTypes};
 use purecv::imgproc::pyramid;
 use purecv::imgproc::threshold::{threshold, ThresholdTypes};
 use purecv::version;
+use purecv::video::optical_flow;
 
 // ---------------------------------------------------------------------------
 //  Initialization helpers
@@ -265,6 +266,29 @@ impl Mat {
                 self.inner.depth_name()
             ))
         })
+    }
+
+    /// Returns a pointer to the underlying buffer data.
+    /// This allows zero-copy interoperability with WASM memory.
+    #[wasm_bindgen(js_name = "dataPtr")]
+    pub fn data_ptr(&self) -> usize {
+        self.inner.data_ptr() as usize
+    }
+
+    /// Returns a mutable pointer to the underlying buffer data.
+    /// This allows zero-copy interoperability with WASM memory.
+    #[wasm_bindgen(js_name = "dataPtrMut")]
+    pub fn data_ptr_mut(&mut self) -> usize {
+        self.inner.data_ptr_mut() as usize
+    }
+
+    /// Deep copies the matrix data into `dst`. Resizes `dst` if necessary.
+    /// Errors if the destination matrix does not have the same depth.
+    #[wasm_bindgen(js_name = "copyTo")]
+    pub fn copy_to(&self, dst: &mut Mat) -> Result<(), JsError> {
+        self.inner
+            .copy_to(&mut dst.inner)
+            .map_err(|e| JsError::new(&format!("{e}")))
     }
 
     /// Sets the underlying data from a `Uint8Array`. Errors if depth is not `u8`.
@@ -583,6 +607,55 @@ impl Scalar {
             v2: 0.0,
             v3: 0.0,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Vec types
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "Vec2")]
+pub struct Vec2 {
+    pub v0: f64,
+    pub v1: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec2")]
+impl Vec2 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64) -> Vec2 {
+        Vec2 { v0, v1 }
+    }
+}
+
+#[wasm_bindgen(js_name = "Vec3")]
+pub struct Vec3 {
+    pub v0: f64,
+    pub v1: f64,
+    pub v2: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec3")]
+impl Vec3 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64, v2: f64) -> Vec3 {
+        Vec3 { v0, v1, v2 }
+    }
+}
+
+#[wasm_bindgen(js_name = "Vec4")]
+pub struct Vec4 {
+    pub v0: f64,
+    pub v1: f64,
+    pub v2: f64,
+    pub v3: f64,
+}
+
+#[wasm_bindgen(js_name = "Vec4")]
+impl Vec4 {
+    #[wasm_bindgen(constructor)]
+    pub fn new(v0: f64, v1: f64, v2: f64, v3: f64) -> Vec4 {
+        Vec4 { v0, v1, v2, v3 }
     }
 }
 
@@ -1715,4 +1788,194 @@ pub fn morph_tophat() -> i32 {
 #[wasm_bindgen(js_name = "MORPH_BLACKHAT")]
 pub fn morph_blackhat() -> i32 {
     6
+}
+
+// ---------------------------------------------------------------------------
+//  Video — Optical flow
+// ---------------------------------------------------------------------------
+
+/// Builds a Gaussian image pyramid suitable for Lucas-Kanade optical flow.
+///
+/// The input Mat must be single-channel `u8` (CV_8UC1).  Returns a new `Mat`
+/// containing the **flattened** pyramid levels concatenated row-wise into a
+/// single-channel `f32` Mat.  A companion `Float32Array` metadata is returned
+/// via `buildOpticalFlowPyramidInfo()` so JS can slice the blob back into
+/// individual levels.
+///
+/// In practice you rarely call this directly — `calcOpticalFlowPyrLK` builds
+/// pyramids internally.  This is exposed for advanced use-cases (e.g. pyramid
+/// visualisation or caching).
+///
+/// * `win_w`, `win_h` – Tracking window size.
+/// * `max_level`      – Maximum number of additional pyramid levels.
+/// * `with_derivatives`– Compute Sobel derivatives alongside the pyramid.
+/// * `pyr_border`     – Border interpolation for downsampling.
+/// * `deriv_border`   – Border interpolation for derivatives.
+///
+/// Returns a JS object `{ levelCount, rows[], cols[] }` via `serde`.
+#[wasm_bindgen(js_name = "buildOpticalFlowPyramid")]
+pub fn wasm_build_optical_flow_pyramid(
+    src: &Mat,
+    win_w: i32,
+    win_h: i32,
+    max_level: usize,
+    with_derivatives: bool,
+    pyr_border: i32,
+    deriv_border: i32,
+) -> Result<JsValue, JsError> {
+    let m = require_u8(src, "buildOpticalFlowPyramid")?;
+    let pb = border_type_from_i32(pyr_border)?;
+    let db = border_type_from_i32(deriv_border)?;
+    let pyr = optical_flow::build_optical_flow_pyramid(
+        m,
+        Size2i::new(win_w, win_h),
+        max_level,
+        with_derivatives,
+        pb,
+        db,
+    )
+    .map_err(|e| JsError::new(&format!("{e}")))?;
+
+    // Serialize metadata so JS knows the level dimensions.
+    let level_count = pyr.levels.len();
+    let rows: Vec<usize> = pyr.levels.iter().map(|l| l.rows).collect();
+    let cols: Vec<usize> = pyr.levels.iter().map(|l| l.cols).collect();
+
+    // Build a simple JS object { levelCount, rows, cols }.
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("levelCount"),
+        &JsValue::from(level_count as u32),
+    )
+    .map_err(|_| JsError::new("Failed to set levelCount"))?;
+    let js_rows = js_sys::Array::new();
+    for r in &rows {
+        js_rows.push(&JsValue::from(*r as u32));
+    }
+    js_sys::Reflect::set(&obj, &JsValue::from_str("rows"), &js_rows)
+        .map_err(|_| JsError::new("Failed to set rows"))?;
+    let js_cols = js_sys::Array::new();
+    for c in &cols {
+        js_cols.push(&JsValue::from(*c as u32));
+    }
+    js_sys::Reflect::set(&obj, &JsValue::from_str("cols"), &js_cols)
+        .map_err(|_| JsError::new("Failed to set cols"))?;
+
+    Ok(obj.into())
+}
+
+/// Calculates the sparse optical flow using the iterative pyramidal
+/// Lucas-Kanade method.
+///
+/// Both `prev` and `next` must be single-channel `u8` Mats (CV_8UC1) of the
+/// same dimensions.  `prev_pts` is a `Float32Array` of `[x, y, x, y, ...]`
+/// pairs — the same format returned by `goodFeaturesToTrack()`.
+///
+/// Returns a JS object `{ nextPts: Float32Array, status: Uint8Array, err: Float32Array }`.
+///
+/// * `win_w`, `win_h` – Search window size at each pyramid level.
+/// * `max_level`      – Pyramid depth (0 = original only).
+/// * `max_count`      – Max iterations of the LK solver.
+/// * `epsilon`        – Convergence threshold.
+/// * `flags`          – Combine `OPTFLOW_USE_INITIAL_FLOW()` and/or
+///   `OPTFLOW_LK_GET_MIN_EIGENVALS()`.
+/// * `min_eigen_threshold` – Min eigenvalue below which a point is lost.
+///
+/// ```js
+/// const gray0 = Mat.fromU8Data(h, w, 1, frameData0);
+/// const gray1 = Mat.fromU8Data(h, w, 1, frameData1);
+/// const pts   = goodFeaturesToTrack(gray0, 100, 0.01, 10, 3, false, 0.04);
+/// const result = calcOpticalFlowPyrLK(
+///     gray0, gray1, pts, win_w, win_h, 3, 30, 0.01,
+///     OPTFLOW_LK_GET_MIN_EIGENVALS(), 1e-4,
+/// );
+/// // result.nextPts — Float32Array [x,y,x,y,...]
+/// // result.status  — Uint8Array  [1,1,0,...]
+/// // result.err     — Float32Array
+/// ```
+#[wasm_bindgen(js_name = "calcOpticalFlowPyrLK")]
+#[allow(clippy::too_many_arguments)]
+pub fn wasm_calc_optical_flow_pyr_lk(
+    prev: &Mat,
+    next: &Mat,
+    prev_pts: &[f32],
+    win_w: i32,
+    win_h: i32,
+    max_level: i32,
+    max_count: i32,
+    epsilon: f64,
+    flags: i32,
+    min_eigen_threshold: f64,
+) -> Result<JsValue, JsError> {
+    use purecv::core::types::{Point2f, TermCriteria, TermType};
+
+    let prev_m = require_u8(prev, "calcOpticalFlowPyrLK")?;
+    let next_m = require_u8(next, "calcOpticalFlowPyrLK")?;
+
+    if !prev_pts.len().is_multiple_of(2) {
+        return Err(JsError::new("prev_pts must have even length (x, y pairs)"));
+    }
+
+    // Reconstruct Vec<Point2f> from the flattened array.
+    let pts: Vec<Point2f> = prev_pts
+        .chunks_exact(2)
+        .map(|c| Point2f::new(c[0], c[1]))
+        .collect();
+
+    let criteria = TermCriteria {
+        type_: TermType::Both,
+        max_count,
+        epsilon,
+    };
+
+    let (next_pts, status, err) = optical_flow::calc_optical_flow_pyramid_lk(
+        prev_m,
+        next_m,
+        &pts,
+        None, // initial_next_pts — TODO: expose when OPTFLOW_USE_INITIAL_FLOW is needed
+        Size2i::new(win_w, win_h),
+        max_level,
+        criteria,
+        flags,
+        min_eigen_threshold,
+    )
+    .map_err(|e| JsError::new(&format!("{e}")))?;
+
+    // Build the JS result object { nextPts, status, err }.
+    let obj = js_sys::Object::new();
+
+    // Flatten next_pts → Float32Array
+    let flat_pts: Vec<f32> = next_pts.iter().flat_map(|p| [p.x, p.y]).collect();
+    let js_pts = js_sys::Float32Array::from(flat_pts.as_slice());
+    js_sys::Reflect::set(&obj, &JsValue::from_str("nextPts"), &js_pts)
+        .map_err(|_| JsError::new("Failed to set nextPts"))?;
+
+    // status → Uint8Array
+    let js_status = js_sys::Uint8Array::from(status.as_slice());
+    js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &js_status)
+        .map_err(|_| JsError::new("Failed to set status"))?;
+
+    // err → Float32Array
+    let js_err = js_sys::Float32Array::from(err.as_slice());
+    js_sys::Reflect::set(&obj, &JsValue::from_str("err"), &js_err)
+        .map_err(|_| JsError::new("Failed to set err"))?;
+
+    Ok(obj.into())
+}
+
+// ---------------------------------------------------------------------------
+//  JS-side enum constants: Optical flow flags
+// ---------------------------------------------------------------------------
+
+/// Use initial estimates supplied via `initial_next_pts`.
+#[wasm_bindgen(js_name = "OPTFLOW_USE_INITIAL_FLOW")]
+pub fn optflow_use_initial_flow() -> i32 {
+    optical_flow::OPTFLOW_USE_INITIAL_FLOW
+}
+
+/// Return minimum eigenvalue instead of mean-absolute-error in the `err` array.
+#[wasm_bindgen(js_name = "OPTFLOW_LK_GET_MIN_EIGENVALS")]
+pub fn optflow_lk_get_min_eigenvals() -> i32 {
+    optical_flow::OPTFLOW_LK_GET_MIN_EIGENVALS
 }

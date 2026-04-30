@@ -56,6 +56,11 @@ path = "benches/dft_bench.rs"
 harness = false
 required-features = ["fft"]
 
+[[bench]]
+name = "video_bench"
+path = "benches/video_bench.rs"
+harness = false
+
 [[example]]
 name = "dft_example"
 required-features = ["fft"]

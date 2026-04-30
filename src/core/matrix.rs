@@ -547,6 +547,64 @@ impl<T: Default + Clone> Matrix<T> {
     pub fn swap(&mut self, other: &mut Self) {
         std::mem::swap(self, other);
     }
+
+    /// Returns a raw immutable pointer to the start of the underlying data
+    /// buffer, cast to `*const u8`.
+    ///
+    /// This is useful for zero-copy interop with WASM host buffers and
+    /// low-level SIMD intrinsics that need a stable byte address.
+    ///
+    /// # Safety (for callers)
+    /// Dereferencing the returned pointer requires `unsafe`. The pointer
+    /// is valid as long as `self` is alive and no reallocation occurs.
+    #[inline]
+    pub fn data_ptr(&self) -> *const u8 {
+        self.data.as_ptr() as *const u8
+    }
+
+    /// Returns a raw mutable pointer to the start of the underlying data
+    /// buffer, cast to `*mut u8`.
+    ///
+    /// # Safety (for callers)
+    /// Dereferencing the returned pointer requires `unsafe`. The pointer
+    /// is valid as long as `self` is alive and no reallocation occurs.
+    #[inline]
+    pub fn data_ptr_mut(&mut self) -> *mut u8 {
+        self.data.as_mut_ptr() as *mut u8
+    }
+
+    /// Deep-copies the contents of `self` into `dst`.
+    ///
+    /// After the call, `dst` is an independent copy of `self` with
+    /// identical dimensions, channel count, and data. If `dst` already
+    /// has the correct shape, only the data is overwritten (no allocation).
+    /// If the shape differs, `dst` is reallocated to match `self`.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::Matrix;
+    /// let src = Matrix::<u8>::from_vec(2, 2, 1, vec![1, 2, 3, 4]);
+    /// let mut dst = Matrix::<u8>::new(0, 0, 0);
+    /// src.copy_to(&mut dst).unwrap();
+    /// assert_eq!(src.data, dst.data);
+    /// assert_eq!(dst.rows, 2);
+    /// ```
+    pub fn copy_to(&self, dst: &mut Matrix<T>) -> Result<()> {
+        if self.rows != dst.rows || self.cols != dst.cols || self.channels != dst.channels {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[purecv::copy_to] dst resized from {}x{}x{} to {}x{}x{}",
+                dst.rows, dst.cols, dst.channels, self.rows, self.cols, self.channels
+            );
+            dst.rows = self.rows;
+            dst.cols = self.cols;
+            dst.channels = self.channels;
+            dst.data = self.data.clone();
+        } else {
+            dst.data.clone_from(&self.data);
+        }
+        Ok(())
+    }
 }
 
 impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {

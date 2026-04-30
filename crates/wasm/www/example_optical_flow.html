@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<!--
+ *  example_optical_flow.html
+ *  purecv
+ *
+ *  This file is part of purecv - WebARKit.
+ *
+ *  purecv is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  purecv is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with purecv.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *  As a special exception, the copyright holders of this library give you
+ *  permission to link this library with independent modules to produce an
+ *  executable, regardless of the license terms of these independent modules, and to
+ *  copy and distribute the resulting executable under terms of your choice,
+ *  provided that you also meet, for each linked independent module, the terms and
+ *  conditions of the license of that module. An independent module is a module
+ *  which is neither derived from nor based on this library. If you modify this
+ *  library, you may extend this exception to your version of the library, but you
+ *  are not obligated to do so. If you do not wish to do so, delete this exception
+ *  statement from your version.
+ *
+ *  Copyright 2026 WebARKit.
+ *
+ *  Author(s): Walter Perdan @kalwalt https://github.com/kalwalt
+ *
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PureCV - Optical Flow</title>
+    <style>
+        :root {
+            --primary: #00f2fe;
+            --secondary: #4facfe;
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #f8fafc;
+        }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1000px;
+            width: 90%;
+            margin: 2rem 0;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        .header p { color: #94a3b8; }
+        .card {
+            background: var(--card);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            margin-bottom: 1.5rem;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+        input[type="range"] { width: 100%; }
+        .canvas-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            background: #000;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            min-height: 300px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 0.75rem;
+            background: rgba(79, 172, 254, 0.08);
+            border-radius: 0.5rem;
+        }
+        .stat-item .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .stat-item .label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        button {
+            padding: 0.5rem 1.25rem;
+            border-radius: 0.5rem;
+            border: 1px solid #334155;
+            background: var(--card);
+            color: var(--text);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover {
+            border-color: var(--primary);
+            background: rgba(79, 172, 254, 0.1);
+        }
+        button.active {
+            border-color: var(--primary);
+            background: rgba(79, 172, 254, 0.2);
+        }
+        .loading {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="loader" class="loading">
+        <p>Initializing WASM...</p>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Optical Flow</h1>
+            <p>Pyramidal Lucas-Kanade Feature Tracking</p>
+        </div>
+
+        <div class="card">
+            <div class="actions">
+                <button id="btn-webcam">📷 Start Webcam</button>
+                <button id="btn-stop" class="hidden">⏹ Stop</button>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>Max Corners: <span id="val-max-corners">80</span></label>
+                    <input type="range" id="max-corners" min="10" max="300" value="80">
+                </div>
+                <div class="control-group">
+                    <label>Quality Level: <span id="val-quality">0.01</span></label>
+                    <input type="range" id="quality" min="0.001" max="0.1" step="0.001" value="0.01">
+                </div>
+                <div class="control-group">
+                    <label>Min Distance: <span id="val-distance">10</span> px</label>
+                    <input type="range" id="distance" min="1" max="50" value="10">
+                </div>
+                <div class="control-group">
+                    <label>Pyramid Levels: <span id="val-levels">3</span></label>
+                    <input type="range" id="levels" min="0" max="5" value="3">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="canvas-container">
+                <canvas id="canvas"></canvas>
+                <video id="video" class="hidden" playsinline></video>
+            </div>
+            <div class="stats" id="stats">
+                <div class="stat-item"><span class="value" id="stat-tracked">—</span><div class="label">Tracked</div></div>
+                <div class="stat-item"><span class="value" id="stat-lost">—</span><div class="label">Lost</div></div>
+                <div class="stat-item"><span class="value" id="stat-total">—</span><div class="label">Total</div></div>
+                <div class="stat-item"><span class="value" id="stat-fps">—</span><div class="label">FPS</div></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="example_optical_flow.js"></script>
+</body>
+</html>

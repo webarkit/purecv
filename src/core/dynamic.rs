@@ -360,6 +360,32 @@ impl DynamicMatrix {
         }
     }
 
+    /// Returns a raw pointer to the underlying buffer data.
+    pub fn data_ptr(&self) -> *const u8 {
+        match &self.data {
+            DynamicData::U8(m) => m.data_ptr(),
+            DynamicData::I8(m) => m.data_ptr(),
+            DynamicData::U16(m) => m.data_ptr(),
+            DynamicData::I16(m) => m.data_ptr(),
+            DynamicData::I32(m) => m.data_ptr(),
+            DynamicData::F32(m) => m.data_ptr(),
+            DynamicData::F64(m) => m.data_ptr(),
+        }
+    }
+
+    /// Returns a mutable raw pointer to the underlying buffer data.
+    pub fn data_ptr_mut(&mut self) -> *mut u8 {
+        match &mut self.data {
+            DynamicData::U8(m) => m.data_ptr_mut(),
+            DynamicData::I8(m) => m.data_ptr_mut(),
+            DynamicData::U16(m) => m.data_ptr_mut(),
+            DynamicData::I16(m) => m.data_ptr_mut(),
+            DynamicData::I32(m) => m.data_ptr_mut(),
+            DynamicData::F32(m) => m.data_ptr_mut(),
+            DynamicData::F64(m) => m.data_ptr_mut(),
+        }
+    }
+
     // -- Typed matrix borrow -------------------------------------------------
 
     pub fn as_matrix_u8(&self) -> Option<&Matrix<u8>> {
@@ -442,6 +468,25 @@ impl DynamicMatrix {
             DynamicData::I32(m) => convert_inner!(m, depth),
             DynamicData::F32(m) => convert_inner!(m, depth),
             DynamicData::F64(m) => convert_inner!(m, depth),
+        }
+    }
+
+    /// Deep copies the matrix data into `dst`. Resizes `dst` if necessary.
+    /// Fails if `dst` depth does not match.
+    pub fn copy_to(&self, dst: &mut DynamicMatrix) -> Result<()> {
+        match (&self.data, &mut dst.data) {
+            (DynamicData::U8(s), DynamicData::U8(d)) => s.copy_to(d),
+            (DynamicData::I8(s), DynamicData::I8(d)) => s.copy_to(d),
+            (DynamicData::U16(s), DynamicData::U16(d)) => s.copy_to(d),
+            (DynamicData::I16(s), DynamicData::I16(d)) => s.copy_to(d),
+            (DynamicData::I32(s), DynamicData::I32(d)) => s.copy_to(d),
+            (DynamicData::F32(s), DynamicData::F32(d)) => s.copy_to(d),
+            (DynamicData::F64(s), DynamicData::F64(d)) => s.copy_to(d),
+            _ => Err(crate::core::error::PureCvError::InvalidInput(format!(
+                "Cannot copy_to because depth mismatch: src={} dst={}",
+                self.depth_name(),
+                dst.depth_name()
+            ))),
         }
     }
 }

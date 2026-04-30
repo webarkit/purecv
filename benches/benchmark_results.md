@@ -11,6 +11,20 @@ All tests operate on `1024x1024` image/matrix tensors using `f32` (or `u8` depen
 
 ---
 
+## Video — Performance Comparison Table (1 benchmark) 
+
+*Execution Date: 2026-04-28 (CET)*
+
+| Benchmark / Operation | Standard |
+| :-------------------- | :------- |
+| `calc_optical_flow_pyr_lk_512x512_pts_49` | 27.5 ms |
+
+### Video Analysis
+
+- **Optical Flow (Lucas-Kanade):** Tracking 49 points on a 512×512 image pyramid completes in ~27.5 ms sequentially. The operation is highly optimized with sub-pixel accuracy and spatial gradient computation.
+
+---
+
 ## Feature Detection & Hough Transforms
 
 *Execution Date: 2026-04-17 (CET)*
@@ -238,6 +252,7 @@ Following the initial SIMD and Parallelization benchmarks, targeted algorithmic 
 | GEMM               | Parallel          | 3.7× (compute-bound)       |
 | Feature Detection  | Parallel          | Harris Corner ~26ms (1024x1024) |
 | Hough Transform    | Parallel          | Lines ~3.6ms / Circles ~4.5ms (512x512) |
+| Video Tracking     | Standard          | Optical Flow ~27.5ms (49 pts, 512x512) |
 
 *Conclusion*: Parallelism (`rayon`) is the dominant optimization for nearly all operations. SIMD (`target-cpu=native`) provides meaningful additional gains primarily for **pixel-level math** (`cvt_color`, `convert_scale_abs`) and **f32 derivative kernels** (`sobel_3x3_f32`) where the inner loop is trivially vectorizable. The `sobel_3x3_f32` SIMD path achieves the project's highest combined speedup at **22×**. For memory-bound or scatter/gather patterns, SIMD adds no benefit.
 
