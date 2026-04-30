@@ -58,6 +58,12 @@ use crate::core::Matrix;
 use crate::imgproc::derivatives::sobel;
 use crate::imgproc::pyramid::pyr_down;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+#[cfg(feature = "simd")]
+use super::simd as video_simd;
+
 // ---------------------------------------------------------------------------
 // Public flags (mirror OpenCV's OpticalFlowFlags)
 // ---------------------------------------------------------------------------
@@ -174,17 +180,36 @@ pub fn build_optical_flow_pyramid(
     }
 
     // Optionally compute Sobel derivatives for each level.
+    // When the `parallel` feature is enabled the per-level Sobel passes run
+    // concurrently via Rayon; otherwise they execute sequentially.
     let (dx, dy) = if with_derivatives {
-        let n = levels.len();
-        let mut all_dx: Vec<Matrix<f32>> = Vec::with_capacity(n);
-        let mut all_dy: Vec<Matrix<f32>> = Vec::with_capacity(n);
-        for level in &levels {
-            let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, deriv_border)?;
-            let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, deriv_border)?;
-            all_dx.push(ix);
-            all_dy.push(iy);
+        #[cfg(feature = "parallel")]
+        {
+            let pairs: Result<Vec<(Matrix<f32>, Matrix<f32>)>> = levels
+                .par_iter()
+                .map(|level| {
+                    let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, deriv_border)?;
+                    let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, deriv_border)?;
+                    Ok((ix, iy))
+                })
+                .collect();
+            let (all_dx, all_dy) = pairs?.into_iter().unzip();
+            (all_dx, all_dy)
         }
-        (all_dx, all_dy)
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            let n = levels.len();
+            let mut all_dx: Vec<Matrix<f32>> = Vec::with_capacity(n);
+            let mut all_dy: Vec<Matrix<f32>> = Vec::with_capacity(n);
+            for level in &levels {
+                let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, deriv_border)?;
+                let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, deriv_border)?;
+                all_dx.push(ix);
+                all_dy.push(iy);
+            }
+            (all_dx, all_dy)
+        }
     } else {
         (Vec::new(), Vec::new())
     };
@@ -253,6 +278,14 @@ fn bilinear_interp(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
 /// * `max_iters` — maximum refinement iterations.
 /// * `eps`       — convergence threshold (step size squared).
 /// * `min_eigen_threshold` — reject tracking if min eigenvalue falls below this.
+///
+/// When the `simd` feature is enabled the H-matrix accumulation and the
+/// per-iteration mismatch accumulation are delegated to
+/// [`video_simd::simd_lk_accumulate_h`] and
+/// [`video_simd::simd_lk_accumulate_mismatch`], which wrap their inner loops
+/// in `pulp::Arch::dispatch` for LLVM-guided auto-vectorisation.  The gather
+/// step (bilinear interpolation) remains scalar in both paths because it
+/// involves non-sequential memory access.
 #[allow(clippy::too_many_arguments)]
 fn lk_single_level(
     prev: &Matrix<f32>,
@@ -270,24 +303,52 @@ fn lk_single_level(
     min_eigen_threshold: f64,
 ) -> (f32, f32, f64, bool) {
     // -------------------------------------------------------------------
-    // Build the spatial-gradient matrix H = Σ [[Ix², Ix·Iy],[Ix·Iy, Iy²]]
-    // over the tracking window centred on (px, py) in the reference frame.
+    // Build H = Σ [[Ix², Ix·Iy],[Ix·Iy, Iy²]] over the tracking window.
+    //
+    // SIMD path: pre-gather Ix, Iy, and I1 values from the reference frame
+    // into contiguous f32 buffers, then hand off the reduction to pulp.
+    // Scalar path: accumulate inline exactly as in the original code.
     // -------------------------------------------------------------------
-    let mut h00 = 0.0f64;
-    let mut h01 = 0.0f64;
-    let mut h11 = 0.0f64;
 
-    for dy in -half_win_h..=half_win_h {
-        for dx in -half_win_w..=half_win_w {
-            let sx = px + dx as f32;
-            let sy = py + dy as f32;
-            let ix = bilinear_interp(prev_ix, sx, sy) as f64;
-            let iy = bilinear_interp(prev_iy, sx, sy) as f64;
-            h00 += ix * ix;
-            h01 += ix * iy;
-            h11 += iy * iy;
+    #[cfg(feature = "simd")]
+    let (h00, h01, h11, ix_win, iy_win, i1_win) = {
+        let n_win = ((2 * half_win_h + 1) * (2 * half_win_w + 1)) as usize;
+        let mut ix_win = Vec::with_capacity(n_win);
+        let mut iy_win = Vec::with_capacity(n_win);
+        let mut i1_win = Vec::with_capacity(n_win);
+
+        for dy in -half_win_h..=half_win_h {
+            for dx in -half_win_w..=half_win_w {
+                let sx = px + dx as f32;
+                let sy = py + dy as f32;
+                ix_win.push(bilinear_interp(prev_ix, sx, sy));
+                iy_win.push(bilinear_interp(prev_iy, sx, sy));
+                i1_win.push(bilinear_interp(prev, sx, sy));
+            }
         }
-    }
+
+        let (h00, h01, h11) = video_simd::simd_lk_accumulate_h(&ix_win, &iy_win);
+        (h00, h01, h11, ix_win, iy_win, i1_win)
+    };
+
+    #[cfg(not(feature = "simd"))]
+    let (h00, h01, h11) = {
+        let mut h00 = 0.0f64;
+        let mut h01 = 0.0f64;
+        let mut h11 = 0.0f64;
+        for dy in -half_win_h..=half_win_h {
+            for dx in -half_win_w..=half_win_w {
+                let sx = px + dx as f32;
+                let sy = py + dy as f32;
+                let ix = bilinear_interp(prev_ix, sx, sy) as f64;
+                let iy = bilinear_interp(prev_iy, sx, sy) as f64;
+                h00 += ix * ix;
+                h01 += ix * iy;
+                h11 += iy * iy;
+            }
+        }
+        (h00, h01, h11)
+    };
 
     // -------------------------------------------------------------------
     // Compute min eigenvalue of H (normalised by window area).
@@ -317,26 +378,52 @@ fn lk_single_level(
     let mut u = init_u as f64;
     let mut v = init_v as f64;
 
+    // SIMD path: pre-allocate a reusable i2 buffer; refill each iteration.
+    #[cfg(feature = "simd")]
+    let mut i2_win = vec![0.0f32; ix_win.len()];
+
     for _iter in 0..max_iters {
-        let mut bx = 0.0f64;
-        let mut by = 0.0f64;
+        // ---------------------------------------------------------------
+        // Accumulate the mismatch vector b = -Σ [Ix·It, Iy·It].
+        // ---------------------------------------------------------------
 
-        for dy in -half_win_h..=half_win_h {
-            for dx in -half_win_w..=half_win_w {
-                let sx = px as f64 + dx as f64;
-                let sy = py as f64 + dy as f64;
-
-                let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
-                let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
-                let it = i2 - i1;
-
-                let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
-                let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
-
-                bx -= ix * it;
-                by -= iy * it;
+        #[cfg(feature = "simd")]
+        let (bx, by) = {
+            // Regather I2 at current flow estimate (u, v).
+            let mut w_idx = 0usize;
+            for dy in -half_win_h..=half_win_h {
+                for dx in -half_win_w..=half_win_w {
+                    let sx = px as f64 + dx as f64;
+                    let sy = py as f64 + dy as f64;
+                    i2_win[w_idx] = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
+                    w_idx += 1;
+                }
             }
-        }
+            video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win)
+        };
+
+        #[cfg(not(feature = "simd"))]
+        let (bx, by) = {
+            let mut bx = 0.0f64;
+            let mut by = 0.0f64;
+            for dy in -half_win_h..=half_win_h {
+                for dx in -half_win_w..=half_win_w {
+                    let sx = px as f64 + dx as f64;
+                    let sy = py as f64 + dy as f64;
+
+                    let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
+                    let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
+                    let it = i2 - i1;
+
+                    let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
+                    let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
+
+                    bx -= ix * it;
+                    by -= iy * it;
+                }
+            }
+            (bx, by)
+        };
 
         // Solve H * (eta_u, eta_v) = (bx, by)
         let eta_u = (h11 * bx - h01 * by) * inv_det;
@@ -518,53 +605,81 @@ pub fn calc_optical_flow_pyramid_lk(
     let actual_levels = prev_pyr.len().min(next_pyr.len());
 
     // Pre-compute Sobel derivatives for each level of the previous frame.
-    let mut prev_ix: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
-    let mut prev_iy: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
-    for level in &prev_pyr[..actual_levels] {
-        let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
-        let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
-        prev_ix.push(ix);
-        prev_iy.push(iy);
-    }
+    // When `parallel` is enabled the per-level Sobel passes run concurrently.
+    #[cfg(feature = "parallel")]
+    let (prev_ix, prev_iy): (Vec<Matrix<f32>>, Vec<Matrix<f32>>) = {
+        let pairs: Result<Vec<(Matrix<f32>, Matrix<f32>)>> = prev_pyr[..actual_levels]
+            .par_iter()
+            .map(|level| {
+                let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+                let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+                Ok((ix, iy))
+            })
+            .collect();
+        pairs?.into_iter().unzip()
+    };
+
+    #[cfg(not(feature = "parallel"))]
+    let (prev_ix, prev_iy): (Vec<Matrix<f32>>, Vec<Matrix<f32>>) = {
+        let mut prev_ix: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
+        let mut prev_iy: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
+        for level in &prev_pyr[..actual_levels] {
+            let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+            let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+            prev_ix.push(ix);
+            prev_iy.push(iy);
+        }
+        (prev_ix, prev_iy)
+    };
 
     // ------------------------------------------------------------------
     // Output buffers
     // ------------------------------------------------------------------
-    let mut next_pts: Vec<Point2f> = if use_initial_flow {
+
+    // Resolve the initial guess for each point.  In the parallel path we need
+    // this as a plain Vec so each worker can read it without borrowing issues.
+    if use_initial_flow {
         if let Some(init) = initial_next_pts {
             if init.len() != n_pts {
                 return Err(PureCvError::InvalidInput(
                     "initial_next_pts length must match prev_pts length".to_string(),
                 ));
             }
-            init.to_vec()
-        } else {
-            prev_pts.to_vec()
+        }
+    }
+
+    let initial_guesses: Vec<Point2f> = if use_initial_flow {
+        match initial_next_pts {
+            Some(init) => init.to_vec(),
+            None => prev_pts.to_vec(),
         }
     } else {
         prev_pts.to_vec()
     };
 
-    let mut status = vec![1u8; n_pts];
-    let mut err = vec![0.0f32; n_pts];
-
     // ------------------------------------------------------------------
-    // Track each feature point through the pyramid
+    // Track each feature point through the pyramid.
+    //
+    // When the `parallel` feature is enabled the per-point LK solve runs
+    // concurrently via Rayon — each point is fully independent.  The scalar
+    // fallback is structurally identical but uses a sequential `for` loop.
     // ------------------------------------------------------------------
     let coarsest = actual_levels - 1;
+    let coarsest_scale = 1.0f32 / (1u32 << coarsest) as f32;
 
-    for i in 0..n_pts {
+    // Helper closure that tracks one point through all pyramid levels.
+    // Captured (read-only) references are shared safely in the parallel path.
+    let track_point = |i: usize| -> (Point2f, u8, f32) {
         let prev_pt = prev_pts[i];
+        let guess = initial_guesses[i];
 
-        // Initial flow at coarsest level (in coarsest-level coordinates).
-        let coarsest_scale = 1.0f32 / (1u32 << coarsest) as f32;
         let mut u = if use_initial_flow {
-            (next_pts[i].x - prev_pt.x) * coarsest_scale
+            (guess.x - prev_pt.x) * coarsest_scale
         } else {
             0.0f32
         };
         let mut v = if use_initial_flow {
-            (next_pts[i].y - prev_pt.y) * coarsest_scale
+            (guess.y - prev_pt.y) * coarsest_scale
         } else {
             0.0f32
         };
@@ -572,13 +687,11 @@ pub fn calc_optical_flow_pyramid_lk(
         let mut min_eigen = 1.0f64;
         let mut tracked = true;
 
-        // Iterate from coarsest level down to level 0.
         for level in (0..actual_levels).rev() {
             let scale = 1.0f32 / (1u32 << level) as f32;
             let px = prev_pt.x * scale;
             let py = prev_pt.y * scale;
 
-            // Scale-up the flow coming from the coarser level.
             if level < coarsest {
                 u *= 2.0;
                 v *= 2.0;
@@ -611,26 +724,33 @@ pub fn calc_optical_flow_pyramid_lk(
         }
 
         if tracked {
-            next_pts[i] = Point2f::new(prev_pt.x + u, prev_pt.y + v);
-            status[i] = 1;
-            err[i] = if get_min_eigenvals {
+            let next_pt = Point2f::new(prev_pt.x + u, prev_pt.y + v);
+            let e = if get_min_eigenvals {
                 min_eigen as f32
             } else {
                 compute_tracking_error(
-                    &prev_f32,
-                    &next_f32,
-                    prev_pt,
-                    next_pts[i],
-                    half_win_w,
-                    half_win_h,
+                    &prev_f32, &next_f32, prev_pt, next_pt, half_win_w, half_win_h,
                 )
             };
+            (next_pt, 1u8, e)
         } else {
-            // Keep the last known position but mark as lost.
-            next_pts[i] = prev_pt;
-            status[i] = 0;
-            err[i] = f32::MAX;
+            (prev_pt, 0u8, f32::MAX)
         }
+    };
+
+    #[cfg(feature = "parallel")]
+    let results: Vec<(Point2f, u8, f32)> = (0..n_pts).into_par_iter().map(track_point).collect();
+
+    #[cfg(not(feature = "parallel"))]
+    let results: Vec<(Point2f, u8, f32)> = (0..n_pts).map(track_point).collect();
+
+    let mut next_pts: Vec<Point2f> = Vec::with_capacity(n_pts);
+    let mut status: Vec<u8> = Vec::with_capacity(n_pts);
+    let mut err: Vec<f32> = Vec::with_capacity(n_pts);
+    for (pt, s, e) in results {
+        next_pts.push(pt);
+        status.push(s);
+        err.push(e);
     }
 
     Ok((next_pts, status, err))

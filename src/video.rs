@@ -49,6 +49,9 @@
 
 pub mod optical_flow;
 
+#[cfg(feature = "simd")]
+pub(crate) mod simd;
+
 #[cfg(test)]
 mod tests;
 
