@@ -1,15 +1,3 @@
-# SIMD & Parallelization Benchmark Results
-
-This document highlights the performance evaluation of the `purecv` library across four main compilation strategies:
-
-1. **Standard**: Sequential fallback mode (`--no-default-features`), without explicit target CPU optimizations.
-2. **SIMD Only**: Sequential mode compiled with `RUSTFLAGS="-C target-cpu=native"` to encourage LLVM auto-vectorization.
-3. **Parallel**: Enabled `rayon` multi-threading across available cores (`--features parallel`).
-4. **Parallel + SIMD**: Combined `rayon` parallelism alongside `target-cpu=native` for maximum theoretical throughput.
-
-All tests operate on `1024x1024` image/matrix tensors using `f32` (or `u8` depending on the domain context). Times shown represent the median calculation calculated by `Criterion.rs`.
-
----
 
 # SIMD & Parallelization Benchmark Results
 
