@@ -22,24 +22,20 @@ npm install @webarkit/purecv-wasm
 
 ```javascript
 // Example using a bundler (webpack, vite) or in Node.js
-import init, { PureCvMatrixU8, gaussianBlur } from '@webarkit/purecv-wasm/dist-std/purecv.js';
+import init, { Mat, gaussian_blur, CV_8UC3, BORDER_DEFAULT } from '@webarkit/purecv-wasm/dist-std/purecv_wasm.js';
 
 async function run() {
     // Initialize WebAssembly
     await init();
 
-    const width = 640;
-    const height = 480;
-    const channels = 3;
-
-    // Create a new matrix
-    const mat = PureCvMatrixU8.create(width, height, channels);
+    // Mat.new(rows, cols, mat_type)
+    const mat = Mat.new(480, 640, CV_8UC3);
     
     // Process your image data here...
     // For example, uploading an ImageData array buffer to `mat`
 
-    // Apply a Gaussian Blur of size 5x5
-    const blurredMat = gaussianBlur(mat, 5, 5, 0.0, 0.0);
+    // gaussian_blur(src, ksize_w, ksize_h, sigma_x, sigma_y, border_type)
+    const blurredMat = gaussian_blur(mat, 5, 5, 0.0, 0.0, BORDER_DEFAULT);
 
     // Free memory manually!
     mat.free();
@@ -53,13 +49,13 @@ For a concrete, runnable example directly in an HTML file using `fetch`, check o
 
 ## Memory Management
 
-Because WebAssembly runs linearly in memory and holds pointers to Rust `Vec` objects, memory allocated for matrices such as `PureCvMatrixU8` and `PureCvMatrix` are not automatically garbage collected by JavaScript. When you are done manipulating your matrix, **you must ensure you call `.free()`** to prevent memory leaks in the browser.
+Because WebAssembly runs linearly in memory and holds pointers to Rust `Vec` objects, memory allocated for matrices such as `Mat` are not automatically garbage collected by JavaScript. When you are done manipulating your matrix, **you must ensure you call `.free()`** to prevent memory leaks in the browser.
 
 ## API coverage
 
 Right now we have covered a large majority of operations for `core` and `imgproc`:
 
-- **Core**: Arithmetic (`add`, `subtract`, `multiply`, `absDiff` etc.), Structural (`hconcat`, `vconcat`, `flip`), Geometry, constants etc.
-- **ImgProc**: Filters (`blur`, `gaussianBlur`, `bilateralFilter`), Thresholding (`threshold`), Coloring (`cvtColor`), Edge Derivatives (`canny`, `sobel`, `laplacian`), Morphology (`erode`, `dilate`, `morphologyEx`, `getStructuringElement`), Pyramids (`pyrDown`, `pyrUp`, `buildPyramid`).
+- **Core**: Arithmetic (`add`, `subtract`, `multiply`, `absdiff` etc.), Structural (`hconcat`, `vconcat`, `flip`), Geometry, constants etc.
+- **ImgProc**: Filters (`blur`, `gaussian_blur`, `bilateral_filter`), Thresholding (`threshold`), Coloring (`cvt_color`), Edge Derivatives (`canny`, `sobel`, `laplacian`), Morphology (`erode`, `dilate`, `morphology_ex`, `get_structuring_element`), Pyramids (`pyr_down`, `pyr_up`, `build_pyramid`).
 
 Note: To interface between JavaScript Typed Arrays and `purecv-wasm`, please use the available getter functions (`.data()`) which directly retrieve a Float32Array or Uint8Array view into WASM memory.
