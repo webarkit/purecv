@@ -43,3 +43,6 @@ pub mod orb;
 pub use fast::{FastFeatureDetector, FastType};
 pub use keypoint::KeyPoint;
 pub use orb::Orb;
+
+#[cfg(test)]
+mod tests;
