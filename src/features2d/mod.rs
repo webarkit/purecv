@@ -1,5 +1,5 @@
 /*
- *  lib.rs
+ *  mod.rs
  *  purecv
  *
  *  This file is part of purecv - WebARKit.
@@ -34,37 +34,12 @@
  *
  */
 
-// Global modules
-pub mod calib3d;
-pub mod core;
-pub mod features;
-pub mod features2d;
-pub mod imgproc;
-pub mod version;
-pub mod video;
+pub mod fast;
+/// 2D Features Framework (FAST, ORB, and KeyPoint structures).
+/// Reference: https://docs.opencv.org/4.10.0/d5/d51/group__features2d__main.html
+pub mod keypoint;
+pub mod orb;
 
-/// Prelude to easily import common structures
-pub mod prelude {
-    pub use crate::calib3d::{
-        find_homography, rodrigues, solve_pnp, solve_pnp_ransac, HomographyMethod, SolvePnPMethod,
-    };
-    pub use crate::core::types::{
-        BorderTypes, Point2f, Point2i, Point3f, Rect2f, Rect2i, Scalar, Size2f, Size2i,
-        TermCriteria, TermType, Vec2b, Vec2d, Vec2f, Vec2i, Vec2s, Vec3b, Vec3d, Vec3f, Vec3i,
-        Vec3s, Vec4b, Vec4d, Vec4f, Vec4i, Vec4s, Vec6d, Vec6f, VecN,
-    };
-    pub use crate::core::Matrix;
-    pub use crate::imgproc::derivatives::{laplacian, scharr, sobel};
-    pub use crate::imgproc::edge::canny;
-    pub use crate::imgproc::feature::{
-        corner_eigen_vals_and_vecs, corner_harris, corner_min_eigen_val, corner_sub_pix,
-        good_features_to_track, pre_corner_detect,
-    };
-    pub use crate::imgproc::filter::{bilateral_filter, box_filter, gaussian_blur};
-    pub use crate::imgproc::threshold::{threshold, ThresholdTypes};
-    pub use crate::imgproc::{cvt_color, ColorConversionCode};
-    pub use crate::video::optical_flow::{
-        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OpticalFlowPyramid,
-        OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
-    };
-}
+pub use fast::{FastFeatureDetector, FastType};
+pub use keypoint::KeyPoint;
+pub use orb::Orb;
