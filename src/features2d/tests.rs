@@ -173,3 +173,117 @@ fn test_keypoint_overlap() {
     // Calculated theoretical overlap ratio is approx 0.337463
     assert!((overlap_val - 0.337463).abs() < 1e-4);
 }
+
+#[test]
+fn test_fast_grayscale_validation() {
+    use crate::core::Matrix;
+    use crate::features2d::FastFeatureDetector;
+
+    // Create a 3-channel matrix (RGB)
+    let img = Matrix::<u8>::new(10, 10, 3);
+    let detector = FastFeatureDetector::default();
+    let res = detector.detect(&img);
+    assert!(res.is_err());
+    if let Err(e) = res {
+        assert!(e.to_string().contains("grayscale"));
+    }
+}
+
+#[test]
+fn test_fast_uniform_image() {
+    use crate::core::Matrix;
+    use crate::features2d::{FastFeatureDetector, FastType};
+
+    let img = Matrix::<u8>::from_vec(20, 20, 1, vec![128; 400]);
+
+    for fast_type in &[FastType::Type5_8, FastType::Type7_12, FastType::Type9_16] {
+        let detector = FastFeatureDetector::new(10, true, *fast_type);
+        let kps = detector.detect(&img).unwrap();
+        assert_eq!(kps.len(), 0);
+    }
+}
+
+#[test]
+fn test_fast_synthetic_corner() {
+    use crate::core::Matrix;
+    use crate::features2d::{FastFeatureDetector, FastType};
+
+    // Construct an 11x11 grayscale image with a dark region in the top-left and bright region in the bottom-right
+    let rows = 11;
+    let cols = 11;
+    let mut data = vec![100u8; rows * cols];
+    for y in 5..rows {
+        for x in 5..cols {
+            data[y * cols + x] = 200;
+        }
+    }
+    let img = Matrix::<u8>::from_vec(rows, cols, 1, data.clone());
+
+    // Check FAST-9 (Type9_16)
+    let detector_9 = FastFeatureDetector::new(10, false, FastType::Type9_16);
+    let kps_9 = detector_9.detect(&img).unwrap();
+
+    println!("Detected Keypoints count: {}", kps_9.len());
+    for kp in &kps_9 {
+        println!(
+            "Keypoint at: ({}, {}), response: {}",
+            kp.pt.x, kp.pt.y, kp.response
+        );
+    }
+
+    assert!(
+        !kps_9.is_empty(),
+        "FAST-9 should detect at least one keypoint at the corner boundary"
+    );
+
+    // Check if the corner is found around the boundary region (5, 5)
+    let has_near_boundary = kps_9
+        .iter()
+        .any(|kp| (kp.pt.x - 5.0).abs() <= 1.0 && (kp.pt.y - 5.0).abs() <= 1.0);
+    assert!(has_near_boundary, "FAST-9 keypoint should be near (5, 5)");
+
+    // Check FAST-7 (Type7_12)
+    let detector_7 = FastFeatureDetector::new(10, false, FastType::Type7_12);
+    let kps_7 = detector_7.detect(&img).unwrap();
+    assert!(
+        !kps_7.is_empty(),
+        "FAST-7 should detect at least one keypoint"
+    );
+
+    // Check FAST-5 (Type5_8)
+    let detector_5 = FastFeatureDetector::new(10, false, FastType::Type5_8);
+    let kps_5 = detector_5.detect(&img).unwrap();
+    assert!(
+        !kps_5.is_empty(),
+        "FAST-5 should detect at least one keypoint"
+    );
+}
+
+#[test]
+fn test_fast_nonmax_suppression() {
+    use crate::core::Matrix;
+    use crate::features2d::{FastFeatureDetector, FastType};
+
+    let rows = 11;
+    let cols = 11;
+    let mut data = vec![100u8; rows * cols];
+    for y in 5..rows {
+        for x in 5..cols {
+            data[y * cols + x] = 200;
+        }
+    }
+    let img = Matrix::<u8>::from_vec(rows, cols, 1, data);
+
+    // With NMS
+    let detector_nms = FastFeatureDetector::new(10, true, FastType::Type9_16);
+    let kps_nms = detector_nms.detect(&img).unwrap();
+
+    // Without NMS
+    let detector_no_nms = FastFeatureDetector::new(10, false, FastType::Type9_16);
+    let kps_no_nms = detector_no_nms.detect(&img).unwrap();
+
+    assert!(
+        kps_no_nms.len() >= kps_nms.len(),
+        "Without NMS, we should detect at least as many (and usually more) keypoints than with NMS"
+    );
+}
