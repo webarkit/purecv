@@ -34,15 +34,19 @@
  *
  */
 
+pub mod bit_pattern_31;
 pub mod fast;
 /// 2D Features Framework (FAST, ORB, and KeyPoint structures).
 /// Reference: https://docs.opencv.org/4.10.0/d5/d51/group__features2d__main.html
 pub mod keypoint;
 pub mod orb;
 
+pub use bit_pattern_31::BIT_PATTERN_31;
 pub use fast::{FastFeatureDetector, FastType};
 pub use keypoint::KeyPoint;
-pub use orb::Orb;
+pub use orb::{
+    build_orb_pyramid, compute_orb_descriptor, compute_orientation, precompute_umax, Orb, ScoreType,
+};
 
 #[cfg(test)]
 mod tests;

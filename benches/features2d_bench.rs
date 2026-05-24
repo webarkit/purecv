@@ -1,5 +1,5 @@
 /*
- *  imgproc.rs
+ *  features2d_bench.rs
  *  purecv
  *
  *  This file is part of purecv - WebARKit.
@@ -34,34 +34,36 @@
  *
  */
 
-pub mod color;
-pub mod derivatives;
-pub mod edge;
-pub mod feature;
-pub mod filter;
-pub mod hough;
-pub mod morph;
-pub mod pyramid;
-pub mod resize;
-pub mod threshold;
+use criterion::{criterion_group, criterion_main, Criterion};
+use purecv::core::Matrix;
+use purecv::features2d::{FastFeatureDetector, FastType, Orb};
+use std::hint::black_box;
 
-pub(crate) mod simd;
+fn bench_features2d(c: &mut Criterion) {
+    let size = 512;
 
-#[cfg(test)]
-mod tests;
+    // Create a synthetic grayscale image with gradients and structures to ensure keypoints are detected
+    let mut img = Matrix::<u8>::new(size, size, 1);
+    for y in 0..size {
+        for x in 0..size {
+            let row_pattern = (y as f32 * 0.1).sin() * 128.0 + 128.0;
+            let col_pattern = (x as f32 * 0.1).cos() * 128.0 + 128.0;
+            img.set(y, x, 0, ((row_pattern + col_pattern) / 2.0) as u8);
+        }
+    }
 
-// Re-export common conversions: purecv::imgproc::cvt_color_...
-pub use color::{
-    cvt_color, cvt_color_bgr_to_gray, cvt_color_bgra_to_gray, cvt_color_gray_to_bgr,
-    cvt_color_gray_to_bgra, cvt_color_gray_to_rgb, cvt_color_gray_to_rgba, cvt_color_rgb_to_gray,
-    cvt_color_rgba_to_gray, ColorConversionCode,
-};
-pub use derivatives::*;
-pub use edge::*;
-pub use feature::*;
-pub use filter::*;
-pub use hough::*;
-pub use morph::{dilate, erode, get_structuring_element, morphology_ex, MorphShapes, MorphTypes};
-pub use pyramid::{build_pyramid, pyr_down, pyr_up};
-pub use resize::resize;
-pub use threshold::*;
+    // Benchmark FAST detector
+    let fast = FastFeatureDetector::new(20, true, FastType::Type9_16);
+    c.bench_function("fast_detect_512x512", |b| {
+        b.iter(|| fast.detect(black_box(&img)).unwrap())
+    });
+
+    // Benchmark ORB detect_and_compute
+    let orb = Orb::default();
+    c.bench_function("orb_detect_and_compute_512x512", |b| {
+        b.iter(|| orb.detect_and_compute(black_box(&img)).unwrap())
+    });
+}
+
+criterion_group!(benches, bench_features2d);
+criterion_main!(benches);
