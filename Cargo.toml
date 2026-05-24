@@ -57,6 +57,11 @@ harness = false
 required-features = ["fft"]
 
 [[bench]]
+name = "features2d_bench"
+path = "benches/features2d_bench.rs"
+harness = false
+
+[[bench]]
 name = "video_bench"
 path = "benches/video_bench.rs"
 harness = false

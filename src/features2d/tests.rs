@@ -287,3 +287,159 @@ fn test_fast_nonmax_suppression() {
         "Without NMS, we should detect at least as many (and usually more) keypoints than with NMS"
     );
 }
+
+#[test]
+fn test_orb_pyramid_grayscale_validation() {
+    use crate::core::Matrix;
+    use crate::features2d::build_orb_pyramid;
+
+    // Create a 3-channel matrix (RGB)
+    let img = Matrix::<u8>::new(10, 10, 3);
+    let res = build_orb_pyramid(&img, 3, 1.2);
+    assert!(res.is_err());
+    if let Err(e) = res {
+        assert!(e.to_string().contains("grayscale"));
+    }
+}
+
+#[test]
+fn test_orb_pyramid_dimensions() {
+    use crate::core::Matrix;
+    use crate::features2d::build_orb_pyramid;
+
+    // Create a 120x120 single-channel matrix
+    let img = Matrix::<u8>::new(120, 120, 1);
+    let pyr = build_orb_pyramid(&img, 4, 1.2).unwrap();
+
+    assert_eq!(pyr.len(), 4);
+
+    // Level 0: 120x120
+    assert_eq!(pyr[0].cols, 120);
+    assert_eq!(pyr[0].rows, 120);
+
+    // Level 1: round(120 / 1.2) = 100x100
+    assert_eq!(pyr[1].cols, 100);
+    assert_eq!(pyr[1].rows, 100);
+
+    // Level 2: round(120 / 1.44) = 83x83
+    assert_eq!(pyr[2].cols, 83);
+    assert_eq!(pyr[2].rows, 83);
+
+    // Level 3: round(120 / 1.728) = 69x69
+    assert_eq!(pyr[3].cols, 69);
+    assert_eq!(pyr[3].rows, 69);
+}
+
+#[test]
+fn test_orb_pyramid_errors() {
+    use crate::core::Matrix;
+    use crate::features2d::build_orb_pyramid;
+
+    let img = Matrix::<u8>::new(10, 10, 1);
+
+    // Invalid nlevels = 0
+    assert!(build_orb_pyramid(&img, 0, 1.2).is_err());
+
+    // Invalid scale_factor <= 1.0
+    assert!(build_orb_pyramid(&img, 3, 0.9).is_err());
+    assert!(build_orb_pyramid(&img, 3, 1.0).is_err());
+
+    // Image dimension shunk to 0
+    assert!(build_orb_pyramid(&img, 20, 1.2).is_err());
+}
+
+#[test]
+fn test_orb_orientation() {
+    use crate::core::Matrix;
+    use crate::features2d::{compute_orientation, precompute_umax};
+
+    // Precompute umax for patch size 31 (half size = 15)
+    let u_max = precompute_umax(15);
+    assert_eq!(u_max.len(), 17);
+    assert_eq!(u_max[0], 15); // Center maximum width is 15
+
+    // Create a 40x40 grayscale image filled with 0 (dark)
+    let mut img = Matrix::<u8>::new(40, 40, 1);
+
+    // Set a vertical edge: left half (columns < 20) is 0, right half is 255 (bright)
+    for y in 0..40 {
+        for x in 20..40 {
+            img.set(y, x, 0, 255);
+        }
+    }
+
+    // Keypoint at (20, 20) should have a centroid pointing straight east (0 degrees)
+    let angle_east = compute_orientation(&img, 20, 20, 31, &u_max).unwrap();
+    // Angle should be very close to 0.0 degrees
+    assert!(angle_east.abs() < 1e-3 || (angle_east - 360.0).abs() < 1e-3);
+
+    // Create another image for a horizontal edge: bottom half (rows >= 20) is 255 (bright)
+    let mut img2 = Matrix::<u8>::new(40, 40, 1);
+    for y in 20..40 {
+        for x in 0..40 {
+            img2.set(y, x, 0, 255);
+        }
+    }
+
+    // Keypoint at (20, 20). Since screen Y increases downwards:
+    // Bottom half is bright -> centroid is on positive Y axis (downwards in screen coordinates)
+    // Positive Y axis corresponds to 90 degrees.
+    let angle_south = compute_orientation(&img2, 20, 20, 31, &u_max).unwrap();
+    assert!((angle_south - 90.0).abs() < 1.0);
+}
+
+#[test]
+fn test_orb_descriptors() {
+    use crate::core::types::Point2f;
+    use crate::core::Matrix;
+    use crate::features2d::{compute_orb_descriptor, KeyPoint, BIT_PATTERN_31};
+
+    // Create a simple grayscale image with a gradient
+    let mut img = Matrix::<u8>::new(40, 40, 1);
+    for y in 0..40 {
+        for x in 0..40 {
+            img.set(y, x, 0, (x * 5) as u8);
+        }
+    }
+
+    // Keypoint at (20, 20) with angle = 0.0 degrees
+    let mut kp = KeyPoint::new(Point2f::new(20.0, 20.0), 31.0, 0.0, 0.0, 0, -1);
+    let desc0 = compute_orb_descriptor(&img, &kp, 31, &BIT_PATTERN_31).unwrap();
+    assert_eq!(desc0.len(), 32);
+
+    // Keypoint at same location with angle = 90.0 degrees
+    kp.angle = 90.0;
+    let desc90 = compute_orb_descriptor(&img, &kp, 31, &BIT_PATTERN_31).unwrap();
+
+    // Rotating the keypoint should steer the pattern, resulting in different descriptor values
+    assert_ne!(desc0, desc90);
+}
+
+#[test]
+fn test_orb_full_pipeline() {
+    use crate::core::Matrix;
+    use crate::features2d::Orb;
+
+    // Create a 100x100 synthetic image with a clear corner to detect
+    let mut img = Matrix::<u8>::new(100, 100, 1);
+    // Draw a bright square corner
+    for y in 40..60 {
+        for x in 40..60 {
+            img.set(y, x, 0, 255);
+        }
+    }
+
+    let orb = Orb::default();
+    let (kpts, descriptors) = orb.detect_and_compute(&img).unwrap();
+
+    // The pipeline should run and find at least the corners of our square
+    assert!(!kpts.is_empty());
+    assert_eq!(descriptors.rows, kpts.len());
+    assert_eq!(descriptors.cols, 32);
+
+    // All keypoints should have a valid octave and angle
+    for kp in kpts.iter() {
+        assert!(kp.angle >= 0.0 && kp.angle < 360.0);
+        assert!(kp.octave >= 0 && kp.octave < 8);
+    }
+}
