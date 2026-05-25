@@ -12,6 +12,37 @@ All tests operate on `1024x1024` image/matrix tensors using `f32` (or `u8` depen
 
 ---
 
+## Oriented FAST and Steered BRIEF (ORB) — Milestone 5
+
+*Execution Date: 2026-05-25 (CET)*
+
+Benchmarks comparing the parallel (Rayon-enabled) implementation against the sequential (single-threaded) implementation on a $512 \times 512$ synthetic grayscale image.
+
+Run commands:
+```sh
+# Sequential (without Rayon)
+cargo bench --bench features2d_bench --no-default-features --features std
+
+# Parallel (Rayon enabled, default)
+cargo bench --bench features2d_bench
+```
+
+| Benchmark / Operation | Sequential | Parallel (default) | Speedup Factor | Real-Time Throughput (FPS) |
+| :-------------------- | :--------- | :----------------- | :------------: | :------------------------: |
+| `fast_detect_512x512` | 2.14 ms    | **499.00 µs**      | **4.3x**       | ~2,040 FPS                 |
+| `orb_detect_and_compute_512x512` | 115.39 ms | **30.61 ms** | **3.8x** | **32.7 FPS** (Parallel) vs 8.6 FPS (Sequential) |
+
+### ORB Analysis
+
+- **FAST Corner Detection**: Processes row chunks concurrently. On a $512 \times 512$ image, Rayon reduces detection time from **2.14 ms** to **499 µs** (a **4.3x speedup**).
+- **ORB Unified Pipeline (`detect_and_compute`)**:
+  - The pipeline comprises multi-level bilinear image resizing, FAST corner detection, Harris scoring, intensity centroid calculation, and steered BRIEF coordinate extraction.
+  - Multi-level bilinear `resize` and keypoint-level steered BRIEF extraction are fully parallelized with Rayon.
+  - Rayon delivers a **3.8x overall speedup** (115.39 ms → 30.61 ms), crossing the **30 FPS real-time threshold** required for interactive computer vision, tracking, and WebAR applications.
+- **Zero Contention**: Both algorithms share the source matrix as read-only (`&Matrix<T>`). No writing occurs to the source, eliminating cache line invalidation and false sharing across physical CPU cores.
+
+---
+
 ## Video — Performance Comparison Table
 
 *Execution Date: 2026-04-30 (CET)*
@@ -305,6 +336,8 @@ Following the initial SIMD and Parallelization benchmarks, targeted algorithmic 
 | Structural ops     | Parallel          | 5× (independent row ops)   |
 | GEMM               | Parallel          | 3.7× (compute-bound)       |
 | Feature Detection  | Parallel          | Harris Corner ~26ms (1024x1024) |
+| FAST Detection     | Parallel          | **4.3x** speedup (2.14ms -> 499µs, 512x512) |
+| ORB Pipeline       | Parallel          | **3.8x** speedup (115.39ms -> 30.61ms, 512x512) |
 | Hough Transform    | Parallel          | Lines ~3.6ms / Circles ~4.5ms (512x512) |
 | Video Tracking     | Parallel + SIMD   | ~3–5× (49 pts) / ~4–8× (196 pts) |
 
