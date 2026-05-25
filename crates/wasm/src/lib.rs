@@ -54,6 +54,11 @@ use purecv::imgproc::threshold::{threshold, ThresholdTypes};
 use purecv::version;
 use purecv::video::optical_flow;
 
+use purecv::features2d::{
+    FastFeatureDetector as CoreFastFeatureDetector, FastType as CoreFastType,
+    KeyPoint as CoreKeyPoint, Orb as CoreOrb, ScoreType as CoreScoreType,
+};
+
 // ---------------------------------------------------------------------------
 //  Initialization helpers
 // ---------------------------------------------------------------------------
@@ -2213,4 +2218,301 @@ pub fn rodrigues_wasm(src: &Mat, dst: &mut Mat) -> Result<(), JsError> {
     let src_mat = require_f64(src, "rodrigues (src)")?;
     let dst_mat = require_f64_mut(dst, "rodrigues (dst)")?;
     rodrigues(src_mat, dst_mat).map_err(|e| JsError::new(&format!("{e}")))
+}
+
+// ---------------------------------------------------------------------------
+//  features2d — KeyPoint, FAST, and ORB bindings
+// ---------------------------------------------------------------------------
+
+fn fast_type_from_i32(val: i32) -> Result<CoreFastType, JsError> {
+    match val {
+        0 => Ok(CoreFastType::Type5_8),
+        1 => Ok(CoreFastType::Type7_12),
+        2 => Ok(CoreFastType::Type9_16),
+        _ => Err(JsError::new(&format!("Invalid FAST type value: {val}"))),
+    }
+}
+
+#[wasm_bindgen(js_name = "FAST_TYPE_5_8")]
+pub fn fast_type_5_8() -> i32 {
+    0
+}
+
+#[wasm_bindgen(js_name = "FAST_TYPE_7_12")]
+pub fn fast_type_7_12() -> i32 {
+    1
+}
+
+#[wasm_bindgen(js_name = "FAST_TYPE_9_16")]
+pub fn fast_type_9_16() -> i32 {
+    2
+}
+
+fn score_type_from_i32(val: i32) -> Result<CoreScoreType, JsError> {
+    match val {
+        0 => Ok(CoreScoreType::Harris),
+        1 => Ok(CoreScoreType::Fast),
+        _ => Err(JsError::new(&format!("Invalid ScoreType value: {val}"))),
+    }
+}
+
+#[wasm_bindgen(js_name = "ORB_SCORE_HARRIS")]
+pub fn orb_score_harris() -> i32 {
+    0
+}
+
+#[wasm_bindgen(js_name = "ORB_SCORE_FAST")]
+pub fn orb_score_fast() -> i32 {
+    1
+}
+
+/// JavaScript-facing KeyPoint struct.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug)]
+pub struct KeyPoint {
+    pub x: f32,
+    pub y: f32,
+    pub size: f32,
+    pub angle: f32,
+    pub response: f32,
+    pub octave: i32,
+    pub class_id: i32,
+}
+
+#[wasm_bindgen]
+impl KeyPoint {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        x: f32,
+        y: f32,
+        size: f32,
+        angle: f32,
+        response: f32,
+        octave: i32,
+        class_id: i32,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            size,
+            angle,
+            response,
+            octave,
+            class_id,
+        }
+    }
+}
+
+impl From<CoreKeyPoint> for KeyPoint {
+    fn from(kp: CoreKeyPoint) -> Self {
+        Self {
+            x: kp.pt.x,
+            y: kp.pt.y,
+            size: kp.size,
+            angle: kp.angle,
+            response: kp.response,
+            octave: kp.octave,
+            class_id: kp.class_id,
+        }
+    }
+}
+
+impl From<KeyPoint> for CoreKeyPoint {
+    fn from(kp: KeyPoint) -> Self {
+        Self {
+            pt: purecv::core::types::Point2f::new(kp.x, kp.y),
+            size: kp.size,
+            angle: kp.angle,
+            response: kp.response,
+            octave: kp.octave,
+            class_id: kp.class_id,
+        }
+    }
+}
+
+/// Managed vector of KeyPoints exposed to JavaScript.
+#[wasm_bindgen]
+pub struct KeyPointVector {
+    pub(crate) inner: Vec<CoreKeyPoint>,
+}
+
+#[wasm_bindgen]
+impl KeyPointVector {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self { inner: Vec::new() }
+    }
+
+    pub fn push(&mut self, kp: &KeyPoint) {
+        self.inner.push((*kp).into());
+    }
+
+    pub fn size(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    pub fn get(&self, idx: usize) -> Option<KeyPoint> {
+        self.inner.get(idx).cloned().map(|kp| kp.into())
+    }
+}
+
+impl Default for KeyPointVector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Standalone FAST corner detection.
+#[wasm_bindgen(js_name = "FAST")]
+pub fn fast(
+    image: &Mat,
+    threshold: i32,
+    nonmax_suppression: bool,
+    type_val: i32,
+) -> Result<KeyPointVector, JsError> {
+    let img = require_u8(image, "FAST")?;
+    let f_type = fast_type_from_i32(type_val)?;
+    let detector = CoreFastFeatureDetector::new(threshold as u8, nonmax_suppression, f_type);
+    let kpts = detector
+        .detect(img)
+        .map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(KeyPointVector { inner: kpts })
+}
+
+/// Class wrapper for FAST feature detection.
+#[wasm_bindgen]
+pub struct FastFeatureDetector {
+    inner: CoreFastFeatureDetector,
+}
+
+#[wasm_bindgen]
+impl FastFeatureDetector {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        threshold: i32,
+        nonmax_suppression: bool,
+        type_val: i32,
+    ) -> Result<FastFeatureDetector, JsError> {
+        let f_type = fast_type_from_i32(type_val)?;
+        Ok(Self {
+            inner: CoreFastFeatureDetector::new(threshold as u8, nonmax_suppression, f_type),
+        })
+    }
+
+    pub fn detect(&self, image: &Mat) -> Result<KeyPointVector, JsError> {
+        let img = require_u8(image, "FastFeatureDetector::detect")?;
+        let kpts = self
+            .inner
+            .detect(img)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(KeyPointVector { inner: kpts })
+    }
+}
+
+/// Oriented FAST and Rotated BRIEF (ORB) detector and descriptor extractor.
+#[wasm_bindgen]
+pub struct ORB {
+    inner: CoreOrb,
+}
+
+#[wasm_bindgen]
+impl ORB {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        nfeatures: usize,
+        scale_factor: f32,
+        nlevels: usize,
+        edge_threshold: i32,
+        first_level: usize,
+        wta_k: usize,
+        score_type_val: i32,
+        patch_size: usize,
+        fast_threshold: i32,
+    ) -> Result<ORB, JsError> {
+        let s_type = score_type_from_i32(score_type_val)?;
+        Ok(Self {
+            inner: CoreOrb::new(
+                nfeatures,
+                scale_factor,
+                nlevels,
+                edge_threshold,
+                first_level,
+                wta_k,
+                s_type,
+                patch_size,
+                fast_threshold as u8,
+            ),
+        })
+    }
+
+    /// Creates an ORB instance with default parameters.
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        Self {
+            inner: CoreOrb::default(),
+        }
+    }
+
+    pub fn detect(&self, image: &Mat) -> Result<KeyPointVector, JsError> {
+        let img = require_u8(image, "ORB::detect")?;
+        let kpts = self
+            .inner
+            .detect(img)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(KeyPointVector { inner: kpts })
+    }
+
+    pub fn compute(&self, image: &Mat, keypoints: &KeyPointVector) -> Result<Mat, JsError> {
+        let img = require_u8(image, "ORB::compute")?;
+        let descs = self
+            .inner
+            .compute(img, &keypoints.inner)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+
+        Ok(Mat {
+            inner: DynamicMatrix {
+                data: DynamicData::U8(descs),
+            },
+        })
+    }
+
+    /// Detects keypoints and computes their descriptors in one pass, returning
+    /// a JavaScript object: `{ keypoints: KeyPointVector, descriptors: Mat }`.
+    #[wasm_bindgen(js_name = "detectAndCompute")]
+    pub fn detect_and_compute(&self, image: &Mat) -> Result<JsValue, JsError> {
+        let img = require_u8(image, "ORB::detectAndCompute")?;
+        let (kpts, descs) = self
+            .inner
+            .detect_and_compute(img)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+
+        let kpts_vector = KeyPointVector { inner: kpts };
+        let descs_mat = Mat {
+            inner: DynamicMatrix {
+                data: DynamicData::U8(descs),
+            },
+        };
+
+        let obj = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("keypoints"),
+            &JsValue::from(kpts_vector),
+        )
+        .map_err(|_| JsError::new("Failed to set keypoints"))?;
+
+        js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("descriptors"),
+            &JsValue::from(descs_mat),
+        )
+        .map_err(|_| JsError::new("Failed to set descriptors"))?;
+
+        Ok(obj.into())
+    }
 }
