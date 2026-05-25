@@ -1177,4 +1177,56 @@ mod imgproc_tests {
             "Did not detect the circle at the correct location"
         );
     }
+
+    #[test]
+    fn test_resize_size() {
+        let src = Matrix::<u8>::new(4, 4, 1);
+        let dst = resize(&src, Size::new(2, 2)).unwrap();
+        assert_eq!(dst.rows, 2);
+        assert_eq!(dst.cols, 2);
+        assert_eq!(dst.channels, 1);
+
+        let dst2 = resize(&src, Size::new(8, 8)).unwrap();
+        assert_eq!(dst2.rows, 8);
+        assert_eq!(dst2.cols, 8);
+        assert_eq!(dst2.channels, 1);
+    }
+
+    #[test]
+    fn test_resize_uniform() {
+        let src = Matrix::<u8>::from_vec(4, 4, 1, vec![100; 16]);
+        let dst = resize(&src, Size::new(8, 8)).unwrap();
+        for &val in &dst.data {
+            assert_eq!(val, 100);
+        }
+    }
+
+    #[test]
+    fn test_resize_bilinear_interpolation() {
+        // Simple 2x2 image:
+        // [ 10,  30 ]
+        // [ 50,  70 ]
+        let src = Matrix::<u8>::from_vec(2, 2, 1, vec![10, 30, 50, 70]);
+        // Resize to 4x4 using bilinear interpolation
+        let dst = resize(&src, Size::new(4, 4)).unwrap();
+        assert_eq!(dst.rows, 4);
+        assert_eq!(dst.cols, 4);
+
+        // Verify the 4 corners retain original values due to clamping at boundaries
+        assert_eq!(*dst.at(0, 0, 0).unwrap(), 10);
+        assert_eq!(*dst.at(0, 3, 0).unwrap(), 30);
+        assert_eq!(*dst.at(3, 0, 0).unwrap(), 50);
+        assert_eq!(*dst.at(3, 3, 0).unwrap(), 70);
+
+        // Center pixel should be around the average of the whole patch (around 40)
+        let center_val = *dst.at(1, 1, 0).unwrap();
+        assert!(center_val > 10 && center_val < 70);
+    }
+
+    #[test]
+    fn test_resize_errors() {
+        let src = Matrix::<u8>::new(4, 4, 1);
+        assert!(resize(&src, Size::new(0, 4)).is_err());
+        assert!(resize(&src, Size::new(4, 0)).is_err());
+    }
 }
