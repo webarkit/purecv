@@ -45,6 +45,9 @@ use crate::imgproc::resize;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "simd")]
+use pulp::Arch;
+
 /// The type of keypoint scoring for ORB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScoreType {
@@ -525,28 +528,77 @@ pub fn compute_orientation(
     let mut m_01 = 0i64;
 
     let data = &image.data;
-
-    // Center row (v = 0)
     let center_offset = (cy * cols + cx) as usize;
-    for u in -half_k..=half_k {
-        let val = data[(center_offset as i32 + u) as usize] as i64;
-        m_10 += u as i64 * val;
+
+    #[cfg(feature = "simd")]
+    {
+        let arch = Arch::new();
+        arch.dispatch(|| {
+            let mut local_m_10 = 0i64;
+            let mut local_m_01 = 0i64;
+
+            // Center row (v = 0)
+            let center_start = (center_offset as i32 - half_k) as usize;
+            let center_len = (2 * half_k + 1) as usize;
+            let center_slice = &data[center_start..center_start + center_len];
+            for (i, &val) in center_slice.iter().enumerate() {
+                let u = i as i32 - half_k;
+                local_m_10 += u as i64 * val as i64;
+            }
+
+            // Go line by line in the circular patch (v >= 1)
+            for v in 1..=half_k {
+                let mut v_sum = 0i64;
+                let d = u_max[v as usize];
+
+                let row_plus_start = (center_offset as i32 - d + v * cols) as usize;
+                let row_minus_start = (center_offset as i32 - d - v * cols) as usize;
+                let len = (2 * d + 1) as usize;
+
+                let slice_plus = &data[row_plus_start..row_plus_start + len];
+                let slice_minus = &data[row_minus_start..row_minus_start + len];
+
+                for (i, (&val_plus, &val_minus)) in
+                    slice_plus.iter().zip(slice_minus.iter()).enumerate()
+                {
+                    let u = i as i32 - d;
+                    let vp = val_plus as i64;
+                    let vm = val_minus as i64;
+
+                    v_sum += vp - vm;
+                    local_m_10 += u as i64 * (vp + vm);
+                }
+                local_m_01 += v as i64 * v_sum;
+            }
+
+            m_10 = local_m_10;
+            m_01 = local_m_01;
+        });
     }
 
-    // Go line by line in the circular patch (v >= 1)
-    for v in 1..=half_k {
-        let mut v_sum = 0i64;
-        let d = u_max[v as usize];
-        for u in -d..=d {
-            let offset_plus = (center_offset as i32 + u + v * cols) as usize;
-            let offset_minus = (center_offset as i32 + u - v * cols) as usize;
-            let val_plus = data[offset_plus] as i64;
-            let val_minus = data[offset_minus] as i64;
-
-            v_sum += val_plus - val_minus;
-            m_10 += u as i64 * (val_plus + val_minus);
+    #[cfg(not(feature = "simd"))]
+    {
+        // Center row (v = 0)
+        for u in -half_k..=half_k {
+            let val = data[(center_offset as i32 + u) as usize] as i64;
+            m_10 += u as i64 * val;
         }
-        m_01 += v as i64 * v_sum;
+
+        // Go line by line in the circular patch (v >= 1)
+        for v in 1..=half_k {
+            let mut v_sum = 0i64;
+            let d = u_max[v as usize];
+            for u in -d..=d {
+                let offset_plus = (center_offset as i32 + u + v * cols) as usize;
+                let offset_minus = (center_offset as i32 + u - v * cols) as usize;
+                let val_plus = data[offset_plus] as i64;
+                let val_minus = data[offset_minus] as i64;
+
+                v_sum += val_plus - val_minus;
+                m_10 += u as i64 * (val_plus + val_minus);
+            }
+            m_01 += v as i64 * v_sum;
+        }
     }
 
     let mut angle = (m_01 as f32).atan2(m_10 as f32) * 180.0 / std::f32::consts::PI;
@@ -591,30 +643,65 @@ pub fn compute_orb_descriptor(
 
     let mut desc = [0u8; 32];
 
-    for (i, val) in desc.iter_mut().enumerate() {
-        let mut byte_val = 0u8;
-        for bit in 0..8 {
-            let idx = (i * 8 + bit) * 4;
+    #[cfg(feature = "simd")]
+    {
+        let arch = Arch::new();
+        arch.dispatch(|| {
+            for (i, val) in desc.iter_mut().enumerate() {
+                let mut byte_val = 0u8;
+                for bit in 0..8 {
+                    let idx = (i * 8 + bit) * 4;
 
-            let x1 = pattern[idx] as f32;
-            let y1 = pattern[idx + 1] as f32;
-            let x2 = pattern[idx + 2] as f32;
-            let y2 = pattern[idx + 3] as f32;
+                    let x1 = pattern[idx] as f32;
+                    let y1 = pattern[idx + 1] as f32;
+                    let x2 = pattern[idx + 2] as f32;
+                    let y2 = pattern[idx + 3] as f32;
 
-            let rx1 = (x1 * cos_a - y1 * sin_a).round() as i32;
-            let ry1 = (x1 * sin_a + y1 * cos_a).round() as i32;
+                    let rx1 = (x1 * cos_a - y1 * sin_a).round() as i32;
+                    let ry1 = (x1 * sin_a + y1 * cos_a).round() as i32;
 
-            let rx2 = (x2 * cos_a - y2 * sin_a).round() as i32;
-            let ry2 = (x2 * sin_a + y2 * cos_a).round() as i32;
+                    let rx2 = (x2 * cos_a - y2 * sin_a).round() as i32;
+                    let ry2 = (x2 * sin_a + y2 * cos_a).round() as i32;
 
-            let val1 = get_pixel(cx + rx1, cy + ry1);
-            let val2 = get_pixel(cx + rx2, cy + ry2);
+                    let val1 = get_pixel(cx + rx1, cy + ry1);
+                    let val2 = get_pixel(cx + rx2, cy + ry2);
 
-            if val1 < val2 {
-                byte_val |= 1 << bit;
+                    if val1 < val2 {
+                        byte_val |= 1 << bit;
+                    }
+                }
+                *val = byte_val;
             }
+        });
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        for (i, val) in desc.iter_mut().enumerate() {
+            let mut byte_val = 0u8;
+            for bit in 0..8 {
+                let idx = (i * 8 + bit) * 4;
+
+                let x1 = pattern[idx] as f32;
+                let y1 = pattern[idx + 1] as f32;
+                let x2 = pattern[idx + 2] as f32;
+                let y2 = pattern[idx + 3] as f32;
+
+                let rx1 = (x1 * cos_a - y1 * sin_a).round() as i32;
+                let ry1 = (x1 * sin_a + y1 * cos_a).round() as i32;
+
+                let rx2 = (x2 * cos_a - y2 * sin_a).round() as i32;
+                let ry2 = (x2 * sin_a + y2 * cos_a).round() as i32;
+
+                let val1 = get_pixel(cx + rx1, cy + ry1);
+                let val2 = get_pixel(cx + rx2, cy + ry2);
+
+                if val1 < val2 {
+                    byte_val |= 1 << bit;
+                }
+            }
+            *val = byte_val;
         }
-        *val = byte_val;
     }
 
     Ok(desc)

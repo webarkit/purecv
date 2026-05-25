@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<!--
+ *  example_orb.html
+ *  purecv
+ *
+ *  This file is part of purecv - WebARKit.
+ *
+ *  purecv is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  purecv is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with purecv.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *  As a special exception, the copyright holders of this library give you
+ *  permission to link this library with independent modules to produce an
+ *  executable, regardless of the license terms of these independent modules, and to
+ *  copy and distribute the resulting executable under terms of your choice,
+ *  provided that you also meet, for each linked independent module, the terms and
+ *  conditions of the license of that module. An independent module is a module
+ *  which is neither derived from nor based on this library. If you modify this
+ *  library, you may extend this exception to your version of the library, but you
+ *  are not obligated to do so. If you do not wish to do so, delete this exception
+ *  statement from your version.
+ *
+ *  Copyright 2026 WebARKit.
+ *
+ *  Author(s): Walter Perdan @kalwalt https://github.com/kalwalt
+ *
+-->
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PureCV - ORB Keypoints & Descriptors</title>
+    <style>
+        :root {
+            --primary: #00f2fe;
+            --secondary: #4facfe;
+            --bg: #0f172a;
+            --card: rgba(30, 41, 59, 0.7);
+            --border: rgba(255, 255, 255, 0.1);
+            --text: #f8fafc;
+            --accent: #e11d48;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(79, 172, 254, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(0, 242, 254, 0.1) 0px, transparent 50%);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 90%;
+            margin: 2rem 0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .card {
+            background: var(--card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 1.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            margin-bottom: 1.5rem;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+
+        select,
+        input[type="range"] {
+            width: 100%;
+            background: #1e293b;
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            outline: none;
+        }
+
+        .canvas-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            background: #020617;
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            overflow: hidden;
+            min-height: 300px;
+        }
+
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .uploader {
+            border: 2px dashed #334155;
+            padding: 2rem;
+            text-align: center;
+            border-radius: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 1rem;
+        }
+
+        .uploader:hover {
+            border-color: var(--primary);
+            background: rgba(79, 172, 254, 0.05);
+        }
+
+        .uploader p {
+            margin: 0;
+            color: #94a3b8;
+        }
+
+        .metrics {
+            margin-top: 1rem;
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.875rem;
+            color: #94a3b8;
+            border-top: 1px solid var(--border);
+            padding-top: 0.75rem;
+        }
+
+        .metrics span strong {
+            color: var(--primary);
+        }
+
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 0.875rem;
+            margin-bottom: 1.5rem;
+            transition: color 0.2s;
+        }
+
+        .back-btn:hover {
+            color: var(--primary);
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loader" class="loading">
+        <p>Initializing WASM module...</p>
+    </div>
+
+    <div class="container">
+        <a href="index.html" class="back-btn">
+            &larr; Back to Menu
+        </a>
+
+        <div class="header">
+            <h1>ORB Keypoints & BRIEF</h1>
+            <p>Oriented FAST & Rotated BRIEF Feature Pipeline with scale pyramid and orientation tracking</p>
+        </div>
+
+        <div class="card">
+            <div id="drop-zone" class="uploader">
+                <p>Click or drag image here</p>
+                <input type="file" id="file-input" accept="image/*" class="hidden">
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>Max Features: <span id="val-features">500</span></label>
+                    <input type="range" id="features" min="10" max="1500" value="500">
+                </div>
+                <div class="control-group">
+                    <label>Scale Factor: <span id="val-scale">1.20</span></label>
+                    <input type="range" id="scale" min="1.05" max="2.0" step="0.05" value="1.20">
+                </div>
+                <div class="control-group">
+                    <label>Pyramid Levels: <span id="val-levels">8</span></label>
+                    <input type="range" id="levels" min="1" max="12" value="8">
+                </div>
+                <div class="control-group">
+                    <label>FAST Threshold: <span id="val-fast-threshold">20</span></label>
+                    <input type="range" id="fast-threshold" min="5" max="100" value="20">
+                </div>
+                <div class="control-group">
+                    <label>Score Type</label>
+                    <select id="score-type">
+                        <option value="0" selected>Harris Score (OpenCV Default)</option>
+                        <option value="1">FAST Score</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="metrics">
+                <span>Image Dimensions: <strong id="metric-width">0</strong>x<strong
+                        id="metric-height">0</strong></span>
+                <span>Keypoints Detected: <strong id="metric-count">0</strong></span>
+                <span>Pipeline Latency: <strong id="metric-time">0.00</strong> ms</span>
+                <span>Render Time: <strong id="metric-render">0.00</strong> ms</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="canvas-container">
+                <canvas id="canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="example_orb.js"></script>
+</body>
+
+</html>
