@@ -55,6 +55,11 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Thresholding:** `threshold` with all 5 OpenCV-compatible types (`BINARY`, `BINARY_INV`, `TRUNC`, `TOZERO`, `TOZERO_INV`). SIMD-accelerated fast path for `u8`, `f32`, and `f64` via the `SimdElement::simd_threshold()` trait method. Works seamlessly with `parallel` feature for row-level Rayon dispatch.
 - **Feature Detection:** `corner_harris`, `corner_min_eigen_val` (Shi-Tomasi), `good_features_to_track`, `corner_sub_pix` refinement, and structure tensor computation via `corner_eigen_vals_and_vecs`. Supports both Harris and Shi-Tomasi responses with non-maximum suppression.
 - **Hough Transform:** Standard (`hough_lines`) and Probabilistic (`hough_lines_p`) line detection, plus Hough Circle Transform (`hough_circles`) using internally computed Sobel gradients. Fully parallelized via the `parallel` feature.
+- **Resizing:** `resize` function utilizing high-performance bilinear interpolation, fully compatible with `parallel` Rayon multi-threading.
+
+### `purecv-features2d`
+- **FAST Feature Detector:** Real-time corner detector (`FastFeatureDetector`) supporting Type 5_8, 7_12, and 9_16 neighborhood configurations, plus optional non-maximum suppression.
+- **ORB Feature Detector:** Oriented FAST and Rotated BRIEF descriptor extractor (`Orb`) supporting scale pyramids, Harris/FAST scoring, orientation tracking, and 256-bit binary descriptors. Optimized with SIMD fast-paths.
 
 ### `purecv-video`
 - **Optical Flow:** Pyramidal Lucas-Kanade optical flow implementation with `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid`. Includes robust window-based tracking, sub-pixel accuracy, spatial gradient optimization, and iterative refinement.
@@ -225,6 +230,12 @@ cargo run --example hough_transform
 # Corner Detection (Harris, Shi-Tomasi, Sub-pixel refinement)
 cargo run --example corner_detection
 
+# FAST keypoint corner detection (with drawing output)
+cargo run --example fast_features
+
+# ORB keypoint detection and Rotated BRIEF descriptor extraction
+cargo run --example orb_features
+
 # Discrete Fourier Transform (DFT)
 cargo run --example dft_example
 
@@ -239,10 +250,11 @@ cargo run --example pose_estimation
 ## 🧪 Testing & Benchmarking
 
 ### Running Tests
-PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **259 unit tests** covering:
+PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **281 unit tests** (plus **31 doc-tests**) covering:
 
 - **Core module:** Matrix factories, scalar arithmetic variants, bitwise scalar ops, min/max, comparison ops (`compare`, `in_range`), reduction (`reduce`, `count_non_zero`), polar/cartesian conversions, linear algebra (`determinant`, `invert`, `solve`), channel ops (`extract_channel`, `insert_channel`), `DynamicMatrix`, transforms, sorting, clustering, and RNG.
 - **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), and kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`).
+- **Features2d module:** Keypoint structures (`KeyPoint`), FAST corner detection (`FastFeatureDetector`), scale pyramids, and ORB feature extraction & BRIEF descriptor extraction (`Orb`).
 - **Video module:** Tracking and optical flow capabilities including `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid` implementations.
 - **Calib3d module:** SVD, homography estimation, pose estimation (`solve_pnp`), and `rodrigues`.
 
@@ -281,6 +293,8 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 | `dot` | 997 µs | **157 µs** | 6.4× |
 | `gemm_256×256` | 15.71 ms | **4.40 ms** | 3.7× |
 | `canny` | 57.61 ms | **12.54 ms** | 4.6× |
+| `fast_detect` (512×512) | 2.04 ms | **499 µs** | 4.1× |
+| `orb_detect` (512×512) | 117.4 ms | **30.7 ms** | 3.9× |
 | `calc_optical_flow_pyr_lk` (512×512, 49 pts) | 27.5 ms | **-** | - |
 
 > ★ Uses non-zero sinusoidal data to exercise the `simd_deriv_3x3_row_f32` SIMD kernel. Best combined speedup in the project.
@@ -289,8 +303,9 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 
 ## 🗺 Roadmap
 
-- [ ] [**Milestone 3: Video Processing & Optical Flow**](https://github.com/webarkit/purecv/milestone/3) - Implementation of motion tracking between video frames using optical flow and related algorithms (`calcOpticalFlowPyrLK`).
-- [ ] [**Milestone 4: Camera Calibration & 3D Geometry**](https://github.com/webarkit/purecv/milestone/4) - Implementation of advanced algorithms for camera calibration and 3D geometry (`findHomography`, `estimateAffine2D`, `Rodrigues`, `solvePnP`).
+- [x] [**Milestone 3: Video Processing & Optical Flow**](https://github.com/webarkit/purecv/milestone/3) - Implementation of motion tracking between video frames using optical flow and related algorithms (`calcOpticalFlowPyrLK`). (Completed)
+- [x] [**Milestone 4: Camera Calibration & 3D Geometry**](https://github.com/webarkit/purecv/milestone/4) - Implementation of advanced algorithms for camera calibration and 3D geometry (`findHomography`, `estimateAffine2D`, `Rodrigues`, `solvePnP`). (Completed)
+- [x] [**Milestone 5: Features2D — ORB & FAST**](https://github.com/webarkit/purecv/milestone/5) - High-performance 2D feature tracking architecture with manual SIMD dispatch fast-paths, public documentation, and interactive command-line/WASM examples. (Completed & Closing)
 
 ## 📄 License
 

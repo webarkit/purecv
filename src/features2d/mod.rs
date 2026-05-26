@@ -34,10 +34,64 @@
  *
  */
 
+//! # 2D Features Framework (features2d)
+//!
+//! The `features2d` module provides high-performance, pure Rust implementations of keypoint
+//! detectors and descriptor extractors, matching OpenCV's feature tracking architecture.
+//!
+//! Features from Accelerated Segment Test (FAST) and Oriented FAST and Rotated BRIEF (ORB) are
+//! designed from the ground up for real-time applications such as SLAM, visual odometry, and object
+//! recognition.
+//!
+//! ## 🚀 Usage Examples
+//!
+//! ### 1. FAST Corner Detection
+//!
+//! ```rust
+//! # use purecv::core::Matrix;
+//! # use purecv::features2d::{FastFeatureDetector, FastType, KeyPoint};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a single-channel grayscale matrix (e.g. 480x640)
+//! let image = Matrix::<u8>::ones(480, 640, 1);
+//!
+//! // Instantiate FAST corner detector (threshold = 20, nonmax = true, Type9_16)
+//! let detector = FastFeatureDetector::new(20, true, FastType::Type9_16);
+//!
+//! // Detect corners
+//! let keypoints: Vec<KeyPoint> = detector.detect(&image)?;
+//! println!("Detected {} corners", keypoints.len());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### 2. ORB Feature Extraction (Keypoints and Descriptors)
+//!
+//! ```rust
+//! # use purecv::core::Matrix;
+//! # use purecv::features2d::{Orb, KeyPoint};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a grayscale matrix (e.g. 480x640)
+//! let image = Matrix::<u8>::ones(480, 640, 1);
+//!
+//! // Instantiate ORB extractor with default parameters
+//! let orb = Orb::default();
+//!
+//! // Compute keypoints and binary BRIEF descriptors
+//! let (keypoints, descriptors): (Vec<KeyPoint>, Matrix<u8>) = orb.detect_and_compute(&image)?;
+//!
+//! println!("Extracted {} ORB keypoints", keypoints.len());
+//! println!("Descriptors shape: {}x{}", descriptors.rows, descriptors.cols);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## 📚 Reference & Standards
+//!
+//! - **OpenCV Parity**: Matches the structures and parameter ranges of OpenCV's `cv::Feature2D`, `cv::FastFeatureDetector`, and `cv::ORB`.
+//! - **Reference Source**: [OpenCV features2d module group](https://docs.opencv.org/4.10.0/d5/d51/group__features2d__main.html)
+
 pub mod bit_pattern_31;
 pub mod fast;
-/// 2D Features Framework (FAST, ORB, and KeyPoint structures).
-/// Reference: https://docs.opencv.org/4.10.0/d5/d51/group__features2d__main.html
 pub mod keypoint;
 pub mod orb;
 
