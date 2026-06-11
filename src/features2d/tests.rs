@@ -443,3 +443,186 @@ fn test_orb_full_pipeline() {
         assert!(kp.octave >= 0 && kp.octave < 8);
     }
 }
+
+#[test]
+fn test_bfmatcher_validation() {
+    use crate::core::Matrix;
+    use crate::features2d::{BFMatcher, DescriptorMatcher, NormType};
+
+    let matcher = BFMatcher::<f32>::new(NormType::NormHamming, false).unwrap();
+    let query = Matrix::<f32>::new(1, 4, 1);
+    let train = Matrix::<f32>::new(1, 4, 1);
+
+    // Hamming is invalid for f32, should return InvalidInput error
+    let res = matcher.match_descriptors(&query, &train);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_bfmatcher_hamming_match() {
+    use crate::core::Matrix;
+    use crate::features2d::{BFMatcher, DescriptorMatcher, NormType};
+
+    let matcher = BFMatcher::<u8>::new(NormType::NormHamming, false).unwrap();
+
+    // Query: 2 descriptors of size 4
+    // [0b0000_1111, 0, 0, 0] -> hamming popcount differences
+    let query_data = vec![15, 0, 0, 0, 240, 0, 0, 0];
+    let query = Matrix::from_vec(2, 4, 1, query_data);
+
+    // Train: 3 descriptors
+    let train_data = vec![
+        0, 0, 0, 0, // Index 0: dist to Q0=4, to Q1=4
+        15, 0, 0, 0, // Index 1: dist to Q0=0, to Q1=8
+        240, 0, 0, 0, // Index 2: dist to Q0=8, to Q1=0
+    ];
+    let train = Matrix::from_vec(3, 4, 1, train_data);
+
+    let matches = matcher.match_descriptors(&query, &train).unwrap();
+    assert_eq!(matches.len(), 2);
+
+    assert_eq!(matches[0].query_idx, 0);
+    assert_eq!(matches[0].train_idx, 1);
+    assert_eq!(matches[0].distance, 0.0);
+
+    assert_eq!(matches[1].query_idx, 1);
+    assert_eq!(matches[1].train_idx, 2);
+    assert_eq!(matches[1].distance, 0.0);
+}
+
+#[test]
+fn test_bfmatcher_l2_match() {
+    use crate::core::Matrix;
+    use crate::features2d::{BFMatcher, DescriptorMatcher, NormType};
+
+    let matcher = BFMatcher::<f32>::new(NormType::NormL2, false).unwrap();
+
+    let query = Matrix::from_vec(2, 3, 1, vec![0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
+    let train = Matrix::from_vec(2, 3, 1, vec![1.0, 2.0, 2.5, 0.1, 0.1, 0.0]);
+
+    let matches = matcher.match_descriptors(&query, &train).unwrap();
+    assert_eq!(matches.len(), 2);
+
+    // Q0 closest to T1 (dist = sqrt(0.1^2 + 0.1^2) = 0.1414)
+    assert_eq!(matches[0].query_idx, 0);
+    assert_eq!(matches[0].train_idx, 1);
+
+    // Q1 closest to T0 (dist = sqrt(0^2 + 0^2 + 0.5^2) = 0.5)
+    assert_eq!(matches[1].query_idx, 1);
+    assert_eq!(matches[1].train_idx, 0);
+    assert_eq!(matches[1].distance, 0.5);
+}
+
+#[test]
+fn test_bfmatcher_knn() {
+    use crate::core::Matrix;
+    use crate::features2d::{BFMatcher, DescriptorMatcher, NormType};
+
+    let matcher = BFMatcher::<u8>::new(NormType::NormHamming, false).unwrap();
+    let query = Matrix::from_vec(1, 2, 1, vec![0, 0]);
+    let train = Matrix::from_vec(
+        3,
+        2,
+        1,
+        vec![
+            1, 0, // dist = 1
+            1, 1, // dist = 2
+            0, 0, // dist = 0
+        ],
+    );
+
+    let knn = matcher.knn_match(&query, &train, 2).unwrap();
+    assert_eq!(knn.len(), 1);
+    let matches = &knn[0];
+    assert_eq!(matches.len(), 2);
+
+    // Nearest should be T2
+    assert_eq!(matches[0].train_idx, 2);
+    assert_eq!(matches[0].distance, 0.0);
+
+    // Second nearest should be T0
+    assert_eq!(matches[1].train_idx, 0);
+    assert_eq!(matches[1].distance, 1.0);
+}
+
+#[test]
+fn test_bfmatcher_cross_check() {
+    use crate::core::Matrix;
+    use crate::features2d::{BFMatcher, DescriptorMatcher, NormType};
+
+    let matcher = BFMatcher::<u8>::new(NormType::NormHamming, true).unwrap();
+    let query = Matrix::from_vec(2, 2, 1, vec![0, 0, 1, 1]);
+    let train = Matrix::from_vec(
+        2,
+        2,
+        1,
+        vec![
+            0, 0, // matches Q0
+            0, 0, // also matches Q0
+        ],
+    );
+
+    let matches = matcher.match_descriptors(&query, &train).unwrap();
+    // Q0 matches T0. T0 matches Q0. (Mutual!)
+    // Q1 matches T0. T0 matches Q0. (Not Mutual!)
+    // Only 1 match should survive
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].query_idx, 0);
+    assert_eq!(matches[0].train_idx, 0);
+}
+
+#[test]
+fn test_filter_matches() {
+    use crate::features2d::{filter_matches, DMatch};
+
+    let knn = vec![
+        vec![DMatch::new(0, 0, 0, 1.0), DMatch::new(0, 1, 0, 2.5)], // ratio 0.4 < 0.6 => should pass
+        vec![DMatch::new(1, 0, 0, 2.0), DMatch::new(1, 1, 0, 2.2)], // ratio ~0.9 => should fail
+    ];
+
+    let filtered = filter_matches(&knn, 0.6);
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].query_idx, 0);
+}
+
+#[test]
+fn test_drawing_primitives() {
+    use crate::core::types::Point2f;
+    use crate::core::types::Scalar;
+    use crate::core::Matrix;
+    use crate::features2d::{draw_keypoints, draw_matches, DMatch, KeyPoint};
+
+    let img = Matrix::<u8>::zeros(10, 10, 1);
+    let kps = vec![KeyPoint::new(Point2f::new(5.0, 5.0), 4.0, 90.0, 1.0, 0, -1)];
+
+    let drawn_kps = draw_keypoints(&img, &kps, Scalar::all(255)).unwrap();
+    assert_eq!(drawn_kps.rows, 10);
+    assert_eq!(drawn_kps.cols, 10);
+    assert_eq!(drawn_kps.channels, 1);
+
+    // Verify some pixels were set to 255
+    let mut num_white_pixels = 0;
+    for &val in drawn_kps.as_slice() {
+        if val == 255 {
+            num_white_pixels += 1;
+        }
+    }
+    assert!(num_white_pixels > 0);
+
+    let img2 = Matrix::<u8>::zeros(10, 10, 1);
+    let kps2 = vec![KeyPoint::new(Point2f::new(3.0, 3.0), 4.0, -1.0, 1.0, 0, -1)];
+    let matches = vec![DMatch::new(0, 0, 0, 0.0)];
+
+    let drawn_matches = draw_matches(
+        &img,
+        &kps,
+        &img2,
+        &kps2,
+        &matches,
+        Some(Scalar::all(255)),
+        Some(Scalar::all(128)),
+    )
+    .unwrap();
+    assert_eq!(drawn_matches.rows, 10);
+    assert_eq!(drawn_matches.cols, 20); // 10 + 10
+}

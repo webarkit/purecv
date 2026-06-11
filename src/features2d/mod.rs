@@ -91,13 +91,17 @@
 //! - **Reference Source**: [OpenCV features2d module group](https://docs.opencv.org/4.10.0/d5/d51/group__features2d__main.html)
 
 pub mod bit_pattern_31;
+pub mod draw;
 pub mod fast;
 pub mod keypoint;
+pub mod matcher;
 pub mod orb;
 
 pub use bit_pattern_31::BIT_PATTERN_31;
+pub use draw::{draw_keypoints, draw_matches};
 pub use fast::{FastFeatureDetector, FastType};
 pub use keypoint::KeyPoint;
+pub use matcher::{filter_matches, BFMatcher, DMatch, DescriptorMatcher, NormType};
 pub use orb::{
     build_orb_pyramid, compute_orb_descriptor, compute_orientation, precompute_umax, Orb, ScoreType,
 };
