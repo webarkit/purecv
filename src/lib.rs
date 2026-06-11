@@ -54,6 +54,10 @@ pub mod prelude {
         Vec3s, Vec4b, Vec4d, Vec4f, Vec4i, Vec4s, Vec6d, Vec6f, VecN,
     };
     pub use crate::core::Matrix;
+    pub use crate::features2d::{
+        draw_keypoints, draw_matches, filter_matches, BFMatcher, DMatch, DescriptorMatcher,
+        FastFeatureDetector, FastType, KeyPoint, NormType, Orb,
+    };
     pub use crate::imgproc::derivatives::{laplacian, scharr, sobel};
     pub use crate::imgproc::edge::canny;
     pub use crate::imgproc::feature::{
