@@ -38,7 +38,13 @@
 //!
 //! Loads `graf.png` (which contains two stitched images), splits it down the middle,
 //! extracts keypoints and descriptors using ORB, matches them using BFMatcher (Hamming),
-//! filters them with Lowe's ratio test, draws the matches, and saves the output.
+//! filters them with mutual cross-check, draws the matches, and saves the output.
+//!
+//! Note: This example differs from the OpenCV AKAZE matching and tracking tutorials
+//! (https://docs.opencv.org/4.13.0/db/d70/tutorial_akaze_matching.html and
+//! https://docs.opencv.org/4.13.0/dc/d16/tutorial_akaze_tracking.html) because `purecv`
+//! implements ORB and FAST rather than AKAZE, and matches are filtered using mutual
+//! consistency (`cross_check = true`) rather than homography estimation.
 //!
 //! Run from the project root:
 //! ```bash
