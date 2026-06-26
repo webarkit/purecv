@@ -85,6 +85,26 @@
 //! # }
 //! ```
 //!
+//! ### 3. Feature Matching (Brute-Force)
+//!
+//! ```rust
+//! # use purecv::core::Matrix;
+//! # use purecv::features2d::{Orb, BFMatcher, DescriptorMatcher, NormType, DMatch};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Assume descriptors1 and descriptors2 are computed from Orb
+//! let descriptors1 = Matrix::<u8>::zeros(100, 32, 1);
+//! let descriptors2 = Matrix::<u8>::zeros(100, 32, 1);
+//!
+//! // Create a Brute-Force Matcher using Hamming distance (for binary descriptors like ORB)
+//! let matcher = BFMatcher::new(NormType::NormHamming, true)?;
+//!
+//! // Match descriptors
+//! let matches: Vec<DMatch> = matcher.match_descriptors(&descriptors1, &descriptors2)?;
+//! println!("Found {} matches", matches.len());
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## 📚 Reference & Standards
 //!
 //! - **OpenCV Parity**: Matches the structures and parameter ranges of OpenCV's `cv::Feature2D`, `cv::FastFeatureDetector`, and `cv::ORB`.

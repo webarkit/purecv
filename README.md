@@ -60,6 +60,8 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 ### `purecv-features2d`
 - **FAST Feature Detector:** Real-time corner detector (`FastFeatureDetector`) supporting Type 5_8, 7_12, and 9_16 neighborhood configurations, plus optional non-maximum suppression.
 - **ORB Feature Detector:** Oriented FAST and Rotated BRIEF descriptor extractor (`Orb`) supporting scale pyramids, Harris/FAST scoring, orientation tracking, and 256-bit binary descriptors. Optimized with SIMD fast-paths.
+- **Feature Matching:** `BFMatcher` (Brute-Force Matcher) supporting `NORM_L1`, `NORM_L2`, and `NORM_HAMMING` distances, with cross-check validation and k-nearest neighbors (`knn_match`).
+- **Drawing Utilities:** `draw_keypoints` and `draw_matches` to easily visualize detected features and feature correspondences.
 
 ### `purecv-video`
 - **Optical Flow:** Pyramidal Lucas-Kanade optical flow implementation with `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid`. Includes robust window-based tracking, sub-pixel accuracy, spatial gradient optimization, and iterative refinement.
@@ -236,6 +238,9 @@ cargo run --example fast_features
 # ORB keypoint detection and Rotated BRIEF descriptor extraction
 cargo run --example orb_features
 
+# Feature matching (Brute-Force matching with ORB descriptors)
+cargo run --example match_features
+
 # Discrete Fourier Transform (DFT)
 cargo run --example dft_example
 
@@ -303,9 +308,7 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 
 ## 🗺 Roadmap
 
-- [x] [**Milestone 3: Video Processing & Optical Flow**](https://github.com/webarkit/purecv/milestone/3) - Implementation of motion tracking between video frames using optical flow and related algorithms (`calcOpticalFlowPyrLK`). (Completed)
-- [x] [**Milestone 4: Camera Calibration & 3D Geometry**](https://github.com/webarkit/purecv/milestone/4) - Implementation of advanced algorithms for camera calibration and 3D geometry (`findHomography`, `estimateAffine2D`, `Rodrigues`, `solvePnP`). (Completed)
-- [x] [**Milestone 5: Features2D — ORB & FAST**](https://github.com/webarkit/purecv/milestone/5) - High-performance 2D feature tracking architecture with manual SIMD dispatch fast-paths, public documentation, and interactive command-line/WASM examples. (Completed & Closing)
+- [ ] [**Milestone 7: Geometric Rectification & Calibration**](https://github.com/webarkit/purecv/milestone/7) - Expand purecv to support camera intrinsic correction and geometric transformation, essential for robust 3D pose estimation and AR surface tracking.
 
 ## 📄 License
 
