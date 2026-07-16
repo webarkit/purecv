@@ -76,16 +76,9 @@ impl Range {
     }
 }
 
-/// Sets the global log level.
-/// This is a wrapper around the `log` crate's level filter.
-pub fn set_log_level(level: log::LevelFilter) {
-    log::set_max_level(level);
-}
-
-/// Returns the current global log level.
-pub fn get_log_level() -> log::LevelFilter {
-    log::max_level()
-}
+// Log level functions have moved to `core::logging`.
+// Re-exported here for backwards-compatible import paths.
+pub use crate::core::logging::{get_log_level, set_log_level};
 
 /// Border interpolation helper.
 /// Returns the index of a pixel that would be at the given position `p`

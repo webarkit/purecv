@@ -1578,4 +1578,132 @@ mod core_tests {
         assert_eq!(src.get(0, 0, 0), Some(&10)); // src unchanged
         assert_eq!(dst.get(0, 0, 0), Some(&999));
     }
+
+    // ── Logging tests ──────────────────────────────────────────────────
+
+    use crate::core::logging::{self, tags, LogLevel};
+    use crate::{
+        cv_log_debug, cv_log_error, cv_log_fatal, cv_log_if_debug, cv_log_if_error, cv_log_if_info,
+        cv_log_if_warning, cv_log_info, cv_log_once_debug, cv_log_once_error, cv_log_once_info,
+        cv_log_once_warning, cv_log_verbose, cv_log_warning,
+    };
+
+    #[test]
+    fn test_log_level_ordering() {
+        assert!(LogLevel::Silent < LogLevel::Fatal);
+        assert!(LogLevel::Fatal < LogLevel::Error);
+        assert!(LogLevel::Error < LogLevel::Warning);
+        assert!(LogLevel::Warning < LogLevel::Info);
+        assert!(LogLevel::Info < LogLevel::Debug);
+        assert!(LogLevel::Debug < LogLevel::Verbose);
+    }
+
+    #[test]
+    fn test_log_level_to_level_filter_conversion() {
+        use log::LevelFilter;
+
+        assert_eq!(LevelFilter::from(LogLevel::Silent), LevelFilter::Off);
+        assert_eq!(LevelFilter::from(LogLevel::Fatal), LevelFilter::Error);
+        assert_eq!(LevelFilter::from(LogLevel::Error), LevelFilter::Error);
+        assert_eq!(LevelFilter::from(LogLevel::Warning), LevelFilter::Warn);
+        assert_eq!(LevelFilter::from(LogLevel::Info), LevelFilter::Info);
+        assert_eq!(LevelFilter::from(LogLevel::Debug), LevelFilter::Debug);
+        assert_eq!(LevelFilter::from(LogLevel::Verbose), LevelFilter::Trace);
+    }
+
+    #[test]
+    fn test_level_filter_to_log_level_conversion() {
+        use log::LevelFilter;
+
+        assert_eq!(LogLevel::from(LevelFilter::Off), LogLevel::Silent);
+        assert_eq!(LogLevel::from(LevelFilter::Error), LogLevel::Error);
+        assert_eq!(LogLevel::from(LevelFilter::Warn), LogLevel::Warning);
+        assert_eq!(LogLevel::from(LevelFilter::Info), LogLevel::Info);
+        assert_eq!(LogLevel::from(LevelFilter::Debug), LogLevel::Debug);
+        assert_eq!(LogLevel::from(LevelFilter::Trace), LogLevel::Verbose);
+    }
+
+    #[test]
+    fn test_log_level_display() {
+        assert_eq!(LogLevel::Silent.to_string(), "SILENT");
+        assert_eq!(LogLevel::Fatal.to_string(), "FATAL");
+        assert_eq!(LogLevel::Error.to_string(), "ERROR");
+        assert_eq!(LogLevel::Warning.to_string(), "WARNING");
+        assert_eq!(LogLevel::Info.to_string(), "INFO");
+        assert_eq!(LogLevel::Debug.to_string(), "DEBUG");
+        assert_eq!(LogLevel::Verbose.to_string(), "VERBOSE");
+    }
+
+    #[test]
+    fn test_set_log_level_returns_previous() {
+        // Save the current level to restore later
+        let original = logging::get_log_level();
+
+        let prev = logging::set_log_level(LogLevel::Debug);
+        assert_eq!(prev, original);
+
+        let prev2 = logging::set_log_level(LogLevel::Warning);
+        assert_eq!(prev2, LogLevel::Debug);
+
+        // Restore
+        logging::set_log_level(original);
+    }
+
+    #[test]
+    fn test_log_level_round_trip() {
+        let original = logging::get_log_level();
+
+        logging::set_log_level(LogLevel::Info);
+        assert_eq!(logging::get_log_level(), LogLevel::Info);
+
+        logging::set_log_level(LogLevel::Verbose);
+        assert_eq!(logging::get_log_level(), LogLevel::Verbose);
+
+        logging::set_log_level(LogLevel::Silent);
+        assert_eq!(logging::get_log_level(), LogLevel::Silent);
+
+        // Restore
+        logging::set_log_level(original);
+    }
+
+    #[test]
+    fn test_cv_log_macros_compile() {
+        // Smoke test: verify all macros expand and execute without panic.
+        // No log backend is installed, so messages are silently dropped.
+        cv_log_fatal!(tags::CORE, "fatal test {}", 1);
+        cv_log_error!(tags::CORE, "error test {}", 2);
+        cv_log_warning!(tags::IMGPROC, "warning test {}", 3);
+        cv_log_info!(tags::PURECV, "info test {}", 4);
+        cv_log_debug!(tags::FEATURES2D, "debug test {}", 5);
+        cv_log_verbose!(tags::VIDEO, 0, "verbose test {}", 6);
+    }
+
+    #[test]
+    fn test_cv_log_once_macros_compile() {
+        // Once macros should compile and not panic
+        cv_log_once_error!(tags::CORE, "once error");
+        cv_log_once_warning!(tags::IMGPROC, "once warning {}", 42);
+        cv_log_once_info!(tags::PURECV, "once info");
+        cv_log_once_debug!(tags::CALIB3D, "once debug");
+    }
+
+    #[test]
+    fn test_cv_log_if_macros_compile() {
+        // Conditional macros with both true and false conditions
+        cv_log_if_error!(tags::CORE, true, "if error true");
+        cv_log_if_error!(tags::CORE, false, "if error false");
+        cv_log_if_warning!(tags::IMGPROC, 2 > 1, "if warning {}", "yes");
+        cv_log_if_info!(tags::PURECV, false, "should not log");
+        cv_log_if_debug!(tags::VIDEO, true, "if debug {}", 99);
+    }
+
+    #[test]
+    fn test_tags_constants() {
+        assert_eq!(tags::PURECV, "purecv");
+        assert_eq!(tags::CORE, "purecv::core");
+        assert_eq!(tags::IMGPROC, "purecv::imgproc");
+        assert_eq!(tags::FEATURES2D, "purecv::features2d");
+        assert_eq!(tags::CALIB3D, "purecv::calib3d");
+        assert_eq!(tags::VIDEO, "purecv::video");
+    }
 }

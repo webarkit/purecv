@@ -60,7 +60,7 @@ pub fn get_version() -> &'static str {
 /// Call this early in your application (e.g. during initialization) so the
 /// version appears in the console / log output.
 pub fn print_version() {
-    log::info!("purecv v{}", VERSION);
+    crate::cv_log_info!(crate::core::logging::tags::PURECV, "purecv v{}", VERSION);
 }
 
 #[cfg(test)]

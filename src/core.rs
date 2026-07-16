@@ -42,6 +42,7 @@ pub mod dct;
 pub mod dft;
 pub mod dynamic;
 pub mod error;
+pub mod logging;
 pub mod matrix;
 pub mod metrics;
 pub mod rng;
@@ -79,6 +80,7 @@ pub use self::dft::{
 };
 pub use self::dynamic::{DynamicData, DynamicMatrix};
 pub use self::error::{PureCvError, Result};
+pub use self::logging::{get_log_level, set_log_level, LogLevel};
 pub use self::matrix::{
     DataType, Depth, MatType, Matrix, CV_16S, CV_16SC1, CV_16SC2, CV_16SC3, CV_16SC4, CV_16U,
     CV_16UC1, CV_16UC2, CV_16UC3, CV_16UC4, CV_32F, CV_32FC1, CV_32FC2, CV_32FC3, CV_32FC4, CV_32S,

@@ -49,6 +49,7 @@ pub mod prelude {
         find_fundamental_mat, find_homography, init_undistort_rectify_map, rodrigues, solve_pnp,
         solve_pnp_ransac, FundamentalMatMethod, HomographyMethod, SolvePnPMethod,
     };
+    pub use crate::core::logging::{tags, LogLevel};
     pub use crate::core::types::{
         BorderTypes, Point2f, Point2i, Point3f, Rect2f, Rect2i, Scalar, Size2f, Size2i,
         TermCriteria, TermType, Vec2b, Vec2d, Vec2f, Vec2i, Vec2s, Vec3b, Vec3d, Vec3f, Vec3i,
