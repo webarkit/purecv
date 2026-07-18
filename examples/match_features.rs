@@ -52,21 +52,26 @@
 //! ```
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
+use purecv::core::logging::tags;
 use purecv::core::Matrix;
 use purecv::features2d::{draw_matches, BFMatcher, DescriptorMatcher, NormType, Orb, ScoreType};
 use purecv::imgproc::cvt_color_rgb_to_gray;
 use purecv::version;
+use purecv::{cv_log_debug, cv_log_error, cv_log_info};
 use std::path::Path;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- purecv Feature Matching Example ---");
-    println!("purecv version: v{}", version::get_version());
+    purecv::core::logging::init_basic_logger()?;
+
+    cv_log_info!(tags::PURECV, "--- Feature Matching Example ---");
+    version::print_version();
 
     let img_path = "examples/data/graf.png";
     if !Path::new(img_path).exists() {
-        eprintln!(
-            "Error: {} not found. Make sure you are in the project root.",
+        cv_log_error!(
+            tags::FEATURES2D,
+            "{} not found. Make sure you are in the project root.",
             img_path
         );
         return Ok(());
@@ -79,8 +84,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let load_start = Instant::now();
     let img = image::open(img_path)?;
     let (width, height) = img.dimensions();
-    println!(
-        "Loaded stitched image: {} ({}x{}) in {:.2?}",
+    cv_log_info!(
+        tags::FEATURES2D,
+        "loaded stitched image: {} ({}x{}) in {:.2?}",
         img_path,
         width,
         height,
@@ -88,9 +94,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let half_width = width / 2;
-    println!(
-        "Splitting image into left half ({}x{}) and right half ({}x{})",
-        half_width, height, half_width, height
+    cv_log_debug!(
+        tags::FEATURES2D,
+        "splitting into left ({}x{}) and right ({}x{})",
+        half_width,
+        height,
+        half_width,
+        height
     );
 
     // 2. Convert to RGB Matrix
@@ -123,42 +133,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    println!("Cropped images in {:.2?}", crop_start.elapsed());
+    cv_log_debug!(
+        tags::FEATURES2D,
+        "cropped images in {:.2?}",
+        crop_start.elapsed()
+    );
 
     // 5. Detect and Compute ORB Features on both halves (extract 1000 features for higher density)
     let orb = Orb::new(1000, 1.2, 8, 31, 0, 2, ScoreType::Harris, 31, 20);
-    println!("Extracting ORB features on left half...");
+    cv_log_info!(tags::FEATURES2D, "extracting ORB features on left half...");
     let start_left = Instant::now();
     let (kps1, desc1) = orb.detect_and_compute(&left_gray)?;
-    println!(
-        "  Left: extracted {} keypoints in {:.2?}",
+    cv_log_info!(
+        tags::FEATURES2D,
+        "  left: {} keypoints in {:.2?}",
         kps1.len(),
         start_left.elapsed()
     );
 
-    println!("Extracting ORB features on right half...");
+    cv_log_info!(tags::FEATURES2D, "extracting ORB features on right half...");
     let start_right = Instant::now();
     let (kps2, desc2) = orb.detect_and_compute(&right_gray)?;
-    println!(
-        "  Right: extracted {} keypoints in {:.2?}",
+    cv_log_info!(
+        tags::FEATURES2D,
+        "  right: {} keypoints in {:.2?}",
         kps2.len(),
         start_right.elapsed()
     );
 
     // 6. Match features using BFMatcher (Hamming distance with cross-check enabled)
-    println!("Matching features using BFMatcher (NormHamming + Cross Check)...");
+    cv_log_info!(
+        tags::FEATURES2D,
+        "matching features using BFMatcher (NormHamming + Cross Check)..."
+    );
     let match_start = Instant::now();
     let matcher = BFMatcher::new(NormType::NormHamming, true)?;
 
     let mutual_matches = matcher.match_descriptors(&desc1, &desc2)?;
-    println!(
-        "  Matched in {:.2?}. Total mutual matches: {}",
+    cv_log_info!(
+        tags::FEATURES2D,
+        "  matched in {:.2?}, {} mutual matches",
         match_start.elapsed(),
         mutual_matches.len()
     );
 
     // 7. Draw matches with random line colors and no unmatched keypoint clutter
-    println!("Drawing matches...");
+    cv_log_info!(tags::FEATURES2D, "drawing matches...");
     let draw_start = Instant::now();
 
     let matched_img = draw_matches(
@@ -170,8 +190,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None, // Random colors for matches
         None, // Do not draw unmatched keypoints
     )?;
-    println!(
-        "  Drawn matching visualization in {:.2?}",
+    cv_log_debug!(
+        tags::FEATURES2D,
+        "drawn matching visualization in {:.2?}",
         draw_start.elapsed()
     );
 
@@ -185,12 +206,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .ok_or("Failed to construct image buffer from matched matrix data")?;
     DynamicImage::ImageRgb8(img_out).save(out_path)?;
-    println!(
-        "  Saved match visualization to: {} in {:.2?}",
+    cv_log_info!(
+        tags::FEATURES2D,
+        "saved match visualization to: {} in {:.2?}",
         out_path,
         save_start.elapsed()
     );
 
-    println!("\nDone! Run 'cargo run --example match_features' to run again.");
+    cv_log_info!(tags::PURECV, "done!");
     Ok(())
 }

@@ -68,11 +68,13 @@
 //! ```
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
+use purecv::core::logging::tags;
 use purecv::core::types::{Point2f, Size2i, TermCriteria, TermType};
 use purecv::core::Matrix;
 use purecv::imgproc::{cvt_color_rgb_to_gray, good_features_to_track};
 use purecv::version;
 use purecv::video::{calc_optical_flow_pyramid_lk, OPTFLOW_LK_GET_MIN_EIGENVALS};
+use purecv::{cv_log_debug, cv_log_error, cv_log_info, cv_log_warning};
 use std::io::Write;
 use std::path::Path;
 
@@ -81,9 +83,14 @@ const SHIFT_X: usize = 4;
 const SHIFT_Y: usize = 3;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- purecv Optical Flow Example (static image) ---");
-    println!("purecv v{}", version::get_version());
-    println!("Simulating motion: +{SHIFT_X} px in x, +{SHIFT_Y} px in y\n");
+    purecv::core::logging::init_basic_logger()?;
+
+    cv_log_info!(tags::PURECV, "--- Optical Flow Example (static image) ---");
+    version::print_version();
+    cv_log_info!(
+        tags::VIDEO,
+        "simulating motion: +{SHIFT_X} px in x, +{SHIFT_Y} px in y"
+    );
 
     // Accept an optional image path from the command line.
     let default_path = "examples/data/butterfly.jpg";
@@ -92,8 +99,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| default_path.to_string());
 
     if !Path::new(&img_path).exists() {
-        eprintln!(
-            "Error: '{}' not found. Run from the project root.",
+        cv_log_error!(
+            tags::VIDEO,
+            "'{}' not found. Run from the project root.",
             img_path
         );
         return Ok(());
@@ -106,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -----------------------------------------------------------------------
     let img = image::open(&img_path)?;
     let (width, height) = img.dimensions();
-    println!("Loaded: {} ({}×{})", img_path, width, height);
+    cv_log_info!(tags::VIDEO, "loaded: {} ({}x{})", img_path, width, height);
 
     let rgb_img = img.to_rgb8();
     let mat_rgb = Matrix::from_vec(
@@ -116,9 +124,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rgb_img.clone().into_raw(),
     );
     let prev_gray = cvt_color_rgb_to_gray(&mat_rgb)?;
-    println!(
-        "Grayscale: {}×{}, {} channel(s)\n",
-        prev_gray.rows, prev_gray.cols, prev_gray.channels
+    cv_log_debug!(
+        tags::VIDEO,
+        "grayscale: {}x{}, {} channel(s)",
+        prev_gray.rows,
+        prev_gray.cols,
+        prev_gray.channels
     );
 
     // -----------------------------------------------------------------------
@@ -141,12 +152,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let next_gray = Matrix::<u8>::from_vec(rows, cols, 1, next_data);
-    println!("Synthesised next frame: translated by (+{SHIFT_X}, +{SHIFT_Y}) pixels\n");
+    cv_log_debug!(
+        tags::VIDEO,
+        "synthesised next frame: translated by (+{SHIFT_X}, +{SHIFT_Y}) pixels"
+    );
 
     // -----------------------------------------------------------------------
     // 3. Detect good features to track in the previous (original) frame.
     // -----------------------------------------------------------------------
-    println!("=== Step 1: Detect features (goodFeaturesToTrack) ===");
+    cv_log_info!(
+        tags::VIDEO,
+        "=== Step 1: Detect features (goodFeaturesToTrack) ==="
+    );
     let corners = good_features_to_track(&prev_gray, 100, 0.01, 10.0, 3, false, 0.04)?;
     println!("Detected {} corner(s)", corners.len());
     for (i, pt) in corners.iter().take(5).enumerate() {
@@ -157,14 +174,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if corners.is_empty() {
-        eprintln!("\nNo features detected — try a different image.");
+        cv_log_warning!(tags::VIDEO, "no features detected — try a different image.");
         return Ok(());
     }
 
     // -----------------------------------------------------------------------
     // 4. Track features from prev to next using pyramidal LK.
     // -----------------------------------------------------------------------
-    println!("\n=== Step 2: Track features (calcOpticalFlowPyrLK) ===");
+    cv_log_info!(
+        tags::VIDEO,
+        "=== Step 2: Track features (calcOpticalFlowPyrLK) ==="
+    );
     let criteria = TermCriteria::new(TermType::Both, 30, 0.001);
     let (next_pts, status, err) = calc_optical_flow_pyramid_lk(
         &prev_gray,
@@ -271,10 +291,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let csv_path = "examples/data/out/optical_flow_vectors.csv";
     save_flow_csv(&corners, &next_pts, &status, &err, csv_path)?;
 
-    println!("\nOutput saved to:");
-    println!("  {result_path}   (annotated image: green = tracked, red = lost)");
-    println!("  {csv_path}");
-    println!("\nDone.");
+    cv_log_info!(tags::VIDEO, "output saved to:");
+    cv_log_info!(
+        tags::VIDEO,
+        "  {result_path}   (annotated image: green = tracked, red = lost)"
+    );
+    cv_log_info!(tags::VIDEO, "  {csv_path}");
+    cv_log_info!(tags::PURECV, "done.");
     Ok(())
 }
 

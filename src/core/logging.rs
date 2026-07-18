@@ -186,6 +186,44 @@ pub fn get_log_level() -> LogLevel {
     LogLevel::from(log::max_level())
 }
 
+struct SimpleLogger;
+
+impl log::Log for SimpleLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            println!(
+                "[{}] {} - {}",
+                record.level(),
+                record.target(),
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: SimpleLogger = SimpleLogger;
+
+/// Initializes a simple stdout logger for purecv log messages.
+///
+/// Returns an error if a logger has already been set.
+///
+/// This is helpful for CLI tools or examples to quickly view logs without
+/// pulling in external dependencies like `env_logger`.
+pub fn init_basic_logger() -> Result<(), crate::core::PureCvError> {
+    log::set_logger(&LOGGER)
+        .map_err(|e| crate::core::PureCvError::InvalidInput(format!("Logger already set: {}", e)))?;
+    if log::max_level() == log::LevelFilter::Off {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+    Ok(())
+}
+
 // ── Subsystem tags ─────────────────────────────────────────────────
 
 /// Per-subsystem tag constants for use with `cv_log_*!` macros.

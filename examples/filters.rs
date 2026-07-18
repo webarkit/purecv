@@ -35,28 +35,42 @@
  */
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgb};
+use purecv::core::logging::tags;
 use purecv::core::{normalize, BorderTypes, Matrix, NormTypes, Size};
 use purecv::imgproc::{
     bilateral_filter, blur, canny, cvt_color_rgb_to_gray, gaussian_blur, laplacian, median_blur,
     scharr, sobel,
 };
 use purecv::version;
+use purecv::{cv_log_error, cv_log_info};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- purecv Filters Example ---");
-    println!("purecv v{}", version::get_version());
+    purecv::core::logging::init_basic_logger()?;
+
+    cv_log_info!(tags::PURECV, "--- Filters Example ---");
+    version::print_version();
 
     // 1. Load the image
     let img_path = "examples/data/butterfly.jpg";
     if !Path::new(img_path).exists() {
-        eprintln!("Error: {} not found. Run from the project root.", img_path);
+        cv_log_error!(
+            tags::IMGPROC,
+            "{} not found. Run from the project root.",
+            img_path
+        );
         return Ok(());
     }
 
     let img = image::open(img_path)?;
     let (width, height) = img.dimensions();
-    println!("Loaded image: {} ({}x{})", img_path, width, height);
+    cv_log_info!(
+        tags::IMGPROC,
+        "loaded image: {} ({}x{})",
+        img_path,
+        width,
+        height
+    );
 
     // 2. Convert to purecv Matrix<u8> (RGB)
     let rgb_img = img.to_rgb8();
@@ -68,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Apply Filters ---
 
     // Blur (Box Filter)
-    println!("Applying Blur...");
+    cv_log_info!(tags::IMGPROC, "applying blur...");
     let blurred = blur(
         &mat_rgb,
         Size::new(5, 5),
@@ -78,22 +92,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     save_matrix_rgb(&blurred, "examples/data/out/output_blur.png")?;
 
     // Gaussian Blur
-    println!("Applying Gaussian Blur...");
+    cv_log_info!(tags::IMGPROC, "applying gaussian blur...");
     let g_blurred = gaussian_blur(&mat_rgb, Size::new(5, 5), 1.5, 1.5, BorderTypes::Reflect101)?;
     save_matrix_rgb(&g_blurred, "examples/data/out/output_gaussian_blur.png")?;
 
     // Median Blur
-    println!("Applying Median Blur...");
+    cv_log_info!(tags::IMGPROC, "applying median blur...");
     let m_blurred = median_blur(&mat_rgb, 5)?;
     save_matrix_rgb(&m_blurred, "examples/data/out/output_median_blur.png")?;
 
     // Bilateral Filter
-    println!("Applying Bilateral Filter...");
+    cv_log_info!(tags::IMGPROC, "applying bilateral filter...");
     let b_filtered = bilateral_filter(&mat_rgb, 9, 75.0, 75.0, BorderTypes::Reflect101)?;
     save_matrix_rgb(&b_filtered, "examples/data/out/output_bilateral.png")?;
 
     // Sobel (on grayscale)
-    println!("Applying Sobel...");
+    cv_log_info!(tags::IMGPROC, "applying sobel...");
     let sob_x = sobel(&mat_gray, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
     // Normalize for visualization
     let mut sob_x_norm = Matrix::<u8>::new(sob_x.rows, sob_x.cols, sob_x.channels);
@@ -109,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     save_matrix_gray(&sob_x_norm, "examples/data/out/output_sobel_x.png")?;
 
     // Scharr (on grayscale)
-    println!("Applying Scharr...");
+    cv_log_info!(tags::IMGPROC, "applying scharr...");
     let sch_y = scharr(&mat_gray, 0, 1, 1.0, 0.0, BorderTypes::Reflect101)?;
     let mut sch_y_norm = Matrix::<u8>::new(sch_y.rows, sch_y.cols, sch_y.channels);
     normalize(
@@ -124,18 +138,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     save_matrix_gray(&sch_y_norm, "examples/data/out/output_scharr_y.png")?;
 
     // Laplacian (on grayscale)
-    println!("Applying Laplacian...");
+    cv_log_info!(tags::IMGPROC, "applying laplacian...");
     let lap = laplacian(&mat_gray, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
     let mut lap_norm = Matrix::<u8>::new(lap.rows, lap.cols, lap.channels);
     normalize(&lap, &mut lap_norm, 0.0, 255.0, NormTypes::MinMax, -1, None)?;
     save_matrix_gray(&lap_norm, "examples/data/out/output_laplacian.png")?;
 
     // Canny (on grayscale)
-    println!("Applying Canny...");
+    cv_log_info!(tags::IMGPROC, "applying canny...");
     let edges = canny(&mat_gray, 50.0, 150.0, 3, false)?;
     save_matrix_gray(&edges, "examples/data/out/output_canny.png")?;
 
-    println!("\nAll filters applied successfully! Check the output_*.png files.");
+    cv_log_info!(
+        tags::IMGPROC,
+        "all filters applied successfully! Check the output_*.png files."
+    );
     Ok(())
 }
 
