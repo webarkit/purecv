@@ -41,8 +41,10 @@
 //! (rotation and translation vectors) in the camera coordinate system.
 
 use crate::core::error::{PureCvError, Result};
+use crate::core::logging::tags;
 use crate::core::types::{Point2f, Point3f};
 use crate::core::Matrix;
+use crate::cv_log_warning;
 
 use super::geometry::rvec_to_rmat;
 use super::linalg::{mat3_inv, mat3_mul, nearest_rotation, null_space_vector, Lcg};
@@ -312,6 +314,11 @@ pub fn solve_pnp_ransac(
     }
 
     if !found || best_count < 6 {
+        cv_log_warning!(
+            tags::CALIB3D,
+            "solve_pnp_ransac: pose estimation failed because RANSAC consensus inliers ({}) were below the required minimum of 6 points",
+            best_count
+        );
         return Ok(false);
     }
 

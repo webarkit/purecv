@@ -36,8 +36,10 @@
 
 use crate::core::constants::CV_2PI;
 use crate::core::error::{PureCvError, Result};
+use crate::core::logging::tags;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
+use crate::cv_log_warning;
 use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
 use std::ops::{BitAnd, BitOr, BitXor, Not, Sub};
 
@@ -2252,6 +2254,11 @@ where
         }
 
         if max_abs < 1e-12 {
+            cv_log_warning!(
+                tags::CORE,
+                "solve: linear system solver failed because the matrix is singular or near-singular (pivot max_abs = {:.6e})",
+                max_abs
+            );
             return Ok(false); // Singular matrix
         }
 
