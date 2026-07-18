@@ -216,8 +216,9 @@ static LOGGER: SimpleLogger = SimpleLogger;
 /// This is helpful for CLI tools or examples to quickly view logs without
 /// pulling in external dependencies like `env_logger`.
 pub fn init_basic_logger() -> Result<(), crate::core::PureCvError> {
-    log::set_logger(&LOGGER)
-        .map_err(|e| crate::core::PureCvError::InvalidInput(format!("Logger already set: {}", e)))?;
+    log::set_logger(&LOGGER).map_err(|e| {
+        crate::core::PureCvError::InvalidInput(format!("Logger already set: {}", e))
+    })?;
     if log::max_level() == log::LevelFilter::Off {
         log::set_max_level(log::LevelFilter::Info);
     }
