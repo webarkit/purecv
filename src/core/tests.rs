@@ -1698,6 +1698,59 @@ mod core_tests {
     }
 
     #[test]
+    fn test_cv_bail_logs_and_returns_error() {
+        use crate::core::error::{PureCvError, Result};
+
+        fn check(a: usize, b: usize) -> Result<()> {
+            if a != b {
+                crate::cv_bail!(tags::CORE, InvalidDimensions, "mismatch: {} != {}", a, b);
+            }
+            Ok(())
+        }
+
+        // Failing path returns the expected variant with the formatted message.
+        match check(1, 2) {
+            Err(PureCvError::InvalidDimensions(msg)) => assert_eq!(msg, "mismatch: 1 != 2"),
+            other => panic!("expected InvalidDimensions, got {other:?}"),
+        }
+        // Passing path returns Ok.
+        assert!(check(3, 3).is_ok());
+    }
+
+    #[test]
+    fn test_cv_err_yields_error_value() {
+        use crate::core::error::PureCvError;
+
+        fn make(kind: u8) -> PureCvError {
+            match kind {
+                0 => crate::cv_err!(tags::CORE, InvalidInput, "bad input {}", kind),
+                _ => crate::cv_err!(tags::CORE, NotImplemented, "todo"),
+            }
+        }
+
+        assert_eq!(
+            make(0),
+            PureCvError::InvalidInput("bad input 0".to_string())
+        );
+        assert_eq!(make(9), PureCvError::NotImplemented("todo".to_string()));
+    }
+
+    #[test]
+    fn test_cv_bail_debug_and_cv_err_debug() {
+        use crate::core::error::{PureCvError, Result};
+
+        fn bail(x: i32) -> Result<()> {
+            crate::cv_bail_debug!(tags::CORE, NotImplemented, "not yet: {}", x);
+        }
+        fn err() -> PureCvError {
+            crate::cv_err_debug!(tags::CORE, OutOfBounds, "oob")
+        }
+
+        assert!(matches!(bail(7), Err(PureCvError::NotImplemented(_))));
+        assert_eq!(err(), PureCvError::OutOfBounds("oob".to_string()));
+    }
+
+    #[test]
     fn test_tags_constants() {
         assert_eq!(tags::PURECV, "purecv");
         assert_eq!(tags::CORE, "purecv::core");

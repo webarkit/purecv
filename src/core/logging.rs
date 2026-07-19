@@ -433,3 +433,72 @@ macro_rules! cv_log_if_debug {
         }
     };
 }
+
+// ── Log-and-return helpers ─────────────────────────────────────────
+//
+// These fuse "log the failure with the caller's subsystem tag" and
+// "produce the corresponding `PureCvError`" into a single call, so every
+// error site stays a one-liner while the log level and format policy live
+// in exactly one place. Use `cv_bail!` in statement position (it expands to
+// a `return`) and `cv_err!` where a `PureCvError` *value* is needed (e.g. a
+// match arm returning `Err(..)`). The `_debug` variants log at debug level
+// for low-severity paths (e.g. `NotImplemented`, degenerate inputs).
+
+/// Log a **warning** with `$tag`, then `return Err(PureCvError::$variant(msg))`.
+///
+/// `$variant` is a bare `PureCvError` variant name (e.g. `InvalidDimensions`);
+/// the remaining arguments are formatted like `format!`.
+///
+/// # Example
+///
+/// ```rust
+/// use purecv::core::logging::tags;
+/// use purecv::core::error::{PureCvError, Result};
+/// fn add(a: usize, b: usize) -> Result<usize> {
+///     if a != b {
+///         purecv::cv_bail!(tags::CORE, InvalidDimensions, "add: {} != {}", a, b);
+///     }
+///     Ok(a + b)
+/// }
+/// assert!(add(1, 2).is_err());
+/// ```
+#[macro_export]
+macro_rules! cv_bail {
+    ($tag:expr, $variant:ident, $($arg:tt)+) => {{
+        let __msg = format!($($arg)+);
+        $crate::cv_log_warning!($tag, "{}", __msg);
+        return Err($crate::core::error::PureCvError::$variant(__msg));
+    }};
+}
+
+/// Like [`cv_bail!`] but yields the `PureCvError` **value** instead of returning.
+///
+/// Use in expression position, e.g. `Err(cv_err!(tags::CORE, NotImplemented, "..."))`.
+#[macro_export]
+macro_rules! cv_err {
+    ($tag:expr, $variant:ident, $($arg:tt)+) => {{
+        let __msg = format!($($arg)+);
+        $crate::cv_log_warning!($tag, "{}", __msg);
+        $crate::core::error::PureCvError::$variant(__msg)
+    }};
+}
+
+/// Like [`cv_bail!`] but logs at **debug** level (for low-severity paths).
+#[macro_export]
+macro_rules! cv_bail_debug {
+    ($tag:expr, $variant:ident, $($arg:tt)+) => {{
+        let __msg = format!($($arg)+);
+        $crate::cv_log_debug!($tag, "{}", __msg);
+        return Err($crate::core::error::PureCvError::$variant(__msg));
+    }};
+}
+
+/// Like [`cv_err!`] but logs at **debug** level (for low-severity paths).
+#[macro_export]
+macro_rules! cv_err_debug {
+    ($tag:expr, $variant:ident, $($arg:tt)+) => {{
+        let __msg = format!($($arg)+);
+        $crate::cv_log_debug!($tag, "{}", __msg);
+        $crate::core::error::PureCvError::$variant(__msg)
+    }};
+}
