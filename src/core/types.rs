@@ -38,7 +38,9 @@ use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 
 use num_traits::{CheckedDiv, Zero};
 
-use crate::core::error::{PureCvError, Result};
+use crate::core::error::Result;
+use crate::core::logging::tags;
+use crate::cv_err;
 
 pub type Uchar = u8;
 pub type Schar = i8;
@@ -402,7 +404,7 @@ impl<T: Copy + Default + CheckedDiv> Scalar<T> {
     /// `Div<Scalar<T>>` impl.
     ///
     /// # Errors
-    /// Returns [`PureCvError::InvalidInput`] naming the first channel whose
+    /// Returns [`crate::core::error::PureCvError::InvalidInput`] naming the first channel whose
     /// divisor is zero.
     ///
     /// # Example
@@ -418,7 +420,12 @@ impl<T: Copy + Default + CheckedDiv> Scalar<T> {
     pub fn checked_div(self, rhs: Scalar<T>) -> Result<Self> {
         let div_ch = |a: T, b: T, ch: usize| {
             a.checked_div(&b).ok_or_else(|| {
-                PureCvError::InvalidInput(format!("Division by zero in channel {ch}"))
+                cv_err!(
+                    tags::CORE,
+                    InvalidInput,
+                    "checked_div: division by zero in channel {}",
+                    ch
+                )
             })
         };
         Ok(Self {

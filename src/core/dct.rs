@@ -35,8 +35,10 @@
  */
 
 use crate::core::constants::CV_PI;
-use crate::core::error::{PureCvError, Result};
+use crate::core::error::Result;
+use crate::core::logging::tags;
 use crate::core::matrix::Matrix;
+use crate::cv_bail;
 
 /// Discrete Cosine Transform.
 /// Currently implemented using a straightforward algorithm.
@@ -45,18 +47,25 @@ where
     T: Copy + Into<f64>,
 {
     if src.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "DCT only supports 1-channel images".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "dct: only 1-channel images are supported, got {} channels",
+            src.channels
+        );
     }
 
     let rows = src.rows;
     let cols = src.cols;
 
     if rows == 0 || cols == 0 {
-        return Err(PureCvError::InvalidDimensions(
-            "Input must not be empty".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "dct: input must not be empty ({}×{})",
+            rows,
+            cols
+        );
     }
 
     let n = rows * cols;
@@ -131,18 +140,25 @@ where
     T: Copy + Into<f64>,
 {
     if src.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "IDCT only supports 1-channel images".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "idct: only 1-channel images are supported, got {} channels",
+            src.channels
+        );
     }
 
     let rows = src.rows;
     let cols = src.cols;
 
     if rows == 0 || cols == 0 {
-        return Err(PureCvError::InvalidDimensions(
-            "Input must not be empty".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "idct: input must not be empty ({}×{})",
+            rows,
+            cols
+        );
     }
 
     let n = rows * cols;

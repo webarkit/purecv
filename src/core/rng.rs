@@ -35,9 +35,11 @@
  */
 
 use crate::core::constants::CV_2PI;
-use crate::core::error::{PureCvError, Result};
+use crate::core::error::Result;
+use crate::core::logging::tags;
 use crate::core::types::Scalar;
 use crate::core::Matrix;
+use crate::cv_bail;
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::cell::RefCell;
 
@@ -177,9 +179,11 @@ where
     T: Default + Clone + FromPrimitive + ToPrimitive + Send + Sync,
 {
     if dst.data.is_empty() {
-        return Err(PureCvError::InvalidDimensions(
-            "destination matrix is empty".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "randu: destination matrix is empty"
+        );
     }
 
     let channels = dst.channels;
@@ -229,9 +233,11 @@ where
     T: Default + Clone + FromPrimitive + ToPrimitive + Send + Sync,
 {
     if dst.data.is_empty() {
-        return Err(PureCvError::InvalidDimensions(
-            "destination matrix is empty".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "randn: destination matrix is empty"
+        );
     }
 
     let channels = dst.channels;

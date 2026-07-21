@@ -37,8 +37,10 @@
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
-use crate::core::error::{PureCvError, Result};
+use crate::core::error::Result;
+use crate::core::logging::tags;
 use crate::core::matrix::Matrix;
+use crate::cv_bail;
 
 // ---------------------------------------------------------------------------
 // DFT flag constants (matching OpenCV values)
@@ -172,15 +174,20 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
     let want_real_output = (flags & DFT_REAL_OUTPUT) != 0;
 
     if src.channels != 1 && src.channels != 2 {
-        return Err(PureCvError::InvalidInput(
-            "dft requires 1-channel (real) or 2-channel (complex) input".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "dft: requires 1-channel (real) or 2-channel (complex) input, got {} channels",
+            src.channels
+        );
     }
 
     if want_real_output && want_complex_output {
-        return Err(PureCvError::InvalidInput(
-            "DFT_REAL_OUTPUT and DFT_COMPLEX_OUTPUT are mutually exclusive".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "dft: DFT_REAL_OUTPUT and DFT_COMPLEX_OUTPUT are mutually exclusive"
+        );
     }
 
     let is_complex_input = src.channels == 2;
@@ -188,9 +195,13 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
     let cols = src.cols;
 
     if rows == 0 || cols == 0 {
-        return Err(PureCvError::InvalidDimensions(
-            "dft input must not be empty".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "dft: input must not be empty ({}×{})",
+            rows,
+            cols
+        );
     }
 
     let active_rows = if nonzero_rows > 0 && nonzero_rows < rows {
