@@ -34,6 +34,24 @@
  *
  */
 
+//! Core data structures and numerical routines — the `core` module.
+//!
+//! This module mirrors OpenCV's `core` module and provides the foundational
+//! types and operations the rest of the crate builds on:
+//!
+//! - [`Matrix`] — the row-major, n-channel matrix/image container, together
+//!   with [`MatType`], [`Depth`] and the OpenCV-style type constants.
+//! - [`Scalar`] — a 4-channel per-pixel constant.
+//! - Element-wise and reduction [`arithm`]etic (`add`, `multiply`, `gemm`,
+//!   `norm`, `reduce`, …), plus [`solvers`] and matrix operations.
+//! - `dft`/`dct` frequency transforms, [`rng`] random-number generation,
+//!   [`metrics`] and [`structural`] helpers.
+//! - [`error::PureCvError`] — the crate-wide error type returned as
+//!   [`error::Result`].
+//! - [`logging`] — an OpenCV-compatible structured logging API built on the
+//!   `log` facade, with the `cv_log_*!`, [`crate::cv_bail!`] and
+//!   [`crate::cv_err!`] macros.
+
 pub mod arithm;
 pub mod constants;
 #[cfg(feature = "transforms")]

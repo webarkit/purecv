@@ -34,6 +34,13 @@
  *
  */
 
+//! Feature detection and description — the `features` module.
+//!
+//! Placeholder for pure-Rust keypoint detectors and descriptors (e.g. FAST,
+//! ORB) mirroring OpenCV's feature-detection APIs. These are not yet
+//! implemented; the module is reserved so downstream code and documentation
+//! can reference a stable path as the algorithms land.
+
 //pub mod fast;
 //pub mod orb;
 

@@ -34,6 +34,23 @@
  *
  */
 
+//! Image processing — the `imgproc` module.
+//!
+//! This module mirrors OpenCV's `imgproc` module and implements common image
+//! processing algorithms in pure Rust, operating on the core [`Matrix`] type:
+//!
+//! - [`color`] — color-space conversions ([`cvt_color`] and friends).
+//! - [`filter`] — linear/nonlinear filtering (blur, Gaussian, Sobel, …).
+//! - [`derivatives`] and [`edge`] — image gradients and edge detection.
+//! - [`threshold`](mod@threshold) — fixed and adaptive thresholding.
+//! - [`morph`] — morphological operations (erode, dilate, `morphology_ex`).
+//! - [`geometric`] — geometric transforms ([`resize`](resize::resize),
+//!   [`warp_perspective`], `remap`).
+//! - [`pyramid`] — image pyramids (`pyr_down`, `pyr_up`).
+//! - [`hough`] and [`feature`] — shape/feature detection.
+//!
+//! [`Matrix`]: crate::core::Matrix
+
 pub mod color;
 pub mod derivatives;
 pub mod edge;
