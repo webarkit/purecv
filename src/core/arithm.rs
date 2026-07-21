@@ -35,11 +35,12 @@
  */
 
 use crate::core::constants::CV_2PI;
-use crate::core::error::{PureCvError, Result};
+use crate::core::error::Result;
 use crate::core::logging::tags;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
 use crate::cv_log_warning;
+use crate::{cv_bail, cv_err};
 use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
 use std::ops::{BitAnd, BitOr, BitXor, Not, Sub};
 
@@ -394,9 +395,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "add: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -414,9 +423,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "subtract: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -434,9 +451,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "multiply: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -454,9 +479,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "divide: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -480,9 +513,17 @@ where
     T: Copy + Send + Sync + BitAnd<Output = T> + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "bitwise_and: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -500,9 +541,17 @@ where
     T: Copy + Send + Sync + BitOr<Output = T> + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "bitwise_or: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -520,9 +569,17 @@ where
     T: Copy + Send + Sync + BitXor<Output = T> + Default + SimdElement + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "bitwise_xor: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -582,9 +639,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + 'static,
 {
     if !src1.dims_match(src2) {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "min: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -602,9 +667,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + 'static,
 {
     if !src1.dims_match(src2) {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "max: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -622,9 +695,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + 'static,
 {
     if !src1.dims_match(src2) {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "abs_diff: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -681,9 +762,17 @@ where
     T: Copy + Send + Sync + PartialOrd + Default + 'static,
 {
     if !src1.dims_match(src2) {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "compare: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<u8>::new(src1.rows, src1.cols, src1.channels);
@@ -748,9 +837,20 @@ where
         || src.cols != upperb.cols
         || src.channels != upperb.channels
     {
-        return Err(PureCvError::InvalidInput(
-            "Size or channels mismatch".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "in_range: size or channels mismatch (src {}×{}×{}, lowerb {}×{}×{}, upperb {}×{}×{})",
+            src.rows,
+            src.cols,
+            src.channels,
+            lowerb.rows,
+            lowerb.cols,
+            lowerb.channels,
+            upperb.rows,
+            upperb.cols,
+            upperb.channels
+        );
     }
 
     dst.create(src.rows, src.cols, 1);
@@ -807,9 +907,15 @@ where
     T: DataType + PartialOrd + Default + Copy + Sync + Send,
 {
     if lowerb.len() < src.channels || upperb.len() < src.channels {
-        return Err(PureCvError::InvalidInput(
-            "Scalars must have at least as many elements as src channels".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "in_range_scalar: scalars must have at least as many elements as src channels \
+             (src channels = {}, lowerb = {}, upperb = {})",
+            src.channels,
+            lowerb.len(),
+            upperb.len()
+        );
     }
 
     dst.create(src.rows, src.cols, 1);
@@ -867,9 +973,17 @@ where
     T: Num + Copy + Send + Sync + PartialOrd + Sub<Output = T> + Default + SimdElement + 'static,
 {
     if !src1.dims_match(src2) {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "absdiff: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -1126,10 +1240,12 @@ where
                 Ok(sq_sum.sqrt())
             }
         }
-        _ => Err(PureCvError::NotImplemented(format!(
-            "Norm type {:?} is not implemented",
+        _ => Err(cv_err!(
+            tags::CORE,
+            NotImplemented,
+            "norm: norm type {:?} is not implemented",
             norm_type
-        ))),
+        )),
     }
 }
 
@@ -1275,11 +1391,11 @@ where
                 }
             }
         }
-        _ => {
-            return Err(PureCvError::NotImplemented(
-                "Requested normalization type is not implemented yet".to_string(),
-            ))
-        }
+        _ => cv_bail!(
+            tags::CORE,
+            NotImplemented,
+            "normalize: requested normalization type is not implemented yet"
+        ),
     }
     Ok(())
 }
@@ -1306,7 +1422,12 @@ where
     } else if dim == 1 {
         (src.rows, 1)
     } else {
-        return Err(PureCvError::InvalidInput("dim must be 0 or 1".to_string()));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "reduce: dim must be 0 or 1, got {}",
+            dim
+        );
     };
 
     let mut dst_data = vec![T::default(); rows * cols * src.channels];
@@ -1412,9 +1533,12 @@ where
     T: Num + Copy + Send + Sync + 'static,
 {
     if src.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "countNonZero requires single-channel matrix".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "count_non_zero: requires a single-channel matrix, got {} channels",
+            src.channels
+        );
     }
     #[cfg(feature = "parallel")]
     {
@@ -1509,9 +1633,17 @@ where
         + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "add_weighted: matrices must have the same dimensions (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
@@ -1701,10 +1833,15 @@ where
     };
 
     if k1 != k2 {
-        return Err(PureCvError::InvalidDimensions(format!(
-            "Incompatible dimensions for GEMM: {}x{} and {}x{}",
-            m, k1, k2, n
-        )));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "gemm: incompatible dimensions {}x{} and {}x{}",
+            m,
+            k1,
+            k2,
+            n
+        );
     }
 
     let k = k1;
@@ -1885,9 +2022,13 @@ where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + SimdElement + 'static,
 {
     if src1.data.len() != src2.data.len() {
-        return Err(PureCvError::InvalidDimensions(
-            "Matrices must have the same number of elements".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "dot: matrices must have the same number of elements ({} vs {})",
+            src1.data.len(),
+            src2.data.len()
+        );
     }
 
     #[cfg(feature = "simd")]
@@ -1953,9 +2094,13 @@ where
     let len2 = src2.rows * src2.cols * src2.channels;
 
     if len1 != 3 || len2 != 3 {
-        return Err(PureCvError::InvalidDimensions(
-            "Cross product requires 3-element vectors".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "cross: cross product requires 3-element vectors (got {} and {})",
+            len1,
+            len2
+        );
     }
 
     let min_rows_cols = if src1.rows == 3 {
@@ -2160,9 +2305,14 @@ where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
 {
     if src.rows != src.cols || src.channels != 1 {
-        return Err(PureCvError::InvalidDimensions(
-            "Inverse only supports single-channel square matrices".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "invert: only single-channel square matrices are supported (got {}×{}×{})",
+            src.rows,
+            src.cols,
+            src.channels
+        );
     }
 
     let n = src.rows;
@@ -2215,15 +2365,26 @@ where
 {
     if src1.rows != src1.cols || src1.channels != 1 || src2.channels != 1 || src1.rows != src2.rows
     {
-        return Err(PureCvError::InvalidDimensions(
-            "Linear system solver requires compatible single-channel matrices".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "solve: requires compatible single-channel matrices (src1 {}×{}×{}, src2 {}×{}×{})",
+            src1.rows,
+            src1.cols,
+            src1.channels,
+            src2.rows,
+            src2.cols,
+            src2.channels
+        );
     }
 
     if flags != DecompTypes::DECOMP_LU {
-        return Err(PureCvError::NotImplemented(
-            "Only DECOMP_LU is currently supported".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            NotImplemented,
+            "solve: only DECOMP_LU is currently supported, got {:?}",
+            flags
+        );
     }
 
     let n = src1.rows;
@@ -2331,9 +2492,17 @@ where
         + 'static,
 {
     if !x.dims_match(y) {
-        return Err(PureCvError::InvalidDimensions(
-            "x and y must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "magnitude: x and y must have the same dimensions (x {}×{}×{}, y {}×{}×{})",
+            x.rows,
+            x.cols,
+            x.channels,
+            y.rows,
+            y.cols,
+            y.channels
+        );
     }
 
     dst.create(x.rows, x.cols, x.channels);
@@ -2399,9 +2568,17 @@ where
     T: DataType + ToPrimitive + FromPrimitive + Default + Copy + Send + Sync + 'static,
 {
     if !x.dims_match(y) {
-        return Err(PureCvError::InvalidDimensions(
-            "x and y must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "phase: x and y must have the same dimensions (x {}×{}×{}, y {}×{}×{})",
+            x.rows,
+            x.cols,
+            x.channels,
+            y.rows,
+            y.cols,
+            y.channels
+        );
     }
 
     angle.create(x.rows, x.cols, x.channels);
@@ -2473,9 +2650,17 @@ where
     T: DataType + ToPrimitive + FromPrimitive + Default + Copy + Send + Sync + 'static,
 {
     if !x.dims_match(y) {
-        return Err(PureCvError::InvalidDimensions(
-            "x and y must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "cart_to_polar: x and y must have the same dimensions (x {}×{}×{}, y {}×{}×{})",
+            x.rows,
+            x.cols,
+            x.channels,
+            y.rows,
+            y.cols,
+            y.channels
+        );
     }
 
     mag.create(x.rows, x.cols, x.channels);
@@ -2550,9 +2735,18 @@ where
     T: DataType + ToPrimitive + FromPrimitive + Default + Copy + Send + Sync + 'static,
 {
     if !mag.dims_match(ang) {
-        return Err(PureCvError::InvalidDimensions(
-            "magnitude and angle must have the same dimensions".to_string(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "polar_to_cart: magnitude and angle must have the same dimensions \
+             (mag {}×{}×{}, ang {}×{}×{})",
+            mag.rows,
+            mag.cols,
+            mag.channels,
+            ang.rows,
+            ang.cols,
+            ang.channels
+        );
     }
 
     x.create(mag.rows, mag.cols, mag.channels);
@@ -2625,9 +2819,12 @@ where
     T: Default + Clone + Copy + FromPrimitive + ToPrimitive + Send + Sync + 'static,
 {
     if m.channels != 1 {
-        return Err(PureCvError::InvalidDimensions(
-            "transformation matrix must be single-channel".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "transform: transformation matrix must be single-channel, got {} channels",
+            m.channels
+        );
     }
 
     let scn = src.channels;
@@ -2636,10 +2833,15 @@ where
 
     // m must be dcn × scn  OR  dcn × (scn + 1)  (affine)
     if m_cols != scn && m_cols != scn + 1 {
-        return Err(PureCvError::InvalidDimensions(format!(
-            "transformation matrix columns ({}) must equal src channels ({}) or src channels + 1 ({})",
-            m_cols, scn, scn + 1
-        )));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "transform: transformation matrix columns ({}) must equal src channels ({}) \
+             or src channels + 1 ({})",
+            m_cols,
+            scn,
+            scn + 1
+        );
     }
 
     let affine = m_cols == scn + 1;
@@ -2715,23 +2917,35 @@ where
     let scn = src.channels;
 
     if scn != 2 && scn != 3 {
-        return Err(PureCvError::InvalidDimensions(
-            "perspectiveTransform requires 2- or 3-channel input".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "perspective_transform: requires 2- or 3-channel input, got {} channels",
+            scn
+        );
     }
 
     if m.channels != 1 {
-        return Err(PureCvError::InvalidDimensions(
-            "transformation matrix must be single-channel".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "perspective_transform: transformation matrix must be single-channel, got {} channels",
+            m.channels
+        );
     }
 
     let n = scn + 1; // homogeneous dimension
     if m.rows != n || m.cols != n {
-        return Err(PureCvError::InvalidDimensions(format!(
-            "transformation matrix must be {}x{} for {}-channel input, got {}x{}",
-            n, n, scn, m.rows, m.cols
-        )));
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "perspective_transform: transformation matrix must be {}x{} for {}-channel input, got {}x{}",
+            n,
+            n,
+            scn,
+            m.rows,
+            m.cols
+        );
     }
 
     dst.create(src.rows, src.cols, scn);
@@ -2820,14 +3034,20 @@ pub fn solve_poly(coeffs: &Matrix<f64>, roots: &mut Matrix<f64>, max_iters: i32)
     // Flatten coefficients into a slice
     let total = coeffs.rows * coeffs.cols * coeffs.channels;
     if total < 2 {
-        return Err(PureCvError::InvalidInput(
-            "solvePoly requires at least 2 coefficients (degree >= 1)".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "solve_poly: requires at least 2 coefficients (degree >= 1), got {}",
+            total
+        );
     }
     if coeffs.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "solvePoly requires single-channel coefficient matrix".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "solve_poly: requires a single-channel coefficient matrix, got {} channels",
+            coeffs.channels
+        );
     }
 
     let c = &coeffs.data;
@@ -2836,9 +3056,12 @@ pub fn solve_poly(coeffs: &Matrix<f64>, roots: &mut Matrix<f64>, max_iters: i32)
     // Normalise so that c[n] == 1 (monic)
     let lead = c[n];
     if lead.abs() < f64::EPSILON {
-        return Err(PureCvError::InvalidInput(
-            "Leading coefficient is zero".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "solve_poly: leading coefficient is zero ({:e})",
+            lead
+        );
     }
     let a: Vec<f64> = c.iter().map(|&v| v / lead).collect();
 
@@ -2966,9 +3189,12 @@ where
     T: Default + Clone + Copy + PartialOrd + Send + Sync + 'static,
 {
     if src.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "sort requires single-channel matrix".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "sort: requires a single-channel matrix, got {} channels",
+            src.channels
+        );
     }
     dst.rows = src.rows;
     dst.cols = src.cols;
@@ -3016,9 +3242,12 @@ where
     T: Default + Clone + Copy + PartialOrd + Send + Sync + 'static,
 {
     if src.channels != 1 {
-        return Err(PureCvError::InvalidInput(
-            "sortIdx requires single-channel matrix".into(),
-        ));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "sort_idx: requires a single-channel matrix, got {} channels",
+            src.channels
+        );
     }
     dst.rows = src.rows;
     dst.cols = src.cols;
@@ -3103,10 +3332,13 @@ pub fn kmeans(
     let dims = data.cols * data.channels; // dimensionality
 
     if k <= 0 || (k as usize) > n {
-        return Err(PureCvError::InvalidInput(format!(
-            "k ({}) must be in [1, {}]",
-            k, n
-        )));
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "kmeans: k ({}) must be in [1, {}]",
+            k,
+            n
+        );
     }
     let k = k as usize;
 
@@ -3485,18 +3717,23 @@ where
 {
     let lut_entries = lut_table.rows * lut_table.cols;
     if lut_entries != 256 {
-        return Err(PureCvError::InvalidInput(format!(
-            "LUT must have exactly 256 entries, got {}",
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "lut: LUT must have exactly 256 entries, got {}",
             lut_entries
-        )));
+        );
     }
     let lut_cn = lut_table.channels;
     let src_cn = src.channels;
     if lut_cn != 1 && lut_cn != src_cn {
-        return Err(PureCvError::IncompatibleChannels(format!(
-            "LUT channels ({}) must be 1 or match source channels ({})",
-            lut_cn, src_cn
-        )));
+        cv_bail!(
+            tags::CORE,
+            IncompatibleChannels,
+            "lut: LUT channels ({}) must be 1 or match source channels ({})",
+            lut_cn,
+            src_cn
+        );
     }
 
     let total = src.rows * src.cols * src_cn;
