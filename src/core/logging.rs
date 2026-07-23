@@ -186,8 +186,15 @@ pub fn get_log_level() -> LogLevel {
     LogLevel::from(log::max_level())
 }
 
+// The built-in logger writes to stdout via `println!`, which requires `std`.
+// Under `no_std` there is no stdout to write to, so consumers must install
+// their own `log` backend (e.g. `defmt`/`semihosting`) instead. Everything
+// else in this module (the macros, `LogLevel`, `set_log_level`) is
+// `core`/`alloc`-only and works without `std`.
+#[cfg(feature = "std")]
 struct SimpleLogger;
 
+#[cfg(feature = "std")]
 impl log::Log for SimpleLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::max_level()
@@ -207,6 +214,7 @@ impl log::Log for SimpleLogger {
     fn flush(&self) {}
 }
 
+#[cfg(feature = "std")]
 static LOGGER: SimpleLogger = SimpleLogger;
 
 /// Initializes a simple stdout logger for purecv log messages.
@@ -215,6 +223,10 @@ static LOGGER: SimpleLogger = SimpleLogger;
 ///
 /// This is helpful for CLI tools or examples to quickly view logs without
 /// pulling in external dependencies like `env_logger`.
+///
+/// Requires the `std` feature (it writes to stdout). Under `no_std`, install
+/// your own [`log`] backend instead.
+#[cfg(feature = "std")]
 pub fn init_basic_logger() -> Result<(), crate::core::PureCvError> {
     log::set_logger(&LOGGER).map_err(|e| {
         crate::core::PureCvError::InvalidInput(format!("Logger already set: {}", e))

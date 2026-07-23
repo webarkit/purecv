@@ -98,7 +98,10 @@ pub use self::dft::{
 };
 pub use self::dynamic::{DynamicData, DynamicMatrix};
 pub use self::error::{PureCvError, Result};
-pub use self::logging::{get_log_level, init_basic_logger, set_log_level, LogLevel};
+pub use self::logging::{get_log_level, set_log_level, LogLevel};
+// `init_basic_logger` writes to stdout and is only available with `std`.
+#[cfg(feature = "std")]
+pub use self::logging::init_basic_logger;
 pub use self::matrix::{
     DataType, Depth, MatType, Matrix, CV_16S, CV_16SC1, CV_16SC2, CV_16SC3, CV_16SC4, CV_16U,
     CV_16UC1, CV_16UC2, CV_16UC3, CV_16UC4, CV_32F, CV_32FC1, CV_32FC2, CV_32FC3, CV_32FC4, CV_32S,
