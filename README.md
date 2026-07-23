@@ -42,6 +42,7 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Random Number Generation:** `randu` (uniform distribution), `randn` (normal/Gaussian distribution), `set_rng_seed`.
 - **Channel Management:** `split`, `merge`, `mix_channels`.
 - **Utilities:** `add_weighted`, `check_range`, `absdiff`, `get_tick_count`, `get_tick_frequency`.
+- **Logging** (OpenCV-style): a `cv::utils::logging`-compatible facade over the [`log`](https://crates.io/crates/log) crate — a 7-level `LogLevel` with `set_log_level`/`get_log_level`, per-subsystem `tags`, `cv_log_*!` macros, and `cv_bail!`/`cv_err!` log-and-return helpers used throughout `core` to report invalid input (wrong dimensions, channel mismatches, …). Bring your own backend (`env_logger`, `tracing`, …) or call `init_basic_logger()` for quick stdout output.
 - **Mathematical Constants:** OpenCV-compatible constants — `CV_PI`, `CV_PI_2`, `CV_2PI`, `CV_PI_4`, `CV_LOG2`, `CV_LN2`, `CV_E`, `CV_LN10`, `CV_SQRT2` — backed by `std::f64::consts` for maximum precision.
 - **ndarray Interop:** Optional, zero-cost conversions to/from `ndarray::Array3` via the `ndarray` feature flag.
 - **SIMD Acceleration** (`simd` feature): Trait-based dispatch via `pulp` for `f32`, `f64`, and `u8` types. Accelerated operations include `add`, `sub`, `mul`, `div`, `min`, `max`, `sqrt`, `dot`, `sum`, `add_weighted`, `convert_scale_abs`, `magnitude`, `simd_row_min_max`, `simd_min_max_col`, `simd_gaussian_5tap_h/v`, and `simd_remap_bilinear_row`/`simd_remap_nearest_row`. Falls back to scalar loops at zero cost when disabled.
@@ -160,6 +161,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Matrix size: {}x{}", mat.cols, mat.rows);
     Ok(())
 }
+```
+
+### Logging
+
+PureCV mirrors OpenCV's `cv::utils::logging` on top of the [`log`](https://crates.io/crates/log)
+facade, so the output backend stays your choice (`env_logger`, `tracing`,
+`console_log` on WASM, …). For a quick start, `init_basic_logger()` installs a
+simple stdout logger. Internally, `core` logs a warning whenever a function
+rejects invalid input:
+
+```rust
+use purecv::core::arithm;
+use purecv::core::logging::{self, LogLevel};
+use purecv::core::Matrix;
+
+fn main() {
+    // Install the built-in stdout logger and let warnings through.
+    logging::init_basic_logger().ok();
+    logging::set_log_level(LogLevel::Warning);
+
+    // Mismatched dimensions -> logs a warning AND returns Err(..)
+    let a = Matrix::<f32>::new(4, 4, 3);
+    let b = Matrix::<f32>::new(2, 2, 1);
+    let _ = arithm::add(&a, &b);
+    // [WARN] purecv::core - add: matrices must have the same dimensions (src1 4×4×3, src2 2×2×1)
+}
+```
+
+You can also emit your own messages with the `cv_log_*!` macros and filter per
+subsystem via the standard `RUST_LOG` syntax (e.g. `RUST_LOG=purecv::core=warn`):
+
+```rust
+use purecv::core::logging::tags;
+purecv::cv_log_info!(tags::IMGPROC, "gaussian blur, ksize = {}", 5);
 ```
 
 ### ndarray Interoperability
