@@ -50,7 +50,9 @@ extern crate alloc;
 
 use alloc::vec;
 use purecv::core::error::Result;
+use purecv::core::types::{BorderTypes, Size2i};
 use purecv::core::{add, determinant, mean, Matrix};
+use purecv::imgproc::gaussian_blur;
 
 /// Exercises matrix construction, arithmetic, statistics, and linear algebra.
 pub fn smoke() -> Result<f64> {
@@ -62,4 +64,22 @@ pub fn smoke() -> Result<f64> {
     let det = determinant(&sum);
 
     Ok(avg.v[0] + det)
+}
+
+/// Exercises the Phase 2 imgproc path: a scalar `gaussian_blur` under no_std.
+pub fn smoke_imgproc() -> Result<f32> {
+    let src = Matrix::<f32>::from_vec(
+        3,
+        3,
+        1,
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    );
+    let blurred = gaussian_blur(
+        &src,
+        Size2i::new(3, 3),
+        0.0,
+        0.0,
+        BorderTypes::Reflect101,
+    )?;
+    Ok(blurred.data[4])
 }

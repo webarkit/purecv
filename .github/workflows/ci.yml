@@ -47,7 +47,7 @@ jobs:
       run: cargo test --workspace --features ndarray
 
   no-std-build:
-    name: no_std Build (core only, issue #83)
+    name: no_std Build (core + imgproc, issues #83/#84)
     runs-on: ubuntu-latest
 
     steps:
