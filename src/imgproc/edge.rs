@@ -34,6 +34,10 @@
  *
  */
 
+use alloc::vec::Vec;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::BorderTypes;
 use crate::core::Matrix;
@@ -117,7 +121,7 @@ where
             *m = magnitude as f32;
 
             if magnitude > 1e-5 {
-                let angle = gy_f.atan2(gx_f) * 180.0 / std::f64::consts::PI;
+                let angle = gy_f.atan2(gx_f) * 180.0 / core::f64::consts::PI;
                 let normalized_angle = if angle < 0.0 { angle + 180.0 } else { angle };
 
                 if (0.0..22.5).contains(&normalized_angle)

@@ -52,6 +52,10 @@
 //!
 //! `pre_corner_detect` is an independent simpler map using first + second derivatives.
 
+use alloc::vec::Vec;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use crate::core::Matrix;
@@ -431,7 +435,7 @@ where
     }
 
     // Sort by response descending.
-    candidates.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
 
     // Greedily select corners with minimum distance constraint.
     let min_dist_sq = min_distance * min_distance;

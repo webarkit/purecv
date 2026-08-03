@@ -34,6 +34,8 @@
  *
  */
 
+use alloc::string::ToString;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::simd::SimdElement;
 use crate::core::Matrix;

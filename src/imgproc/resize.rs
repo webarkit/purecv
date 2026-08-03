@@ -36,6 +36,10 @@
 
 //! Image resizing operations: [`resize`].
 
+use alloc::string::ToString;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::Size;
 use crate::core::Matrix;

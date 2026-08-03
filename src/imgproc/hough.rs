@@ -34,6 +34,10 @@
  *
  */
 
+use alloc::{vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::constants::CV_PI;
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::BorderTypes;
@@ -131,7 +135,7 @@ pub fn hough_lines(
     }
 
     // Stage 3. Sort the detected lines by accumulator value descending
-    sort_buf.sort_by_key(|b| std::cmp::Reverse(b.1));
+    sort_buf.sort_by_key(|b| core::cmp::Reverse(b.1));
 
     // Stage 4. Format output
     let mut lines = Vec::with_capacity(sort_buf.len());
@@ -160,6 +164,12 @@ pub fn hough_lines(
 ///
 /// # Returns
 /// A vector of `[i32; 4]` representing `(x1, y1, x2, y2)` for each segment.
+///
+/// Requires the `std` feature: the probabilistic transform shuffles edge points
+/// with the thread-local RNG ([`crate::core::rand_shuffle`]), which is std-only
+/// until a no_std seedable RNG lands (see issue #82). The deterministic
+/// [`hough_lines`] is available under `no_std`.
+#[cfg(feature = "std")]
 pub fn hough_lines_p(
     image: &Matrix<u8>,
     rho: f64,
@@ -452,7 +462,7 @@ pub fn hough_circles(
     }
 
     // Sort centers by votes
-    centers.sort_by_key(|b| std::cmp::Reverse(b.2));
+    centers.sort_by_key(|b| core::cmp::Reverse(b.2));
 
     let mut circles = Vec::new();
 

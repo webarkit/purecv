@@ -34,6 +34,13 @@
  *
  */
 
+use alloc::{string::ToString, vec::Vec};
+// `vec!` is only used by the SIMD-only separable kernel below.
+#[cfg(feature = "simd")]
+use alloc::vec;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::arithm;
 use crate::core::error::{PureCvError, Result};
 use crate::core::simd::SimdElement;

@@ -34,6 +34,8 @@
  *
  */
 
+use alloc::{string::ToString, vec, vec::Vec};
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::utils::border_interpolate;
 use crate::core::{BorderTypes, Matrix};
@@ -337,15 +339,15 @@ where
     // and use the SIMD 3x3 kernel for interior rows.
     #[cfg(feature = "simd")]
     {
-        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() && rows > 2 && cols > 2 {
+        if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() && rows > 2 && cols > 2 {
             let row_len = cols * channels;
 
             // Reinterpret src.data as &[f32] — safe because T == f32
             let src_f32: &[f32] = unsafe {
-                std::slice::from_raw_parts(src.data.as_ptr() as *const f32, src.data.len())
+                core::slice::from_raw_parts(src.data.as_ptr() as *const f32, src.data.len())
             };
             let dst_f32: &mut [f32] = unsafe {
-                std::slice::from_raw_parts_mut(dst.data.as_mut_ptr() as *mut f32, dst.data.len())
+                core::slice::from_raw_parts_mut(dst.data.as_mut_ptr() as *mut f32, dst.data.len())
             };
 
             // Process interior rows with SIMD

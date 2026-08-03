@@ -39,6 +39,10 @@
 //! These functions implement the classical Gaussian pyramid using the 5-tap
 //! kernel `[1, 4, 6, 4, 1]` (sum = 16, outer product sum = 256).
 
+use alloc::{string::ToString, vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::simd::SimdElement;
 use crate::core::types::{BorderTypes, Size};

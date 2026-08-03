@@ -34,6 +34,9 @@
  *
  */
 
+#[allow(unused_imports)]
+use num_traits::Float;
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

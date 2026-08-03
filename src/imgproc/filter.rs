@@ -34,13 +34,17 @@
  *
  */
 
+use alloc::{format, string::ToString, vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::Result;
 use crate::core::types::BorderTypes;
 use crate::core::utils::border_interpolate;
 use crate::core::{Matrix, Point2i, PureCvError, Size2i};
+use core::any::TypeId;
+use core::iter::Sum;
 use num_traits::{FromPrimitive, NumCast, ToPrimitive};
-use std::any::TypeId;
-use std::iter::Sum;
 
 #[cfg(not(feature = "parallel"))]
 use crate::core::utils::ParIterFallback;
@@ -337,7 +341,8 @@ where
                         }
                     }
                     // Sort to find median
-                    neighbors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    neighbors
+                        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
                     let median = neighbors[neighbors.len() / 2];
                     *comp = median;
                 }
