@@ -47,7 +47,7 @@ pub use alloc::format as __format;
 
 // Global modules
 //
-// Only `core` and `version` build without `std` for now; the remaining modules
+// `core`, `imgproc`, and `version` build without `std`; the remaining modules
 // are gated until their own no_std phases land (see issue #82).
 #[cfg(feature = "std")]
 pub mod calib3d;
@@ -56,7 +56,6 @@ pub mod core;
 pub mod features;
 #[cfg(feature = "std")]
 pub mod features2d;
-#[cfg(feature = "std")]
 pub mod imgproc;
 pub mod version;
 #[cfg(feature = "std")]
@@ -81,20 +80,14 @@ pub mod prelude {
         draw_keypoints, draw_matches, filter_matches, BFMatcher, DMatch, DescriptorMatcher,
         FastFeatureDetector, FastType, KeyPoint, NormType, Orb,
     };
-    #[cfg(feature = "std")]
     pub use crate::imgproc::derivatives::{laplacian, scharr, sobel};
-    #[cfg(feature = "std")]
     pub use crate::imgproc::edge::canny;
-    #[cfg(feature = "std")]
     pub use crate::imgproc::feature::{
         corner_eigen_vals_and_vecs, corner_harris, corner_min_eigen_val, corner_sub_pix,
         good_features_to_track, pre_corner_detect,
     };
-    #[cfg(feature = "std")]
     pub use crate::imgproc::filter::{bilateral_filter, box_filter, gaussian_blur};
-    #[cfg(feature = "std")]
     pub use crate::imgproc::threshold::{threshold, ThresholdTypes};
-    #[cfg(feature = "std")]
     pub use crate::imgproc::{
         cvt_color, remap, warp_perspective, ColorConversionCode, InterpolationFlags,
     };
