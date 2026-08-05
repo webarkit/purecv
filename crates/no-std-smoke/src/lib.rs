@@ -49,10 +49,12 @@
 extern crate alloc;
 
 use alloc::vec;
+use purecv::calib3d::rodrigues;
 use purecv::core::error::Result;
 use purecv::core::types::{BorderTypes, Size2i};
 use purecv::core::{add, determinant, mean, Matrix};
 use purecv::imgproc::gaussian_blur;
+use purecv::video::build_optical_flow_pyramid;
 
 /// Exercises matrix construction, arithmetic, statistics, and linear algebra.
 pub fn smoke() -> Result<f64> {
@@ -82,4 +84,26 @@ pub fn smoke_imgproc() -> Result<f32> {
         BorderTypes::Reflect101,
     )?;
     Ok(blurred.data[4])
+}
+
+/// Exercises the Phase 3 calib3d path: `rodrigues` (rotation vector -> matrix).
+pub fn smoke_calib3d() -> Result<f64> {
+    let rvec = Matrix::<f64>::from_vec(3, 1, 1, vec![0.1, 0.2, 0.3]);
+    let mut rmat = Matrix::<f64>::new(3, 3, 1);
+    rodrigues(&rvec, &mut rmat)?;
+    Ok(rmat.data[0])
+}
+
+/// Exercises the Phase 3 video path: build a Lucas-Kanade optical-flow pyramid.
+pub fn smoke_video() -> Result<usize> {
+    let img = Matrix::<u8>::from_vec(8, 8, 1, vec![0u8; 64]);
+    let pyr = build_optical_flow_pyramid(
+        &img,
+        Size2i::new(3, 3),
+        1,
+        false,
+        BorderTypes::Reflect101,
+        BorderTypes::Reflect101,
+    )?;
+    Ok(pyr.levels.len())
 }

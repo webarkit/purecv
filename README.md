@@ -91,11 +91,30 @@ purecv = "0.5"
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `std` | ✅ | Standard library support |
-| `parallel` | ✅ | Multi-core parallelism via **Rayon** |
+| `std` | ✅ | Standard library support (disable for `no_std` — see below) |
+| `parallel` | ✅ | Multi-core parallelism via **Rayon** (implies `std`) |
 | `ndarray` | ❌ | Interop with the `ndarray` crate (zero-cost views & ownership transfers) |
-| `simd` | ❌ | SIMD acceleration via [`pulp`](https://crates.io/crates/pulp) (x86 SSE/AVX, ARM NEON, WASM `simd128`) |
+| `simd` | ❌ | SIMD acceleration via [`pulp`](https://crates.io/crates/pulp) (x86 SSE/AVX, ARM NEON, WASM `simd128`) — implies `std` |
 | `wasm` | ❌ | WebAssembly-specific optimizations |
+
+### `no_std` / embedded support
+
+Build with `--no-default-features` to run on bare-metal targets such as the
+ESP32 (`purecv = { version = "0.6", default-features = false }`). Only `core`
+and `alloc` are required (an allocator must be provided by the target).
+
+| Module | `no_std` | Notes |
+|--------|----------|-------|
+| `core` | ✅ | Full support. `get_tick_count`/`get_tick_frequency` and the thread-local RNG (`randu`/`randn`/`rand_shuffle`) require `std`. |
+| `imgproc` | ✅ | Scalar fallbacks. `hough_lines_p` requires `std` (uses the thread-local RNG); `hough_lines` works without. |
+| `calib3d` | ✅ | Full support (RANSAC uses a self-contained PRNG). |
+| `video` | ✅ | Full support. Optical-flow pyramids are heap-heavy — size images for your device's RAM. |
+| `features2d` | ❌ | Requires `std` for now. |
+
+`parallel`, `simd`, `fft`, and `ndarray` require `std`; disabling default
+features gives the scalar, single-threaded code paths. See
+[`webarkit/purecv-esp32-examples`](https://github.com/webarkit/purecv-esp32-examples)
+for runnable ESP32-S3 demos.
 
 To enable the `ndarray` feature:
 
