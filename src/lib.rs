@@ -47,9 +47,8 @@ pub use alloc::format as __format;
 
 // Global modules
 //
-// `core`, `imgproc`, and `version` build without `std`; the remaining modules
-// are gated until their own no_std phases land (see issue #82).
-#[cfg(feature = "std")]
+// `core`, `imgproc`, `calib3d`, `video`, and `version` build without `std`; the
+// `features`/`features2d` modules remain std-gated (see issue #82).
 pub mod calib3d;
 pub mod core;
 #[cfg(feature = "std")]
@@ -58,12 +57,10 @@ pub mod features;
 pub mod features2d;
 pub mod imgproc;
 pub mod version;
-#[cfg(feature = "std")]
 pub mod video;
 
 /// Prelude to easily import common structures
 pub mod prelude {
-    #[cfg(feature = "std")]
     pub use crate::calib3d::{
         find_fundamental_mat, find_homography, init_undistort_rectify_map, rodrigues, solve_pnp,
         solve_pnp_ransac, FundamentalMatMethod, HomographyMethod, SolvePnPMethod,
@@ -91,7 +88,6 @@ pub mod prelude {
     pub use crate::imgproc::{
         cvt_color, remap, warp_perspective, ColorConversionCode, InterpolationFlags,
     };
-    #[cfg(feature = "std")]
     pub use crate::video::optical_flow::{
         build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OpticalFlowPyramid,
         OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
