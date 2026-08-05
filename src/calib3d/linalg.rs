@@ -38,6 +38,10 @@
 //!
 //! All functions operate on flat, row-major `f64` slices/arrays.
 
+use alloc::{vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 // ---------------------------------------------------------------------------
 // Matrix utilities
 // ---------------------------------------------------------------------------
@@ -204,7 +208,7 @@ pub(super) fn null_space_vector(a: &[f64], rows: usize, cols: usize) -> Vec<f64>
         .min_by(|&i, &j| {
             ata[i * cols + i]
                 .partial_cmp(&ata[j * cols + j])
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(core::cmp::Ordering::Equal)
         })
         .unwrap_or(cols - 1);
 
@@ -241,7 +245,7 @@ pub(super) fn svd_3x3(a: &[f64; 9]) -> ([f64; 9], [f64; 3], [f64; 9]) {
     idx.sort_by(|&i, &j| {
         ata[j * 3 + j]
             .partial_cmp(&ata[i * 3 + i])
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .unwrap_or(core::cmp::Ordering::Equal)
     });
 
     // Reorder V columns (right singular vectors).

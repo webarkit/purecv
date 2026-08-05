@@ -40,6 +40,10 @@
 //! point normalization, plus an optional RANSAC wrapper for robustness
 //! against outliers.
 
+use alloc::{format, string::ToString, vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::Point2f;
 use crate::core::Matrix;
@@ -359,7 +363,7 @@ fn normalize_points(pts: &[Point2f]) -> (Vec<f64>, [f64; 9]) {
     let s = if mean_dist < 1e-12 {
         1.0
     } else {
-        std::f64::consts::SQRT_2 / mean_dist
+        core::f64::consts::SQRT_2 / mean_dist
     };
 
     let mut out = vec![0.0f64; pts.len() * 2];

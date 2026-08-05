@@ -52,6 +52,13 @@
 //! | `calcOpticalFlowPyrLK` `nextPts` is `InputOutputArray` | initial guess passed via `initial_next_pts: Option<&[Point2f]>` |
 //! | `tryReuseInputImage` optimisation flag | not implemented (correctness only) |
 
+use alloc::{string::ToString, vec::Vec};
+// `vec!` is only used by the SIMD-only windowed kernel below.
+#[cfg(feature = "simd")]
+use alloc::vec;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::logging::tags;
 use crate::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};

@@ -56,6 +56,9 @@
 //! kernels operate *after* the gather, on the pre-collected contiguous `f32`
 //! buffers, where auto-vectorisation applies cleanly.
 
+#[allow(unused_imports)]
+use num_traits::Float;
+
 // ---------------------------------------------------------------------------
 // H matrix accumulation
 // ---------------------------------------------------------------------------

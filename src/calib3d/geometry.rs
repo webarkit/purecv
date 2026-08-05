@@ -39,6 +39,10 @@
 //! Converts between a *rotation vector* (compact axis-angle representation,
 //! sometimes called an *Rodrigues vector*) and a 3×3 *rotation matrix*.
 
+use alloc::{string::ToString, vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::Matrix;
 
@@ -166,7 +170,7 @@ pub(super) fn rmat_to_rvec(m: &[f64; 9]) -> [f64; 3] {
     }
 
     // Near π the formula becomes numerically unstable; use an alternative.
-    if (theta - std::f64::consts::PI).abs() < 1e-4 {
+    if (theta - core::f64::consts::PI).abs() < 1e-4 {
         return rmat_to_rvec_near_pi(m, theta);
     }
 

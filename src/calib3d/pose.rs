@@ -40,6 +40,10 @@
 //! camera intrinsic matrix, these functions estimate the object pose
 //! (rotation and translation vectors) in the camera coordinate system.
 
+use alloc::{format, string::ToString, vec, vec::Vec};
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::logging::tags;
 use crate::core::types::{Point2f, Point3f};

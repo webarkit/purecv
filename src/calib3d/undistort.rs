@@ -34,6 +34,10 @@
  *
  */
 
+use alloc::string::ToString;
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::Size2i;
 use crate::core::Matrix;
