@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-08-07
+
+### ⚙️ Miscellaneous Tasks
+
+- *(core)* Make std an explicit opt-in feature, set MSRV 1.88
+- *(ci)* Add no_std build job
+- *(core)* Fix formatting in logging.rs (#80)
+
+### 🐛 Bug Fixes
+
+- *(wasm)* Re-enable purecv std feature for the wasm crate
+
+### 📚 Documentation
+
+- Document no_std/embedded support and refresh the README
+- *(core)* Document the logging facility in the README (#80)
+- *(core)* Add module-level docs for core, imgproc and features (#80)
+
+### 🚀 Features
+
+- *(core)* Compile the core module without the standard library
+- *(imgproc)* Compile the imgproc module without the standard library
+- *(video,calib3d)* Compile both modules without the standard library
+- *(core)* Add OpenCV-style logging facade (#80)
+- *(core)* Add basic logger and migrate example applications to logging macros (#80)
+- *(core)* Add cv_bail!/cv_err! log-and-return macros (#80)
+- *(core)* Add warning logs for solve and solve_pnp_ransac failure cases (#80)
+- *(core)* Log input-validation failures in arithm and matrix (#80)
+- *(core)* Log input-validation failures across remaining core modules (#80)
+- *(video)* Add debug logging inside calc_optical_flow_pyramid_lk (#80)
+
+### 🚜 Refactor
+
+- *(core)* Gate the stdout logger behind the std feature (#80)
+- *(imgproc)* Use core::/alloc:: paths for no_std
+- *(video,calib3d)* Use core::/alloc:: paths for no_std
+
+### 🧪 Testing
+
+- *(core)* Add build-only no_std smoke-test crate
+- *(imgproc)* Exercise gaussian_blur from the no_std smoke crate
+- *(video,calib3d)* Smoke-test both modules + document no_std support
+
 ## [0.6.1] - 2026-07-08
 
 ### 🎨 Styling
