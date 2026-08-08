@@ -3,6 +3,7 @@
 ![PureCv Banner](./assets/purecv_banner.png)
 
 [![Rust CI](https://github.com/webarkit/purecv/actions/workflows/ci.yml/badge.svg)](https://github.com/webarkit/purecv/actions/workflows/ci.yml)
+[![Miri](https://github.com/webarkit/purecv/actions/workflows/miri.yml/badge.svg)](https://github.com/webarkit/purecv/actions/workflows/miri.yml)
 [![Crates.io](https://img.shields.io/crates/v/purecv.svg)](https://crates.io/crates/purecv)
 [![Crates.io Downloads](https://img.shields.io/crates/d/purecv.svg)](https://crates.io/crates/purecv)
 [![NPM version](https://img.shields.io/npm/v/@webarkit/purecv-wasm.svg)](https://www.npmjs.com/package/@webarkit/purecv-wasm)
@@ -20,7 +21,7 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 * **Zero-FFI:** No complex linking or C++ toolchain requirements.
 * **Memory Safety:** Elimination of segmentation faults and buffer overflows via Rust's ownership model.
 * **Modern Parallelism:** Native integration with **Rayon** for effortless multi-core processing.
-* **Portable SIMD:** Optional SIMD acceleration via [`pulp`](https://crates.io/crates/pulp) — auto-detects x86 SSE/AVX, ARM NEON, and WASM `simd128` at runtime. Zero `unsafe`, zero `#[cfg(target_arch)]`.
+* **Portable SIMD:** Optional SIMD acceleration via [`pulp`](https://crates.io/crates/pulp) — auto-detects x86 SSE/AVX, ARM NEON, and WASM `simd128` at runtime. Zero `#[cfg(target_arch)]`, and the few `unsafe` slice reinterpretations that feed the SIMD kernels are checked for undefined behaviour by [Miri](https://github.com/rust-lang/miri) in CI.
 * **Embedded-ready:** Builds under `no_std` + `alloc` for bare-metal targets such as the ESP32 — the `core`, `imgproc`, `calib3d`, and `video` modules run without the standard library ([see below](#no_std--embedded-support)).
 
 ## ✨ Features
