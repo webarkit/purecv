@@ -27,6 +27,7 @@ cpp_ref/opencv
 !.agents/instructions.md
 !.agents/workflows/
 !.agents/workflows/add-license-headers.md
+!.agents/MIRI_PLAN.md
 
 # Examples
 examples/data/out/
