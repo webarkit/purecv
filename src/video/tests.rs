@@ -84,6 +84,10 @@ mod video_tests {
         assert_eq!(pyr.levels[3].rows, 8);
     }
 
+    // miri: ~45s under interpretation. The Sobel `unsafe` fast path it exercises
+    // is still covered by imgproc::tests::test_sobel (f32/ksize 3, ~0.8s under
+    // Miri), so no UB coverage is lost here. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_build_pyramid_with_derivatives() {
         let img = Matrix::<u8>::new(64, 64, 1);
@@ -212,6 +216,9 @@ mod video_tests {
 
     /// Tracking a stationary point in two identical frames should return a
     /// flow vector close to zero and status = 1.
+    // miri: Lucas-Kanade pyramidal iteration — ~62s under interpretation.
+    // No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_stationary_point_identical_frames() {
         // Create a 64×64 frame with a small bright blob so there are gradients.
@@ -251,6 +258,9 @@ mod video_tests {
     }
 
     /// Simulate a pure translation of +3 pixels in x by shifting the image.
+    // miri: Lucas-Kanade pyramidal iteration — ~105s under interpretation.
+    // No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_pure_translation_x() {
         let rows = 64usize;
@@ -311,6 +321,9 @@ mod video_tests {
     }
 
     /// Test using the `OPTFLOW_LK_GET_MIN_EIGENVALS` flag.
+    // miri: Lucas-Kanade pyramidal iteration — ~61s under interpretation.
+    // No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_min_eigenvals_flag() {
         let mut data = vec![0u8; 64 * 64];
@@ -343,6 +356,9 @@ mod video_tests {
     }
 
     /// Test the `OPTFLOW_USE_INITIAL_FLOW` flag with a good initial guess.
+    // miri: Lucas-Kanade pyramidal iteration — ~62s under interpretation.
+    // No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_use_initial_flow() {
         let mut data = vec![0u8; 64 * 64];

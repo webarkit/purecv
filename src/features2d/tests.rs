@@ -302,6 +302,9 @@ fn test_orb_pyramid_grayscale_validation() {
     }
 }
 
+// miri: ORB scale-pyramid construction takes ~30s under interpretation.
+// No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+#[cfg_attr(miri, ignore)]
 #[test]
 fn test_orb_pyramid_dimensions() {
     use crate::core::Matrix;
@@ -415,6 +418,9 @@ fn test_orb_descriptors() {
     assert_ne!(desc0, desc90);
 }
 
+// miri: full ORB detect+describe pipeline takes ~806s under interpretation.
+// No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+#[cfg_attr(miri, ignore)]
 #[test]
 fn test_orb_full_pipeline() {
     use crate::core::Matrix;
