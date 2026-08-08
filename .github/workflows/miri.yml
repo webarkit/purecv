@@ -1,0 +1,79 @@
+name: Miri
+
+# Undefined-behaviour verification for the `unsafe` slice reinterpretations
+# backing the SIMD fast paths. Full rationale, inclusion/exclusion table and
+# known coverage gaps: .agents/MIRI_PLAN.md
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # By default Miri injects a small random error into transcendental float ops
+  # (ln/sin/cos/exp) to catch code that relies on exact results. The Box-Muller
+  # transform in src/core/rng.rs uses all three, which makes
+  # test_randn_determinism fail on a last-ULP difference — a false positive, not
+  # UB. This flag restores deterministic float semantics.
+  # NOT the issue's `-Zmiri-strict-provenance`: that is now Miri's default and
+  # the flag is deprecated. See .agents/MIRI_PLAN.md §3.
+  MIRIFLAGS: -Zmiri-deterministic-floats
+
+jobs:
+  miri:
+    name: Miri UB Check (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    # Measured ~4 min of test execution locally; this is headroom for a cold
+    # cache and a slower runner. See .agents/MIRI_PLAN.md §9.
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.experimental }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Safe code paths plus the data_ptr/data_ptr_mut tests in
+          # src/core/tests.rs — the only `unsafe` reachable without `simd`.
+          # Required gate.
+          - { name: baseline, features: "std", experimental: false }
+          # Reaches the real production `unsafe`: src/core/arithm.rs (119, 267)
+          # and src/imgproc/derivatives.rs (346, 349).
+          # pulp is confirmed Miri-compatible and this leg passes clean locally
+          # (355 passed / 0 failed on x86_64-pc-windows-msvc). Kept advisory only
+          # until it has been seen green on ubuntu-latest, since Miri's intrinsic
+          # support is target-dependent. Promote by setting experimental: false.
+          # See .agents/MIRI_PLAN.md §3.
+          - { name: simd, features: "std,simd", experimental: true }
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust nightly + Miri
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: miri
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: miri-${{ matrix.name }}
+
+    # Kept as its own step: when a nightly ships without a usable miri
+    # component, the failure points at the toolchain rather than at our code.
+    # Fix is to temporarily pin `dtolnay/rust-toolchain@nightly-YYYY-MM-DD`.
+    - name: Build Miri sysroot
+      run: cargo miri setup
+
+    # `-p purecv` excludes crates/wasm — Miri has no wasm32 support.
+    # `--no-default-features` suppresses `parallel`, which default =
+    # ["std", "parallel"] would otherwise enable silently. Rayon under Miri is
+    # slow and its thread support is limited; the resulting coverage gap on
+    # src/core/arithm.rs (99, 248) is documented in .agents/MIRI_PLAN.md §5.
+    # `--lib` skips doc-tests: two ORB examples in src/features2d/mod.rs alone
+    # cost 767s under interpretation while duplicating unit-test coverage. There
+    # is no tests/ directory, so --lib is the whole suite. Doc-tests remain fully
+    # exercised by `cargo test` in ci.yml.
+    - name: Run Miri
+      run: cargo miri test -p purecv --lib --no-default-features --features ${{ matrix.features }}
