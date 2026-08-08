@@ -517,6 +517,9 @@ mod calib3d_tests {
         }
     }
 
+    // miri: RANSAC iteration loop takes ~928s under interpretation — by far the
+    // slowest test in the suite. No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_find_fundamental_mat_ransac() {
         use crate::calib3d::{find_fundamental_mat, FundamentalMatMethod};

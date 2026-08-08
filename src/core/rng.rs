@@ -380,6 +380,9 @@ mod tests {
         assert!(max > min, "randu produced no variation");
     }
 
+    // miri: draws a large sample to check distribution moments — ~88s under
+    // interpretation. No `unsafe` on this path. See .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_randn_statistics() {
         set_rng_seed(7);
