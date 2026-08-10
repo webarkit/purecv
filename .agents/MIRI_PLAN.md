@@ -273,33 +273,64 @@ giving Miri its own workflow file.
 
 ---
 
-## 8. Implementation Sequence
+## 8. Running Miri Locally
 
-1. **Feasibility spike** — resolve A1/A2 before writing YAML:
-   ```bash
-   rustup toolchain install nightly --component miri
-   cargo +nightly miri setup
-   cargo +nightly miri test -p purecv --no-default-features --features std -- --report-time
-   cargo +nightly miri test -p purecv --no-default-features --features std,simd -- --report-time
-   ```
-   **Caveat:** local runs are `x86_64-pc-windows-msvc`; CI is `ubuntu-latest`. Miri's
-   intrinsic support is target-dependent, so a local pass does not guarantee a CI
-   pass. Local is for iteration speed; CI is the source of truth.
-2. Update §6 and §9 with measured results.
-3. Add `.github/workflows/miri.yml` (§9).
-4. Annotate any failing tests per the §4 convention.
-5. README: add badge, correct the SIMD `unsafe` claim (§10).
-6. Quality gate per `CLAUDE.md`, in order: `cargo fmt` → `cargo clippy` (zero
-   warnings) → `cargo test`.
+One-time setup:
 
-### Commits
+```bash
+rustup toolchain install nightly --component miri
+cargo +nightly miri setup
+```
 
-| # | Message |
-|---|---------|
+Then reproduce either CI leg exactly. **Use these commands verbatim** — each flag
+below is load-bearing, and dropping one produces a failure that looks like a real
+problem but is not:
+
+```bash
+# Leg 1 — baseline
+MIRIFLAGS=-Zmiri-deterministic-floats \
+  cargo +nightly miri test -p purecv --lib --no-default-features --features std
+
+# Leg 2 — simd
+MIRIFLAGS=-Zmiri-deterministic-floats \
+  cargo +nightly miri test -p purecv --lib --no-default-features --features std,simd
+```
+
+On PowerShell, set the variable separately: `$env:MIRIFLAGS="-Zmiri-deterministic-floats"`.
+
+| Omitting… | Symptom |
+|-----------|---------|
+| `MIRIFLAGS=-Zmiri-deterministic-floats` | `test_randn_determinism` fails on a last-ULP float difference (§6) — looks like a real regression, isn't |
+| `--lib` | Doc-tests run, adding ~13 min of ORB examples |
+| `--no-default-features` | `parallel` is enabled silently, pulling rayon into the interpreter |
+| `-p purecv` | `crates/wasm` is included; Miri has no wasm32 support |
+
+To profile per-test timings, append `-- -Zunstable-options --report-time`. Note that
+`--report-time` **alone is rejected** — libtest requires `-Zunstable-options` with it.
+
+**Platform caveat.** Local runs here were `x86_64-pc-windows-msvc`; CI is
+`ubuntu-latest`. Miri's intrinsic support is target-dependent, so a local pass does
+not guarantee a CI pass. In practice the two agreed exactly (§9), but CI remains the
+source of truth.
+
+### How this was delivered
+
+Shipped in [#93](https://github.com/webarkit/purecv/pull/93), in this order: plan
+document → workflow → test annotations → README. The feasibility spike ran *before*
+any YAML was written, which is what surfaced the 41-minute runtime, the doc-test
+cost, and the float-determinism false positive — all three would have landed as
+broken CI otherwise.
+
+| # | Commit |
+|---|--------|
 | 1 | `doc(ci): add Miri UB verification plan (#81)` |
 | 2 | `chore(ci): add Miri UB check workflow (#81)` |
-| 3 | `test(core): annotate Miri-incompatible tests (#81)` — *only if the spike requires it* |
+| 3 | `test(core): annotate Miri-slow tests with cfg_attr(miri, ignore) (#81)` |
 | 4 | `doc(readme): add Miri badge, correct SIMD unsafe claim (#81)` |
+| 5 | `chore(ci): promote the Miri simd leg to a required check (#81)` |
+
+Quality gate per `CLAUDE.md` before each commit, in order: `cargo fmt` →
+`cargo clippy` (zero warnings) → `cargo test`.
 
 ---
 
