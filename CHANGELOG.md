@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-08-10
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Add Miri UB check workflow (#81)
+- *(ci)* Promote the Miri simd leg to a required check (#81)
+- *(ci)* Gate releases on the Miri UB checks (#81)
+
+### 📚 Documentation
+
+- *(ci)* Add Miri UB verification plan (#81)
+- *(readme)* Add Miri badge, correct SIMD unsafe claim (#81)
+- *(ci)* Fix the local reproduction commands in the Miri plan (#81)
+
+### 🧪 Testing
+
+- *(core)* Annotate Miri-slow tests with cfg_attr(miri, ignore) (#81)
+
 ## [0.7.0] - 2026-08-07
 
 ### ⚙️ Miscellaneous Tasks
