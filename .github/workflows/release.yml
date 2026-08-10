@@ -42,6 +42,26 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 30
 
+      # Both Miri legs are required checks, so a UB regression must not be
+      # publishable to crates.io. These names must match the job names produced
+      # by miri.yml's matrix, and miri.yml must keep its `tags: [ "v*" ]`
+      # trigger — without it these steps would wait forever.
+      - name: Wait for CI (Miri UB Check - baseline)
+        uses: lewagon/wait-on-check-action@v1.5.0
+        with:
+          ref: ${{ github.ref }}
+          check-name: "Miri UB Check (baseline)"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
+      - name: Wait for CI (Miri UB Check - simd)
+        uses: lewagon/wait-on-check-action@v1.5.0
+        with:
+          ref: ${{ github.ref }}
+          check-name: "Miri UB Check (simd)"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
       - name: Generate Release Notes
         id: git-cliff
         uses: orhun/git-cliff-action@v4
