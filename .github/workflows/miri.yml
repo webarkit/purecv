@@ -39,13 +39,11 @@ jobs:
           # Required gate.
           - { name: baseline, features: "std", experimental: false }
           # Reaches the real production `unsafe`: src/core/arithm.rs (119, 267)
-          # and src/imgproc/derivatives.rs (346, 349).
-          # pulp is confirmed Miri-compatible and this leg passes clean locally
-          # (355 passed / 0 failed on x86_64-pc-windows-msvc). Kept advisory only
-          # until it has been seen green on ubuntu-latest, since Miri's intrinsic
-          # support is target-dependent. Promote by setting experimental: false.
-          # See .agents/MIRI_PLAN.md §3.
-          - { name: simd, features: "std,simd", experimental: true }
+          # and src/imgproc/derivatives.rs (346, 349). Required gate.
+          # pulp is confirmed Miri-compatible: this leg passes clean on both
+          # ubuntu-latest and x86_64-pc-windows-msvc (355 passed / 0 failed,
+          # identical counts). See .agents/MIRI_PLAN.md §3.
+          - { name: simd, features: "std,simd", experimental: false }
 
     steps:
     - uses: actions/checkout@v6

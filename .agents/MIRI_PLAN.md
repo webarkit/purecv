@@ -1,8 +1,10 @@
 # Miri UB Verification Plan
 
-> **Status:** Design accepted, implementation pending.
-> **Issue:** [webarkit/purecv#81](https://github.com/webarkit/purecv/issues/81)
-> **Branch:** `feat/issue-81-miri-ci` (from `dev`)
+> **Status:** Implemented. Both legs green on `ubuntu-latest` and locally — **no
+> undefined behaviour found** in any `unsafe` block they reach.
+> **Issue:** [webarkit/purecv#81](https://github.com/webarkit/purecv/issues/81) ·
+> **PR:** [#93](https://github.com/webarkit/purecv/pull/93) ·
+> **Follow-up:** [#94](https://github.com/webarkit/purecv/issues/94) (the `parallel+simd` gap, §5)
 
 ---
 
@@ -18,8 +20,8 @@ provenance, aliasing violations (Stacked Borrows), misaligned access, uninitiali
 memory reads, and data races.
 
 **What Miri cannot check here:** anything compiled for `wasm32` (unsupported target),
-anything not reached by a `#[test]`, and — pending verification — code paths using
-SIMD intrinsics that Miri has no shim for.
+and anything not reached by a `#[test]`. Note that pulp's intrinsics turned out to be
+fully supported (§6, A1), so no SIMD path was lost to a missing shim.
 
 ---
 
@@ -84,7 +86,7 @@ Covers all safe code paths and the `data_ptr` tests. Expected to pass trivially.
 Its job is to be a fast, stable gate that catches UB regressions in safe code and
 in any future non-SIMD `unsafe`.
 
-### Leg 2 — `simd` · **advisory at first** (`continue-on-error: true`)
+### Leg 2 — `simd` · **required**
 
 ```bash
 cargo miri test -p purecv --lib --no-default-features --features std,simd
@@ -93,12 +95,10 @@ cargo miri test -p purecv --lib --no-default-features --features std,simd
 The leg that does the real work: it reaches `arithm.rs:119,267` and
 `derivatives.rs:346,349`.
 
-pulp is **confirmed Miri-compatible** (A1, §6) and this leg passes clean locally.
-It is nonetheless kept advisory for its first CI run, because Miri's intrinsic
-support is target-dependent and all local evidence is from
-`x86_64-pc-windows-msvc` rather than CI's `ubuntu-latest`. **Promote to required
-by setting `experimental: false`** as soon as it has been observed green on Linux —
-this is expected to be immediate, not a long-term state.
+pulp is **confirmed Miri-compatible** (A1, §6). This leg was designed to start
+advisory (`experimental: true`) in case Miri's target-dependent intrinsic support
+differed on CI, and was promoted to required once it ran green on `ubuntu-latest`
+with counts identical to local Windows — 355 passed, 0 failed, 9 ignored on both.
 
 ### Aliasing model and MIRIFLAGS
 
@@ -325,13 +325,14 @@ jobs:
     name: Miri UB Check (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: ${{ matrix.experimental }}
+    continue-on-error: ${{ matrix.experimental }}   # both legs now false
     strategy:
       fail-fast: false
       matrix:
         include:
           # Safe paths + data_ptr tests. Required gate.
           - { name: baseline, features: "std",      experimental: false }
+          - { name: simd,     features: "std,simd", experimental: false }
           # Reaches the real unsafe blocks. Advisory until pulp/Miri
           # compatibility is proven — see .agents/MIRI_PLAN.md §3.
           - { name: simd,     features: "std,simd", experimental: true  }
@@ -436,7 +437,7 @@ This turns a claim Miri would contradict into one Miri actively backs.
 
 | # | Decision | Alternatives considered | Rationale |
 |---|----------|-------------------------|-----------|
-| 1 | Two runs: `std` required + `std,simd` advisory | simd-only required; no-simd only (as issue) | Only option that inspects real `unsafe` without risking a permanently-red required gate |
+| 1 | Two runs: `std` + `std,simd`, the latter advisory until proven on Linux, then required | simd-only required; no-simd only (as issue) | Only option that inspects real `unsafe` without risking a permanently-red required gate |
 | 2 | Measure runtime before excluding anything | Pre-emptive `cfg_attr` ignores; shrink inputs under `cfg(miri)` | Don't disable tests on speculation; §6/A2 shows the risk is lower than feared |
 | 3 | `-p purecv --no-default-features --features std[,simd]` | `--workspace`; `--workspace --exclude`; default features | Excludes wasm structurally; makes the absent `parallel` explicit rather than accidental |
 | 4 | No `MIRIFLAGS`; rely on Miri defaults | Issue's `-Zmiri-strict-provenance`; Tree Borrows; both models | Flag is redundant and deprecated; Stacked Borrows is the stricter guarantee |
