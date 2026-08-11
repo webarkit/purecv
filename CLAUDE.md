@@ -51,6 +51,29 @@ Preferred scopes: `(core)` `(imgproc)` `(simd)` `(wasm)` `(parallel)`
 - PRs start from and target the `dev` branch (not `main`).
 - Keep PRs focused; one feature or fix per PR.
 
+### Releases
+
+Releases go `dev` → PR to `main` → merge → tag `vX.Y.Z` on `main`. Pushing the tag
+triggers `release.yml`, which publishes to crates.io **and** npm — irreversible.
+
+**Merge release PRs with a merge commit, not "Rebase and merge" or "Squash and
+merge".** Rebasing replays dev's commits as new objects on `main`, so `dev` stops
+being an ancestor of `main` and the two diverge with identical content but different
+SHAs. The next release PR then replays every old commit again. This happened with
+v0.7.1 (#95) and had to be repaired by resetting `dev` to `main`.
+
+Release prep steps (see the v0.7.1 commit for a worked example):
+
+1. Bump the version in `Cargo.toml` (**two places** — `[package]` and
+   `[workspace.package]`) and in the root `package.json`.
+2. Run `npm run build` — this regenerates `crates/wasm/pkg/package.json`, which is
+   tracked and otherwise silently drifts.
+3. `npx git-cliff --config cliff.toml --tag vX.Y.Z --unreleased --prepend CHANGELOG.md`,
+   then add the blank line `--prepend` omits before the previous version heading.
+4. Commit as `chore(release): prepare for vX.Y.Z` — `cliff.toml` skips this message
+   from the changelog, so land any other changes in their own commits *first* or they
+   will not appear.
+
 ## Module Structure Convention
 
 Each top-level module (`core/`, `imgproc/`, `features2d/`, etc.) must contain its own:
