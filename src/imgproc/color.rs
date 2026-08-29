@@ -61,6 +61,7 @@ fn rgb_to_gray_row(out_row: &mut [u8], in_row: &[u8]) {
     }
     #[cfg(not(feature = "simd"))]
     {
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         for (out_pixel, in_val) in out_row.iter_mut().zip(in_row.chunks_exact(3)) {
             let r = in_val[0] as f32;
             let g = in_val[1] as f32;
@@ -79,6 +80,7 @@ fn bgr_to_gray_row(out_row: &mut [u8], in_row: &[u8]) {
     }
     #[cfg(not(feature = "simd"))]
     {
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         for (out_pixel, in_val) in out_row.iter_mut().zip(in_row.chunks_exact(3)) {
             let b = in_val[0] as f32;
             let g = in_val[1] as f32;
@@ -97,6 +99,7 @@ fn rgba_to_gray_row(out_row: &mut [u8], in_row: &[u8]) {
     }
     #[cfg(not(feature = "simd"))]
     {
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         for (out_pixel, in_val) in out_row.iter_mut().zip(in_row.chunks_exact(4)) {
             let r = in_val[0] as f32;
             let g = in_val[1] as f32;
@@ -115,6 +118,7 @@ fn bgra_to_gray_row(out_row: &mut [u8], in_row: &[u8]) {
     }
     #[cfg(not(feature = "simd"))]
     {
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         for (out_pixel, in_val) in out_row.iter_mut().zip(in_row.chunks_exact(4)) {
             let b = in_val[0] as f32;
             let g = in_val[1] as f32;
@@ -347,6 +351,7 @@ pub fn cvt_color_gray_to_rgb(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(3).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -363,6 +368,7 @@ pub fn cvt_color_gray_to_rgb(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(3).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -392,6 +398,7 @@ pub fn cvt_color_gray_to_bgr(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(3).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -408,6 +415,7 @@ pub fn cvt_color_gray_to_bgr(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static 
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(3).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -437,6 +445,7 @@ pub fn cvt_color_gray_to_rgba(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(4).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -454,6 +463,7 @@ pub fn cvt_color_gray_to_rgba(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(4).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -484,6 +494,7 @@ pub fn cvt_color_gray_to_bgra(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
             .par_chunks_exact_mut(out_row_len)
             .zip(input.data.par_chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(4).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
@@ -501,6 +512,7 @@ pub fn cvt_color_gray_to_bgra(input: &Matrix<u8>) -> Result<Matrix<u8>, &'static
             .chunks_exact_mut(out_row_len)
             .zip(input.data.chunks_exact(in_row_len))
             .for_each(|(out_row, in_row)| {
+                #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
                 for (out_val, in_pixel) in out_row.chunks_exact_mut(4).zip(in_row.iter()) {
                     let v = *in_pixel;
                     out_val[0] = v;
