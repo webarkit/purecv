@@ -48,6 +48,9 @@ use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
 use crate::cv_bail;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 // ---------------------------------------------------------------------------
 //  Enums
 // ---------------------------------------------------------------------------
@@ -186,7 +189,7 @@ fn map_bin(val: f32, range: &RangeSpec, hist_size: usize) -> Option<usize> {
 ///   On first call, pass `None` for `hist` or create a zero histogram.
 ///
 /// Returns a flattened `Matrix<f32>` histogram of size `(product(hist_size), 1, 1)`.
-pub fn calc_hist<T: ToPrimitive + Clone + Default>(
+pub fn calc_hist<T: ToPrimitive + Clone + Default + Send + Sync>(
     images: &[&Matrix<T>],
     channels: &[usize],
     mask: Option<&Matrix<u8>>,
@@ -342,7 +345,7 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default>(
         strides[i] = strides[i + 1] * hist_size[i + 1];
     }
 
-    for y in 0..rows {
+    let accumulate_row = |local: &mut [f32], y: usize| {
         for x in 0..cols {
             if let Some(m) = mask {
                 if let Some(&v) = m.get(y, x, 0) {
@@ -367,8 +370,40 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default>(
             }
 
             if !out_of_range {
-                hist_data[bin_idx] += 1.0;
+                local[bin_idx] += 1.0;
             }
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        let partial = (0..rows)
+            .into_par_iter()
+            .fold(
+                || vec![0.0f32; total_bins],
+                |mut local, y| {
+                    accumulate_row(&mut local, y);
+                    local
+                },
+            )
+            .reduce(
+                || vec![0.0f32; total_bins],
+                |mut a, b| {
+                    for (av, bv) in a.iter_mut().zip(b.iter()) {
+                        *av += bv;
+                    }
+                    a
+                },
+            );
+        for (hv, pv) in hist_data.iter_mut().zip(partial.iter()) {
+            *hv += pv;
+        }
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for y in 0..rows {
+            accumulate_row(&mut hist_data, y);
         }
     }
 
@@ -389,7 +424,7 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default>(
 ///
 /// Returns a single-channel `Matrix<f32>` of the same size as `images[0]`.
 /// Values are scaled and clamped to `[0.0, 255.0]` matching OpenCV's u8 output range.
-pub fn calc_back_project<T: ToPrimitive + Clone + Default>(
+pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
     images: &[&Matrix<T>],
     channels: &[usize],
     hist: &Matrix<f32>,
@@ -441,8 +476,8 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default>(
 
     let mut dst = Matrix::<f32>::new(rows, cols, 1);
 
-    for y in 0..rows {
-        for x in 0..cols {
+    let process_row = |y: usize, dst_row: &mut [f32]| {
+        for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let mut bin_idx = 0usize;
             let mut out_of_range = false;
 
@@ -457,12 +492,28 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default>(
                 }
             }
 
-            let pixel = if out_of_range {
+            *out_pixel = if out_of_range {
                 0.0f32
             } else {
                 (hist.data[bin_idx] * scale).clamp(0.0, 255.0)
             };
-            dst.set(y, x, 0, pixel);
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_mut(cols)
+            .enumerate()
+            .for_each(|(y, dst_row)| {
+                process_row(y, dst_row);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (y, dst_row) in dst.data.chunks_mut(cols).enumerate() {
+            process_row(y, dst_row);
         }
     }
 
@@ -670,8 +721,22 @@ pub fn equalize_hist(src: &Matrix<u8>) -> Result<Matrix<u8>> {
     }
 
     let mut dst = Matrix::<u8>::new(src.rows, src.cols, 1);
-    for idx in 0..src.data.len() {
-        dst.data[idx] = lut[src.data[idx] as usize];
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_iter_mut()
+            .zip(src.data.par_iter())
+            .for_each(|(d, &s)| {
+                *d = lut[s as usize];
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (d, &s) in dst.data.iter_mut().zip(src.data.iter()) {
+            *d = lut[s as usize];
+        }
     }
 
     Ok(dst)
@@ -847,7 +912,7 @@ impl Clahe {
         };
         let mut lut = vec![0u8; lut_len];
 
-        for tile_idx in 0..num_tiles {
+        let build_tile_lut = |tile_idx: usize, tile_lut: &mut [u8]| {
             let ty = tile_idx / self.tiles_x;
             let tx = tile_idx % self.tiles_x;
             let y0 = ty * tile_rows;
@@ -866,11 +931,26 @@ impl Clahe {
 
             clip_and_redistribute(&mut tile_hist, clip_limit, hist_size);
 
-            let tile_lut = &mut lut[tile_idx * hist_size..(tile_idx + 1) * hist_size];
             let mut sum = 0i32;
             for bin in 0..hist_size {
                 sum += tile_hist[bin];
                 tile_lut[bin] = (sum as f64 * lut_scale).round().clamp(0.0, 255.0) as u8;
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            lut.par_chunks_mut(hist_size)
+                .enumerate()
+                .for_each(|(tile_idx, tile_lut)| {
+                    build_tile_lut(tile_idx, tile_lut);
+                });
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (tile_idx, tile_lut) in lut.chunks_mut(hist_size).enumerate() {
+                build_tile_lut(tile_idx, tile_lut);
             }
         }
 
@@ -980,7 +1060,7 @@ impl Clahe {
         };
         let mut lut = vec![0u16; lut_len];
 
-        for tile_idx in 0..num_tiles {
+        let build_tile_lut = |tile_idx: usize, tile_lut: &mut [u16]| {
             let ty = tile_idx / self.tiles_x;
             let tx = tile_idx % self.tiles_x;
             let y0 = ty * tile_rows;
@@ -999,11 +1079,26 @@ impl Clahe {
 
             clip_and_redistribute(&mut tile_hist, clip_limit, hist_size);
 
-            let tile_lut = &mut lut[tile_idx * hist_size..(tile_idx + 1) * hist_size];
             let mut sum = 0i32;
             for bin in 0..hist_size {
                 sum += tile_hist[bin];
                 tile_lut[bin] = (sum as f64 * lut_scale).round().clamp(0.0, 65535.0) as u16;
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            lut.par_chunks_mut(hist_size)
+                .enumerate()
+                .for_each(|(tile_idx, tile_lut)| {
+                    build_tile_lut(tile_idx, tile_lut);
+                });
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (tile_idx, tile_lut) in lut.chunks_mut(hist_size).enumerate() {
+                build_tile_lut(tile_idx, tile_lut);
             }
         }
 
@@ -1072,8 +1167,9 @@ fn interpolate_tiles_u8(
     let inv_th = 1.0f64 / tile_rows as f64;
     let lut_idx =
         |ty: usize, tx: usize, bin: usize| ty * tiles_x * hist_size + tx * hist_size + bin;
+    let cols = src.cols;
 
-    for y in 0..src.rows {
+    let process_row = |y: usize, dst_row: &mut [u8]| {
         let tyf = y as f64 * inv_th - 0.5;
         let ty1 = (tyf.floor() as i32).max(0);
         let ty2 = (ty1 + 1).min(tiles_y as i32 - 1);
@@ -1082,7 +1178,7 @@ fn interpolate_tiles_u8(
         let ty1 = ty1 as usize;
         let ty2 = ty2 as usize;
 
-        for x in 0..src.cols {
+        for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let txf = x as f64 * inv_tw - 0.5;
             let tx1 = (txf.floor() as i32).max(0);
             let tx2 = (tx1 + 1).min(tiles_x as i32 - 1);
@@ -1100,8 +1196,24 @@ fn interpolate_tiles_u8(
             let v11 = lut[lut_idx(ty2, tx2, bin)] as f64;
 
             let val = (v00 * xa1 + v01 * xa) * ya1 + (v10 * xa1 + v11 * xa) * ya;
-            let out = (val.round() as u8) << bit_shift;
-            dst.set(y, x, 0, out);
+            *out_pixel = (val.round() as u8) << bit_shift;
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_mut(cols)
+            .enumerate()
+            .for_each(|(y, dst_row)| {
+                process_row(y, dst_row);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (y, dst_row) in dst.data.chunks_mut(cols).enumerate() {
+            process_row(y, dst_row);
         }
     }
 }
@@ -1122,8 +1234,9 @@ fn interpolate_tiles_u16(
     let inv_th = 1.0f64 / tile_rows as f64;
     let lut_idx =
         |ty: usize, tx: usize, bin: usize| ty * tiles_x * hist_size + tx * hist_size + bin;
+    let cols = src.cols;
 
-    for y in 0..src.rows {
+    let process_row = |y: usize, dst_row: &mut [u16]| {
         let tyf = y as f64 * inv_th - 0.5;
         let ty1 = (tyf.floor() as i32).max(0);
         let ty2 = (ty1 + 1).min(tiles_y as i32 - 1);
@@ -1132,7 +1245,7 @@ fn interpolate_tiles_u16(
         let ty1 = ty1 as usize;
         let ty2 = ty2 as usize;
 
-        for x in 0..src.cols {
+        for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let txf = x as f64 * inv_tw - 0.5;
             let tx1 = (txf.floor() as i32).max(0);
             let tx2 = (tx1 + 1).min(tiles_x as i32 - 1);
@@ -1150,8 +1263,24 @@ fn interpolate_tiles_u16(
             let v11 = lut[lut_idx(ty2, tx2, bin)] as f64;
 
             let val = (v00 * xa1 + v01 * xa) * ya1 + (v10 * xa1 + v11 * xa) * ya;
-            let out = (val.round() as u16) << bit_shift;
-            dst.set(y, x, 0, out);
+            *out_pixel = (val.round() as u16) << bit_shift;
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        dst.data
+            .par_chunks_mut(cols)
+            .enumerate()
+            .for_each(|(y, dst_row)| {
+                process_row(y, dst_row);
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (y, dst_row) in dst.data.chunks_mut(cols).enumerate() {
+            process_row(y, dst_row);
         }
     }
 }
