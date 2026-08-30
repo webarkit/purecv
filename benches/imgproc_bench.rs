@@ -306,6 +306,48 @@ fn bench_imgproc(c: &mut Criterion) {
     c.bench_function("clahe_apply_u8_1024x1024", |b| {
         b.iter(|| clahe.apply_u8(black_box(&img_hist)).unwrap())
     });
+    // compare_hist benchmark setup
+    let mut hist1 = Matrix::<f32>::new(256, 1, 1);
+    let mut hist2 = Matrix::<f32>::new(256, 1, 1);
+    for (i, p) in hist1.data.iter_mut().enumerate() {
+        *p = (i as f32 * 0.1).sin().abs();
+    }
+    for (i, p) in hist2.data.iter_mut().enumerate() {
+        *p = (i as f32 * 0.1).cos().abs();
+    }
+
+    c.bench_function("compare_hist_correl_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::Correl,
+            )
+            .unwrap()
+        })
+    });
+
+    c.bench_function("compare_hist_intersection_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::Intersection,
+            )
+            .unwrap()
+        })
+    });
+
+    c.bench_function("compare_hist_kullback_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::KullbackLeibler,
+            )
+            .unwrap()
+        })
+    });
 }
 
 criterion_group!(benches, bench_imgproc);
