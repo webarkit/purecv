@@ -573,6 +573,16 @@ pub fn compare_hist(h1: &Matrix<f32>, h2: &Matrix<f32>, method: HistCompMethods)
         );
     }
 
+    #[cfg(feature = "simd")]
+    {
+        use crate::core::simd::SimdElement;
+        if f32::has_simd() {
+            if let Some(res) = f32::simd_compare_hist(&h1.data, &h2.data, method as u8) {
+                return Ok(res);
+            }
+        }
+    }
+
     let n = len as f64;
 
     match method {
