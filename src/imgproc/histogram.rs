@@ -476,6 +476,12 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
 
     let mut dst = Matrix::<f32>::new(rows, cols, 1);
 
+    // `chunks_mut`/`par_chunks_mut` panic on a zero chunk size regardless of
+    // slice length, so a zero-width input must bail out before reaching them.
+    if cols == 0 {
+        return Ok(dst);
+    }
+
     let process_row = |y: usize, dst_row: &mut [f32]| {
         for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let mut bin_idx = 0usize;
@@ -1619,6 +1625,20 @@ mod tests {
             calc_back_project::<u8>(&[&img], &[], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 1.0,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_calc_back_project_zero_width() {
+        // Regression test: chunks_mut/par_chunks_mut panic on a zero chunk
+        // size regardless of slice length, so a zero-width image must not
+        // reach the row-chunking dispatch.
+        let img = Matrix::<u8>::from_vec(3, 0, 1, vec![]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
+        let dst =
+            calc_back_project(&[&img], &[0], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 1.0).unwrap();
+        assert_eq!(dst.rows, 3);
+        assert_eq!(dst.cols, 0);
+        assert_eq!(dst.data.len(), 0);
     }
 
     #[test]
