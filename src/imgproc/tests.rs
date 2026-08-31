@@ -1316,4 +1316,26 @@ mod imgproc_tests {
 
         assert_eq!(res.data, vec![0.0, 10.0, 0.0, 30.0]);
     }
+
+    #[test]
+    fn test_compare_hist_simd_coverage() {
+        let mut h1 = Matrix::<f32>::new(1, 10, 1);
+        let mut h2 = Matrix::<f32>::new(1, 10, 1);
+        for i in 0..10 {
+            *h1.at_mut(0, i, 0).unwrap() = i as f32;
+            *h2.at_mut(0, i, 0).unwrap() = (9 - i) as f32;
+        }
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Correl).unwrap();
+        assert!(c > -1.1 && c < 1.1);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::ChiSqr).unwrap();
+        assert!(c >= 0.0);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Intersection).unwrap();
+        assert!(c >= 0.0);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Bhattacharyya).unwrap();
+        assert!(c >= 0.0);
+    }
 }
