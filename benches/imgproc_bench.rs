@@ -287,6 +287,7 @@ fn bench_imgproc(c: &mut Criterion) {
             calc_back_project(
                 black_box(&[&img_hist]),
                 &[0],
+                &[256],
                 &hist_for_backproj,
                 &hist_ranges,
                 1.0,

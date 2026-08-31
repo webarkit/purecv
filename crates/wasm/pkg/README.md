@@ -58,8 +58,41 @@ Because WebAssembly runs linearly in memory and holds pointers to Rust `Vec` obj
 Right now we have covered a large majority of operations for `core` and `imgproc`, and have started on `calib3d` and `video`:
 
 - **Core**: Arithmetic (`add`, `subtract`, `multiply`, `absdiff` etc.), Structural (`hconcat`, `vconcat`, `flip`), Geometry, constants etc.
-- **ImgProc**: Filters (`blur`, `gaussian_blur`, `bilateral_filter`), Thresholding (`threshold`), Coloring (`cvt_color`), Edge Derivatives (`canny`, `sobel`, `laplacian`), Morphology (`erode`, `dilate`, `morphology_ex`, `get_structuring_element`), Pyramids (`pyr_down`, `pyr_up`, `build_pyramid`), Feature Detection (`good_features_to_track`, `corner_sub_pix`).
+- **ImgProc**: Filters (`blur`, `gaussian_blur`, `bilateral_filter`), Thresholding (`threshold`), Coloring (`cvt_color`), Edge Derivatives (`canny`, `sobel`, `laplacian`), Morphology (`erode`, `dilate`, `morphology_ex`, `get_structuring_element`), Pyramids (`pyr_down`, `pyr_up`, `build_pyramid`), Feature Detection (`good_features_to_track`, `corner_sub_pix`), Histograms (`calcHistUniform`, `calcHistNonUniform`, `calcBackProjectUniform`, `calcBackProjectNonUniform`, `compareHist`, `equalizeHist`, `Clahe`).
 - **Video**: Optical Flow (`calc_optical_flow_pyr_lk`).
 - **Calib3d**: Pose Estimation (`solve_pnp`, `solve_pnp_ransac`), Homography (`find_homography`), and geometry (`rodrigues`).
+
+### Histogram & Contrast Operations
+
+```javascript
+import { Mat, MatVector, calcHistUniform, equalizeHist, Clahe } from '@webarkit/purecv-wasm';
+
+// 1. Equalize Histogram (8-bit grayscale only)
+const eqMat = equalizeHist(grayMat);
+
+// 2. CLAHE (Contrast Limited Adaptive Histogram Equalization)
+const clahe = new Clahe(40.0, 8, 8);
+const enhancedMat = clahe.apply(grayMat);
+
+// 3. Dense Histogram with uniform bins
+const images = new MatVector();
+images.push(grayMat);
+const channels = [0];
+const histSize = [256];
+const ranges = [0.0, 256.0]; // [min, max] per channel
+const hist = calcHistUniform(images, channels, undefined, histSize, ranges, false, undefined);
+
+// To accumulate onto a previous histogram, pass accumulate=true and the
+// existing histogram Mat as the last argument instead of undefined:
+// calcHistUniform(images, channels, undefined, histSize, ranges, true, hist);
+```
+
+*Note:* `equalizeHist` and `Clahe.apply` currently support single-channel 8-bit images (`CV_8UC1`). Support for 16-bit images (`CV_16UC1`) is planned for a future release.
+
+*Note:* `calcBackProjectUniform`/`calcBackProjectNonUniform` take an explicit
+`histSize` argument (right after `channels`) describing the shape the
+histogram was built with — a flat histogram's bin count alone can't be
+unambiguously reconstructed into a multi-dimensional shape (e.g. 8 bins
+could be `[8]` or `[2, 4]`).
 
 Note: To interface between JavaScript Typed Arrays and `purecv-wasm`, please use the available getter functions (`.data()`) which directly retrieve a Float32Array or Uint8Array view into WASM memory.

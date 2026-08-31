@@ -253,6 +253,14 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default + Send + Sync>(
                 "calc_hist: mask must have the same size as images"
             );
         }
+        if m.channels != 1 {
+            cv_bail!(
+                tags::IMGPROC,
+                InvalidInput,
+                "calc_hist: mask must be single-channel (got {})",
+                m.channels
+            );
+        }
     }
 
     // Validate channel indices
@@ -418,7 +426,11 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default + Send + Sync>(
 ///
 /// * `images` - Slice of input images.
 /// * `channels` - Global channel indices (same semantics as `calc_hist`).
-/// * `hist` - Input histogram (`f32`, flattened multi-dimensional).
+/// * `hist_size` - Number of bins per dimension, matching how `hist` was built
+///   by `calc_hist`. `hist`'s flattened bin count alone cannot recover this
+///   shape unambiguously (e.g. 8 bins could be `[8]`, `[2, 4]`, `[4, 2]`, ...),
+///   so it must be supplied explicitly rather than guessed.
+/// * `hist` - Input histogram (`f32`, flattened multi-dimensional, size `product(hist_size)`).
 /// * `ranges` - One `RangeSpec` per dimension.
 /// * `scale` - Scale factor for the output values.
 ///
@@ -427,6 +439,7 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default + Send + Sync>(
 pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
     images: &[&Matrix<T>],
     channels: &[usize],
+    hist_size: &[usize],
     hist: &Matrix<f32>,
     ranges: &[RangeSpec],
     scale: f32,
@@ -455,19 +468,52 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
             dims
         );
     }
+    if hist_size.len() != dims {
+        cv_bail!(
+            tags::IMGPROC,
+            InvalidInput,
+            "calc_back_project: hist_size length ({}) must match channels length ({})",
+            hist_size.len(),
+            dims
+        );
+    }
 
     let rows = images[0].rows;
     let cols = images[0].cols;
 
-    let total_bins = hist.rows * hist.cols * hist.channels;
+    for img in images.iter() {
+        if img.rows != rows || img.cols != cols {
+            cv_bail!(
+                tags::IMGPROC,
+                InvalidInput,
+                "calc_back_project: all images must have the same size"
+            );
+        }
+    }
+
+    // Validate channel indices
+    for &ch in channels {
+        let _ = resolve_channel(ch, images)?;
+    }
+
+    let total_bins: usize = hist_size.iter().product();
     if total_bins == 0 {
         cv_bail!(
             tags::IMGPROC,
             InvalidInput,
-            "calc_back_project: hist must not be empty"
+            "calc_back_project: hist_size must not contain a zero dimension"
         );
     }
-    let hist_size = infer_hist_size(total_bins, dims);
+    let hist_len = hist.rows * hist.cols * hist.channels;
+    if hist_len != total_bins {
+        cv_bail!(
+            tags::IMGPROC,
+            InvalidInput,
+            "calc_back_project: hist length {} does not match product(hist_size) {}",
+            hist_len,
+            total_bins
+        );
+    }
 
     let mut strides = vec![1usize; dims];
     for i in (0..dims - 1).rev() {
@@ -524,19 +570,6 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
     }
 
     Ok(dst)
-}
-
-fn infer_hist_size(total_bins: usize, dims: usize) -> Vec<usize> {
-    if dims == 1 {
-        return vec![total_bins];
-    }
-    let approx = (total_bins as f64).powf(1.0 / dims as f64).round() as usize;
-    if approx.pow(dims as u32) == total_bins {
-        return vec![approx; dims];
-    }
-    let mut sizes = vec![1usize; dims];
-    sizes[dims - 1] = total_bins;
-    sizes
 }
 
 // ---------------------------------------------------------------------------
@@ -1419,6 +1452,25 @@ mod tests {
     }
 
     #[test]
+    fn test_calc_hist_multichannel_mask_error() {
+        // Regression test: a mask must be single-channel. Previously only
+        // rows/cols were checked, so a multichannel mask was silently
+        // accepted and only its channel 0 was ever read.
+        let img = Matrix::from_vec(2, 2, 1, vec![0u8, 1, 2, 3]);
+        let mask = Matrix::from_vec(2, 2, 3, vec![1u8; 12]);
+        assert!(calc_hist(
+            &[&img],
+            &[0],
+            Some(&mask),
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn test_calc_hist_multi_image_channel_indexing() {
         // images[0] has 2 channels, images[1] has 1 channel
         let img0 = Matrix::from_vec(2, 1, 2, vec![10, 20, 30, 40]);
@@ -1470,12 +1522,63 @@ mod tests {
         let data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
         let img = Matrix::from_vec(2, 4, 1, data);
         let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
-        let bp =
-            calc_back_project(&[&img], &[0], &hist, &[RangeSpec::Uniform(0.0, 8.0)], 1.0).unwrap();
+        let bp = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 8.0)],
+            1.0,
+        )
+        .unwrap();
         assert_eq!(
             bp.data,
             vec![10.0, 10.0, 20.0, 20.0, 30.0, 30.0, 40.0, 40.0]
         );
+    }
+
+    #[test]
+    fn test_calc_back_project_2d_shape() {
+        // Regression test: without an explicit hist_size, a flat 8-bin
+        // histogram used to have its shape *guessed* from its length alone
+        // (infer_hist_size), which silently produced the wrong shape for any
+        // non-perfect-power dims (e.g. [2, 4] was inferred as [1, 8]) and
+        // corrupted the bin math. hist_size is now required explicitly.
+        let img = Matrix::from_vec(1, 1, 2, vec![1u8, 7]);
+        let hist = Matrix::from_vec(
+            8,
+            1,
+            1,
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+        );
+        let bp = calc_back_project(
+            &[&img],
+            &[0, 1],
+            &[2, 4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 2.0), RangeSpec::Uniform(0.0, 8.0)],
+            1.0,
+        )
+        .unwrap();
+        // channel 0 (value 1, range [0,2), 2 bins) -> bin 1
+        // channel 1 (value 7, range [0,8), 4 bins)  -> bin 3
+        // flat index with strides [4, 1] -> 1*4 + 3 = 7 -> hist.data[7] = 80.0
+        assert_eq!(bp.data, vec![80.0]);
+    }
+
+    #[test]
+    fn test_calc_back_project_hist_size_mismatch_error() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[3], // doesn't match hist's 4 bins
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1630,10 +1733,15 @@ mod tests {
     fn test_calc_back_project_empty_channels_error() {
         let img = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
         let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
-        assert!(
-            calc_back_project::<u8>(&[&img], &[], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 1.0,)
-                .is_err()
-        );
+        assert!(calc_back_project::<u8>(
+            &[&img],
+            &[],
+            &[],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1643,8 +1751,15 @@ mod tests {
         // reach the row-chunking dispatch.
         let img = Matrix::<u8>::from_vec(3, 0, 1, vec![]);
         let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
-        let dst =
-            calc_back_project(&[&img], &[0], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 1.0).unwrap();
+        let dst = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .unwrap();
         assert_eq!(dst.rows, 3);
         assert_eq!(dst.cols, 0);
         assert_eq!(dst.data.len(), 0);
@@ -1787,8 +1902,15 @@ mod tests {
     fn test_calc_back_project_scale() {
         let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
         let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
-        let bp =
-            calc_back_project(&[&img], &[0], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 2.0).unwrap();
+        let bp = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            2.0,
+        )
+        .unwrap();
         assert_eq!(bp.data, vec![20.0, 40.0, 60.0, 80.0]);
     }
 
@@ -1827,10 +1949,15 @@ mod tests {
         )
         .is_err());
         let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
-        assert!(
-            calc_back_project::<u8>(&[&img], &[], &hist, &[RangeSpec::Uniform(0.0, 4.0)], 1.0,)
-                .is_err()
-        );
+        assert!(calc_back_project::<u8>(
+            &[&img],
+            &[],
+            &[],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
     }
 
     #[test]

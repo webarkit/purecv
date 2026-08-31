@@ -80,9 +80,19 @@ images.push(grayMat);
 const channels = [0];
 const histSize = [256];
 const ranges = [0.0, 256.0]; // [min, max] per channel
-const hist = calcHistUniform(images, channels, undefined, histSize, ranges, false);
+const hist = calcHistUniform(images, channels, undefined, histSize, ranges, false, undefined);
+
+// To accumulate onto a previous histogram, pass accumulate=true and the
+// existing histogram Mat as the last argument instead of undefined:
+// calcHistUniform(images, channels, undefined, histSize, ranges, true, hist);
 ```
 
 *Note:* `equalizeHist` and `Clahe.apply` currently support single-channel 8-bit images (`CV_8UC1`). Support for 16-bit images (`CV_16UC1`) is planned for a future release.
+
+*Note:* `calcBackProjectUniform`/`calcBackProjectNonUniform` take an explicit
+`histSize` argument (right after `channels`) describing the shape the
+histogram was built with — a flat histogram's bin count alone can't be
+unambiguously reconstructed into a multi-dimensional shape (e.g. 8 bins
+could be `[8]` or `[2, 4]`).
 
 Note: To interface between JavaScript Typed Arrays and `purecv-wasm`, please use the available getter functions (`.data()`) which directly retrieve a Float32Array or Uint8Array view into WASM memory.
