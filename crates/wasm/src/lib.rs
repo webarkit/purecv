@@ -47,6 +47,7 @@ use purecv::imgproc::derivatives;
 use purecv::imgproc::edge;
 use purecv::imgproc::feature;
 use purecv::imgproc::filter;
+use purecv::imgproc::histogram::{self, Clahe as CoreClahe, HistCompMethods, RangeSpec};
 use purecv::imgproc::hough;
 use purecv::imgproc::morph::{self, MorphShapes, MorphTypes};
 use purecv::imgproc::pyramid;
@@ -2751,5 +2752,586 @@ impl ORB {
         .map_err(|_| JsError::new("Failed to set descriptors"))?;
 
         Ok(obj.into())
+    }
+}
+// ---------------------------------------------------------------------------
+//  MatVector - Collection of Mats
+// ---------------------------------------------------------------------------
+
+/// Managed vector of Mat objects exposed to JavaScript.
+///
+/// Mirrors the cv.MatVector class from OpenCV.js.
+#[wasm_bindgen(js_name = "MatVector")]
+pub struct MatVector {
+    pub(crate) inner: Vec<DynamicMatrix>,
+}
+
+#[wasm_bindgen(js_class = "MatVector")]
+impl MatVector {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self { inner: Vec::new() }
+    }
+
+    /// Adds a Mat to the vector (clones the underlying matrix).
+    pub fn push(&mut self, mat: &Mat) {
+        self.inner.push(mat.inner.clone());
+    }
+
+    /// Alias for push, matching OpenCV.js conventions.
+    #[wasm_bindgen(js_name = "push_back")]
+    pub fn push_back(&mut self, mat: &Mat) {
+        self.push(mat);
+    }
+
+    /// Returns the Mat at the given index, or an error if out of bounds.
+    pub fn get(&self, idx: usize) -> Result<Mat, JsError> {
+        self.inner
+            .get(idx)
+            .cloned()
+            .map(|inner| Mat { inner })
+            .ok_or_else(|| JsError::new("Index out of bounds"))
+    }
+
+    /// Returns the number of matrices in the vector.
+    pub fn size(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns the number of matrices in the vector.
+    pub fn length(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns true if the vector contains no matrices.
+    #[wasm_bindgen(js_name = "isEmpty")]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+impl Default for MatVector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  JS-side enum constants: Histogram comparison methods
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen(js_name = "HIST_CMP_CORREL")]
+pub fn hist_cmp_correl() -> i32 {
+    0
+}
+#[wasm_bindgen(js_name = "HIST_CMP_CHISQR")]
+pub fn hist_cmp_chisqr() -> i32 {
+    1
+}
+#[wasm_bindgen(js_name = "HIST_CMP_CHISQR_ALT")]
+pub fn hist_cmp_chisqr_alt() -> i32 {
+    2
+}
+#[wasm_bindgen(js_name = "HIST_CMP_INTERSECT")]
+pub fn hist_cmp_intersect() -> i32 {
+    3
+}
+#[wasm_bindgen(js_name = "HIST_CMP_BHATTACHARYYA")]
+pub fn hist_cmp_bhattacharyya() -> i32 {
+    4
+}
+#[wasm_bindgen(js_name = "HIST_CMP_KL_DIV")]
+pub fn hist_cmp_kl_div() -> i32 {
+    5
+}
+
+fn hist_comp_method_from_i32(m: i32) -> Result<HistCompMethods, JsError> {
+    match m {
+        0 => Ok(HistCompMethods::Correl),
+        1 => Ok(HistCompMethods::ChiSqr),
+        2 => Ok(HistCompMethods::ChiSqrAlt),
+        3 => Ok(HistCompMethods::Intersection),
+        4 => Ok(HistCompMethods::Bhattacharyya),
+        5 => Ok(HistCompMethods::KullbackLeibler),
+        _ => Err(JsError::new(&format!("Unknown hist comp method: {m}"))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Histogram operations
+// ---------------------------------------------------------------------------
+
+/// Computes a joint dense histogram for a set of images using uniform ranges.
+///
+/// * images     - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels   - List of channel indices across the images.
+/// * mask       - Optional single-channel u8 mask (CV_8UC1).
+/// * hist_size  - Array of bin counts for each histogram dimension.
+/// * ranges     - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
+/// * ccumulate - If true, the histogram is not cleared at the beginning when allocating.
+#[wasm_bindgen(js_name = "calcHistUniform")]
+pub fn calc_hist_uniform(
+    images: &MatVector,
+    channels: &[usize],
+    mask: Option<Mat>,
+    hist_size: &[usize],
+    ranges: &[f32],
+    accumulate: bool,
+) -> Result<Mat, JsError> {
+    if images.inner.is_empty() {
+        return Err(JsError::new(
+            "calcHistUniform: images vector must not be empty",
+        ));
+    }
+
+    if ranges.len() != hist_size.len() * 2 {
+        return Err(JsError::new(
+            "ranges array must have 2 elements (min, max) per dimension",
+        ));
+    }
+
+    let mut specs = Vec::with_capacity(hist_size.len());
+    for i in 0..hist_size.len() {
+        specs.push(RangeSpec::Uniform(ranges[i * 2], ranges[i * 2 + 1]));
+    }
+
+    let mask_ref = match &mask {
+        Some(m) => Some(require_u8(m, "calcHistUniform (mask)")?),
+        None => None,
+    };
+
+    let first = &images.inner[0];
+    let hist = match first {
+        DynamicMatrix {
+            data: DynamicData::U8(_),
+        } => {
+            let mut u8_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_u8() {
+                    u8_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcHistUniform: all images must have consistent depth (u8)",
+                    ));
+                }
+            }
+            histogram::calc_hist(
+                &u8_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+            )
+            .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        DynamicMatrix {
+            data: DynamicData::F32(_),
+        } => {
+            let mut f32_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_f32() {
+                    f32_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcHistUniform: all images must have consistent depth (f32)",
+                    ));
+                }
+            }
+            histogram::calc_hist(
+                &f32_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+            )
+            .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        _ => {
+            return Err(JsError::new(
+                "calcHistUniform: unsupported image depth (must be u8 or f32)",
+            ));
+        }
+    };
+
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::F32(hist),
+        },
+    })
+}
+
+/// Computes a joint dense histogram for a set of images using non-uniform ranges.
+///
+/// * images     - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels   - List of channel indices across the images.
+/// * mask       - Optional single-channel u8 mask (CV_8UC1).
+/// * hist_size  - Array of bin counts for each histogram dimension.
+/// * ranges     - Array of Float32Arrays, one per dimension, containing bin boundary coordinates.
+/// * ccumulate - If true, the histogram is not cleared at the beginning.
+#[wasm_bindgen(js_name = "calcHistNonUniform")]
+pub fn calc_hist_non_uniform(
+    images: &MatVector,
+    channels: &[usize],
+    mask: Option<Mat>,
+    hist_size: &[usize],
+    ranges: js_sys::Array,
+    accumulate: bool,
+) -> Result<Mat, JsError> {
+    if images.inner.is_empty() {
+        return Err(JsError::new(
+            "calcHistNonUniform: images vector must not be empty",
+        ));
+    }
+
+    if ranges.length() as usize != hist_size.len() {
+        return Err(JsError::new(
+            "ranges array must have one Float32Array per dimension",
+        ));
+    }
+
+    let mut specs = Vec::with_capacity(hist_size.len());
+    for i in 0..hist_size.len() {
+        let js_val = ranges.get(i as u32);
+        let f32_array = js_sys::Float32Array::from(js_val);
+        let mut vec = vec![0.0f32; f32_array.length() as usize];
+        f32_array.copy_to(&mut vec);
+        specs.push(RangeSpec::NonUniform(vec));
+    }
+
+    let mask_ref = match &mask {
+        Some(m) => Some(require_u8(m, "calcHistNonUniform (mask)")?),
+        None => None,
+    };
+
+    let first = &images.inner[0];
+    let hist = match first {
+        DynamicMatrix {
+            data: DynamicData::U8(_),
+        } => {
+            let mut u8_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_u8() {
+                    u8_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcHistNonUniform: all images must have consistent depth (u8)",
+                    ));
+                }
+            }
+            histogram::calc_hist(
+                &u8_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+            )
+            .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        DynamicMatrix {
+            data: DynamicData::F32(_),
+        } => {
+            let mut f32_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_f32() {
+                    f32_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcHistNonUniform: all images must have consistent depth (f32)",
+                    ));
+                }
+            }
+            histogram::calc_hist(
+                &f32_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+            )
+            .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        _ => {
+            return Err(JsError::new(
+                "calcHistNonUniform: unsupported image depth (must be u8 or f32)",
+            ));
+        }
+    };
+
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::F32(hist),
+        },
+    })
+}
+
+/// Computes the back projection of a histogram using uniform ranges.
+///
+/// * images   - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels - Channel indices to back-project.
+/// * hist     - Input histogram Mat (CV_32FC1).
+/// * ranges   - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
+/// * scale    - Optional scale factor for the output back projection image.
+#[wasm_bindgen(js_name = "calcBackProjectUniform")]
+pub fn calc_back_project_uniform(
+    images: &MatVector,
+    channels: &[usize],
+    hist: &Mat,
+    ranges: &[f32],
+    scale: f32,
+) -> Result<Mat, JsError> {
+    if images.inner.is_empty() {
+        return Err(JsError::new(
+            "calcBackProjectUniform: images vector must not be empty",
+        ));
+    }
+
+    let dims = channels.len();
+    if ranges.len() != dims * 2 {
+        return Err(JsError::new(
+            "ranges array must have 2 elements (min, max) per channel dimension",
+        ));
+    }
+
+    let mut specs = Vec::with_capacity(dims);
+    for i in 0..dims {
+        specs.push(RangeSpec::Uniform(ranges[i * 2], ranges[i * 2 + 1]));
+    }
+
+    let h = require_f32(hist, "calcBackProjectUniform (hist)")?;
+
+    let first = &images.inner[0];
+    let bp = match first {
+        DynamicMatrix {
+            data: DynamicData::U8(_),
+        } => {
+            let mut u8_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_u8() {
+                    u8_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcBackProjectUniform: all images must have consistent depth (u8)",
+                    ));
+                }
+            }
+            histogram::calc_back_project(&u8_mats, channels, h, &specs, scale)
+                .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        DynamicMatrix {
+            data: DynamicData::F32(_),
+        } => {
+            let mut f32_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_f32() {
+                    f32_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcBackProjectUniform: all images must have consistent depth (f32)",
+                    ));
+                }
+            }
+            histogram::calc_back_project(&f32_mats, channels, h, &specs, scale)
+                .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        _ => {
+            return Err(JsError::new(
+                "calcBackProjectUniform: unsupported image depth (must be u8 or f32)",
+            ));
+        }
+    };
+
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::F32(bp),
+        },
+    })
+}
+
+/// Computes the back projection of a histogram using non-uniform ranges.
+///
+/// * images   - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels - Channel indices to back-project.
+/// * hist     - Input histogram Mat (CV_32FC1).
+/// * ranges   - Array of Float32Arrays containing bin boundaries.
+/// * scale    - Optional scale factor for the output back projection image.
+#[wasm_bindgen(js_name = "calcBackProjectNonUniform")]
+pub fn calc_back_project_non_uniform(
+    images: &MatVector,
+    channels: &[usize],
+    hist: &Mat,
+    ranges: js_sys::Array,
+    scale: f32,
+) -> Result<Mat, JsError> {
+    if images.inner.is_empty() {
+        return Err(JsError::new(
+            "calcBackProjectNonUniform: images vector must not be empty",
+        ));
+    }
+
+    let dims = channels.len();
+    if ranges.length() as usize != dims {
+        return Err(JsError::new(
+            "ranges array must have one Float32Array per channel dimension",
+        ));
+    }
+
+    let mut specs = Vec::with_capacity(dims);
+    for i in 0..dims {
+        let js_val = ranges.get(i as u32);
+        let f32_array = js_sys::Float32Array::from(js_val);
+        let mut vec = vec![0.0f32; f32_array.length() as usize];
+        f32_array.copy_to(&mut vec);
+        specs.push(RangeSpec::NonUniform(vec));
+    }
+
+    let h = require_f32(hist, "calcBackProjectNonUniform (hist)")?;
+
+    let first = &images.inner[0];
+    let bp = match first {
+        DynamicMatrix {
+            data: DynamicData::U8(_),
+        } => {
+            let mut u8_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_u8() {
+                    u8_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcBackProjectNonUniform: all images must have consistent depth (u8)",
+                    ));
+                }
+            }
+            histogram::calc_back_project(&u8_mats, channels, h, &specs, scale)
+                .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        DynamicMatrix {
+            data: DynamicData::F32(_),
+        } => {
+            let mut f32_mats = Vec::with_capacity(images.inner.len());
+            for dyn_mat in &images.inner {
+                if let Some(m) = dyn_mat.as_matrix_f32() {
+                    f32_mats.push(m);
+                } else {
+                    return Err(JsError::new(
+                        "calcBackProjectNonUniform: all images must have consistent depth (f32)",
+                    ));
+                }
+            }
+            histogram::calc_back_project(&f32_mats, channels, h, &specs, scale)
+                .map_err(|e| JsError::new(&format!("{e}")))?
+        }
+        _ => {
+            return Err(JsError::new(
+                "calcBackProjectNonUniform: unsupported image depth (must be u8 or f32)",
+            ));
+        }
+    };
+
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::F32(bp),
+        },
+    })
+}
+
+/// Compares two histograms using the specified comparison method.
+///
+/// * h1     - First input histogram (CV_32FC1).
+/// * h2     - Second input histogram of the same size as h1 (CV_32FC1).
+/// * method - Comparison method: HIST_CMP_CORREL, HIST_CMP_CHISQR, etc.
+#[wasm_bindgen(js_name = "compareHist")]
+pub fn compare_hist(h1: &Mat, h2: &Mat, method: i32) -> Result<f64, JsError> {
+    let m1 = require_f32(h1, "compareHist (h1)")?;
+    let m2 = require_f32(h2, "compareHist (h2)")?;
+    let meth = hist_comp_method_from_i32(method)?;
+
+    histogram::compare_hist(m1, m2, meth).map_err(|e| JsError::new(&format!("{e}")))
+}
+
+/// Equalizes the histogram of a grayscale image.
+///
+/// **Note:** Currently only 8-bit single-channel images (CV_8UC1) are supported.
+/// 16-bit (CV_16UC1) images are not yet supported.
+///
+/// * src - Input single-channel 8-bit image (CV_8UC1).
+#[wasm_bindgen(js_name = "equalizeHist")]
+pub fn equalize_hist(src: &Mat) -> Result<Mat, JsError> {
+    let m = require_u8(src, "equalizeHist")?;
+    let res = histogram::equalize_hist(m).map_err(|e| JsError::new(&format!("{e}")))?;
+    Ok(Mat {
+        inner: DynamicMatrix {
+            data: DynamicData::U8(res),
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+//  Clahe wrapper
+// ---------------------------------------------------------------------------
+
+/// Contrast Limited Adaptive Histogram Equalization.
+///
+/// Wraps OpenCV-style CLAHE.
+#[wasm_bindgen(js_name = "Clahe")]
+pub struct WasmClahe {
+    inner: CoreClahe,
+}
+
+#[wasm_bindgen(js_class = "Clahe")]
+impl WasmClahe {
+    /// Creates a new CLAHE instance with given clip limit and grid size.
+    ///
+    /// * clip_limit        - Threshold for contrast limiting (default in OpenCV is 40.0).
+    /// * 	ile_grid_width   - Number of tiles horizontally (e.g. 8).
+    /// * 	ile_grid_height  - Number of tiles vertically (e.g. 8).
+    #[wasm_bindgen(constructor)]
+    pub fn new(clip_limit: f64, tile_grid_width: i32, tile_grid_height: i32) -> Self {
+        let size = purecv::core::types::Size2i::new(tile_grid_width, tile_grid_height);
+        Self {
+            inner: histogram::create_clahe(clip_limit, size),
+        }
+    }
+
+    /// Applies CLAHE to the input grayscale image.
+    ///
+    /// **Note:** Currently only 8-bit single-channel images (CV_8UC1) are supported.
+    /// 16-bit (CV_16UC1) support is not yet exposed in WebAssembly.
+    pub fn apply(&self, src: &Mat) -> Result<Mat, JsError> {
+        let m = require_u8(src, "Clahe::apply")?;
+        let res = self
+            .inner
+            .apply_u8(m)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(Mat {
+            inner: DynamicMatrix {
+                data: DynamicData::U8(res),
+            },
+        })
+    }
+
+    /// Gets the clip limit threshold.
+    #[wasm_bindgen(getter, js_name = "clipLimit")]
+    pub fn clip_limit(&self) -> f64 {
+        self.inner.get_clip_limit()
+    }
+
+    /// Sets the clip limit threshold.
+    #[wasm_bindgen(setter, js_name = "clipLimit")]
+    pub fn set_clip_limit(&mut self, limit: f64) {
+        self.inner.set_clip_limit(limit);
+    }
+
+    /// Gets the number of tile grid columns (width).
+    #[wasm_bindgen(getter, js_name = "tileGridWidth")]
+    pub fn tile_grid_width(&self) -> i32 {
+        self.inner.get_tiles_grid_size().width
+    }
+
+    /// Gets the number of tile grid rows (height).
+    #[wasm_bindgen(getter, js_name = "tileGridHeight")]
+    pub fn tile_grid_height(&self) -> i32 {
+        self.inner.get_tiles_grid_size().height
+    }
+
+    /// Sets the tile grid size (columns and rows).
+    #[wasm_bindgen(js_name = "setTilesGridSize")]
+    pub fn set_tiles_grid_size(&mut self, width: i32, height: i32) {
+        self.inner
+            .set_tiles_grid_size(purecv::core::types::Size2i::new(width, height));
+    }
+
+    /// Gets the bit shift parameter.
+    #[wasm_bindgen(getter, js_name = "bitShift")]
+    pub fn bit_shift(&self) -> i32 {
+        self.inner.get_bit_shift()
+    }
+
+    /// Sets the bit shift parameter.
+    #[wasm_bindgen(setter, js_name = "bitShift")]
+    pub fn set_bit_shift(&mut self, bit_shift: i32) {
+        self.inner.set_bit_shift(bit_shift);
     }
 }
