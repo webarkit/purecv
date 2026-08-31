@@ -2863,12 +2863,14 @@ fn hist_comp_method_from_i32(m: i32) -> Result<HistCompMethods, JsError> {
 
 /// Computes a joint dense histogram for a set of images using uniform ranges.
 ///
-/// * images     - MatVector of input images (u8 or f32 depth, all matching).
-/// * channels   - List of channel indices across the images.
-/// * mask       - Optional single-channel u8 mask (CV_8UC1).
-/// * hist_size  - Array of bin counts for each histogram dimension.
-/// * ranges     - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
-/// * ccumulate - If true, the histogram is not cleared at the beginning when allocating.
+/// * images        - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels      - List of channel indices across the images.
+/// * mask          - Optional single-channel u8 mask (CV_8UC1).
+/// * hist_size     - Array of bin counts for each histogram dimension.
+/// * ranges        - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
+/// * accumulate    - If true, adds to `existing_hist` instead of starting from zero.
+/// * existing_hist - The histogram to accumulate into when `accumulate` is true
+///   (CV_32FC1, same size as the output). Ignored when `accumulate` is false.
 #[wasm_bindgen(js_name = "calcHistUniform")]
 pub fn calc_hist_uniform(
     images: &MatVector,
@@ -2877,10 +2879,11 @@ pub fn calc_hist_uniform(
     hist_size: &[usize],
     ranges: &[f32],
     accumulate: bool,
+    existing_hist: Option<Mat>,
 ) -> Result<Mat, JsError> {
     if images.inner.is_empty() {
         return Err(JsError::new(
-            "calcHistUniform: images vector must not be empty",
+            "calc_hist_uniform: images vector must not be empty",
         ));
     }
 
@@ -2896,7 +2899,11 @@ pub fn calc_hist_uniform(
     }
 
     let mask_ref = match &mask {
-        Some(m) => Some(require_u8(m, "calcHistUniform (mask)")?),
+        Some(m) => Some(require_u8(m, "calc_hist_uniform (mask)")?),
+        None => None,
+    };
+    let existing_hist_ref = match &existing_hist {
+        Some(h) => Some(require_f32(h, "calc_hist_uniform (existing_hist)")?),
         None => None,
     };
 
@@ -2911,12 +2918,18 @@ pub fn calc_hist_uniform(
                     u8_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcHistUniform: all images must have consistent depth (u8)",
+                        "calc_hist_uniform: all images must have consistent depth (u8)",
                     ));
                 }
             }
             histogram::calc_hist(
-                &u8_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+                &u8_mats,
+                channels,
+                mask_ref,
+                hist_size,
+                &specs,
+                accumulate,
+                existing_hist_ref,
             )
             .map_err(|e| JsError::new(&format!("{e}")))?
         }
@@ -2929,18 +2942,24 @@ pub fn calc_hist_uniform(
                     f32_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcHistUniform: all images must have consistent depth (f32)",
+                        "calc_hist_uniform: all images must have consistent depth (f32)",
                     ));
                 }
             }
             histogram::calc_hist(
-                &f32_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+                &f32_mats,
+                channels,
+                mask_ref,
+                hist_size,
+                &specs,
+                accumulate,
+                existing_hist_ref,
             )
             .map_err(|e| JsError::new(&format!("{e}")))?
         }
         _ => {
             return Err(JsError::new(
-                "calcHistUniform: unsupported image depth (must be u8 or f32)",
+                "calc_hist_uniform: unsupported image depth (must be u8 or f32)",
             ));
         }
     };
@@ -2954,12 +2973,14 @@ pub fn calc_hist_uniform(
 
 /// Computes a joint dense histogram for a set of images using non-uniform ranges.
 ///
-/// * images     - MatVector of input images (u8 or f32 depth, all matching).
-/// * channels   - List of channel indices across the images.
-/// * mask       - Optional single-channel u8 mask (CV_8UC1).
-/// * hist_size  - Array of bin counts for each histogram dimension.
-/// * ranges     - Array of Float32Arrays, one per dimension, containing bin boundary coordinates.
-/// * ccumulate - If true, the histogram is not cleared at the beginning.
+/// * images        - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels      - List of channel indices across the images.
+/// * mask          - Optional single-channel u8 mask (CV_8UC1).
+/// * hist_size     - Array of bin counts for each histogram dimension.
+/// * ranges        - Array of Float32Arrays, one per dimension, containing bin boundary coordinates.
+/// * accumulate    - If true, adds to `existing_hist` instead of starting from zero.
+/// * existing_hist - The histogram to accumulate into when `accumulate` is true
+///   (CV_32FC1, same size as the output). Ignored when `accumulate` is false.
 #[wasm_bindgen(js_name = "calcHistNonUniform")]
 pub fn calc_hist_non_uniform(
     images: &MatVector,
@@ -2968,10 +2989,11 @@ pub fn calc_hist_non_uniform(
     hist_size: &[usize],
     ranges: js_sys::Array,
     accumulate: bool,
+    existing_hist: Option<Mat>,
 ) -> Result<Mat, JsError> {
     if images.inner.is_empty() {
         return Err(JsError::new(
-            "calcHistNonUniform: images vector must not be empty",
+            "calc_hist_non_uniform: images vector must not be empty",
         ));
     }
 
@@ -2991,7 +3013,11 @@ pub fn calc_hist_non_uniform(
     }
 
     let mask_ref = match &mask {
-        Some(m) => Some(require_u8(m, "calcHistNonUniform (mask)")?),
+        Some(m) => Some(require_u8(m, "calc_hist_non_uniform (mask)")?),
+        None => None,
+    };
+    let existing_hist_ref = match &existing_hist {
+        Some(h) => Some(require_f32(h, "calc_hist_non_uniform (existing_hist)")?),
         None => None,
     };
 
@@ -3006,12 +3032,18 @@ pub fn calc_hist_non_uniform(
                     u8_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcHistNonUniform: all images must have consistent depth (u8)",
+                        "calc_hist_non_uniform: all images must have consistent depth (u8)",
                     ));
                 }
             }
             histogram::calc_hist(
-                &u8_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+                &u8_mats,
+                channels,
+                mask_ref,
+                hist_size,
+                &specs,
+                accumulate,
+                existing_hist_ref,
             )
             .map_err(|e| JsError::new(&format!("{e}")))?
         }
@@ -3024,18 +3056,24 @@ pub fn calc_hist_non_uniform(
                     f32_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcHistNonUniform: all images must have consistent depth (f32)",
+                        "calc_hist_non_uniform: all images must have consistent depth (f32)",
                     ));
                 }
             }
             histogram::calc_hist(
-                &f32_mats, channels, mask_ref, hist_size, &specs, accumulate, None,
+                &f32_mats,
+                channels,
+                mask_ref,
+                hist_size,
+                &specs,
+                accumulate,
+                existing_hist_ref,
             )
             .map_err(|e| JsError::new(&format!("{e}")))?
         }
         _ => {
             return Err(JsError::new(
-                "calcHistNonUniform: unsupported image depth (must be u8 or f32)",
+                "calc_hist_non_uniform: unsupported image depth (must be u8 or f32)",
             ));
         }
     };
@@ -3049,22 +3087,26 @@ pub fn calc_hist_non_uniform(
 
 /// Computes the back projection of a histogram using uniform ranges.
 ///
-/// * images   - MatVector of input images (u8 or f32 depth, all matching).
-/// * channels - Channel indices to back-project.
-/// * hist     - Input histogram Mat (CV_32FC1).
-/// * ranges   - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
-/// * scale    - Optional scale factor for the output back projection image.
+/// * images    - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels  - Channel indices to back-project.
+/// * hist_size - Number of bins per dimension, matching how `hist` was built.
+///   `hist`'s flat length alone cannot recover its shape (e.g. an 8-bin
+///   histogram could be `[8]` or `[2, 4]`), so it must be supplied explicitly.
+/// * hist      - Input histogram Mat (CV_32FC1).
+/// * ranges    - Flat array of [min_0, max_0, min_1, max_1, ...] per dimension.
+/// * scale     - Optional scale factor for the output back projection image.
 #[wasm_bindgen(js_name = "calcBackProjectUniform")]
 pub fn calc_back_project_uniform(
     images: &MatVector,
     channels: &[usize],
+    hist_size: &[usize],
     hist: &Mat,
     ranges: &[f32],
     scale: f32,
 ) -> Result<Mat, JsError> {
     if images.inner.is_empty() {
         return Err(JsError::new(
-            "calcBackProjectUniform: images vector must not be empty",
+            "calc_back_project_uniform: images vector must not be empty",
         ));
     }
 
@@ -3080,7 +3122,7 @@ pub fn calc_back_project_uniform(
         specs.push(RangeSpec::Uniform(ranges[i * 2], ranges[i * 2 + 1]));
     }
 
-    let h = require_f32(hist, "calcBackProjectUniform (hist)")?;
+    let h = require_f32(hist, "calc_back_project_uniform (hist)")?;
 
     let first = &images.inner[0];
     let bp = match first {
@@ -3093,11 +3135,11 @@ pub fn calc_back_project_uniform(
                     u8_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcBackProjectUniform: all images must have consistent depth (u8)",
+                        "calc_back_project_uniform: all images must have consistent depth (u8)",
                     ));
                 }
             }
-            histogram::calc_back_project(&u8_mats, channels, h, &specs, scale)
+            histogram::calc_back_project(&u8_mats, channels, hist_size, h, &specs, scale)
                 .map_err(|e| JsError::new(&format!("{e}")))?
         }
         DynamicMatrix {
@@ -3109,16 +3151,16 @@ pub fn calc_back_project_uniform(
                     f32_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcBackProjectUniform: all images must have consistent depth (f32)",
+                        "calc_back_project_uniform: all images must have consistent depth (f32)",
                     ));
                 }
             }
-            histogram::calc_back_project(&f32_mats, channels, h, &specs, scale)
+            histogram::calc_back_project(&f32_mats, channels, hist_size, h, &specs, scale)
                 .map_err(|e| JsError::new(&format!("{e}")))?
         }
         _ => {
             return Err(JsError::new(
-                "calcBackProjectUniform: unsupported image depth (must be u8 or f32)",
+                "calc_back_project_uniform: unsupported image depth (must be u8 or f32)",
             ));
         }
     };
@@ -3132,22 +3174,26 @@ pub fn calc_back_project_uniform(
 
 /// Computes the back projection of a histogram using non-uniform ranges.
 ///
-/// * images   - MatVector of input images (u8 or f32 depth, all matching).
-/// * channels - Channel indices to back-project.
-/// * hist     - Input histogram Mat (CV_32FC1).
-/// * ranges   - Array of Float32Arrays containing bin boundaries.
-/// * scale    - Optional scale factor for the output back projection image.
+/// * images    - MatVector of input images (u8 or f32 depth, all matching).
+/// * channels  - Channel indices to back-project.
+/// * hist_size - Number of bins per dimension, matching how `hist` was built.
+///   `hist`'s flat length alone cannot recover its shape (e.g. an 8-bin
+///   histogram could be `[8]` or `[2, 4]`), so it must be supplied explicitly.
+/// * hist      - Input histogram Mat (CV_32FC1).
+/// * ranges    - Array of Float32Arrays containing bin boundaries.
+/// * scale     - Optional scale factor for the output back projection image.
 #[wasm_bindgen(js_name = "calcBackProjectNonUniform")]
 pub fn calc_back_project_non_uniform(
     images: &MatVector,
     channels: &[usize],
+    hist_size: &[usize],
     hist: &Mat,
     ranges: js_sys::Array,
     scale: f32,
 ) -> Result<Mat, JsError> {
     if images.inner.is_empty() {
         return Err(JsError::new(
-            "calcBackProjectNonUniform: images vector must not be empty",
+            "calc_back_project_non_uniform: images vector must not be empty",
         ));
     }
 
@@ -3167,7 +3213,7 @@ pub fn calc_back_project_non_uniform(
         specs.push(RangeSpec::NonUniform(vec));
     }
 
-    let h = require_f32(hist, "calcBackProjectNonUniform (hist)")?;
+    let h = require_f32(hist, "calc_back_project_non_uniform (hist)")?;
 
     let first = &images.inner[0];
     let bp = match first {
@@ -3180,11 +3226,11 @@ pub fn calc_back_project_non_uniform(
                     u8_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcBackProjectNonUniform: all images must have consistent depth (u8)",
+                        "calc_back_project_non_uniform: all images must have consistent depth (u8)",
                     ));
                 }
             }
-            histogram::calc_back_project(&u8_mats, channels, h, &specs, scale)
+            histogram::calc_back_project(&u8_mats, channels, hist_size, h, &specs, scale)
                 .map_err(|e| JsError::new(&format!("{e}")))?
         }
         DynamicMatrix {
@@ -3196,16 +3242,16 @@ pub fn calc_back_project_non_uniform(
                     f32_mats.push(m);
                 } else {
                     return Err(JsError::new(
-                        "calcBackProjectNonUniform: all images must have consistent depth (f32)",
+                        "calc_back_project_non_uniform: all images must have consistent depth (f32)",
                     ));
                 }
             }
-            histogram::calc_back_project(&f32_mats, channels, h, &specs, scale)
+            histogram::calc_back_project(&f32_mats, channels, hist_size, h, &specs, scale)
                 .map_err(|e| JsError::new(&format!("{e}")))?
         }
         _ => {
             return Err(JsError::new(
-                "calcBackProjectNonUniform: unsupported image depth (must be u8 or f32)",
+                "calc_back_project_non_uniform: unsupported image depth (must be u8 or f32)",
             ));
         }
     };
@@ -3265,8 +3311,8 @@ impl WasmClahe {
     /// Creates a new CLAHE instance with given clip limit and grid size.
     ///
     /// * clip_limit        - Threshold for contrast limiting (default in OpenCV is 40.0).
-    /// * 	ile_grid_width   - Number of tiles horizontally (e.g. 8).
-    /// * 	ile_grid_height  - Number of tiles vertically (e.g. 8).
+    /// * tile_grid_width   - Number of tiles horizontally (e.g. 8).
+    /// * tile_grid_height  - Number of tiles vertically (e.g. 8).
     #[wasm_bindgen(constructor)]
     pub fn new(clip_limit: f64, tile_grid_width: i32, tile_grid_height: i32) -> Self {
         let size = purecv::core::types::Size2i::new(tile_grid_width, tile_grid_height);

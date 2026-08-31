@@ -1,8 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
 use purecv_wasm::{
-    calc_hist_uniform, compare_hist, equalize_hist, find_homography_wasm, hist_cmp_correl,
-    rodrigues_wasm, solve_pnp_wasm, Clahe, Mat, MatVector, Point2fVector, Point3fVector,
+    calc_back_project_uniform, calc_hist_uniform, compare_hist, equalize_hist,
+    find_homography_wasm, hist_cmp_correl, rodrigues_wasm, solve_pnp_wasm, Mat, MatVector,
+    Point2fVector, Point3fVector, WasmClahe,
 };
 use wasm_bindgen_test::*;
 
@@ -135,7 +136,7 @@ fn test_equalize_hist() {
 fn test_clahe() {
     let data = vec![128u8; 64];
     let src = Mat::from_u8_data(8, 8, 1, &data).unwrap();
-    let mut clahe = Clahe::new(40.0, 8, 8);
+    let mut clahe = WasmClahe::new(40.0, 8, 8);
     assert_eq!(clahe.clip_limit(), 40.0);
     clahe.set_clip_limit(20.0);
     assert_eq!(clahe.clip_limit(), 20.0);
@@ -155,10 +156,57 @@ fn test_calc_hist_and_compare() {
     let hist_size = vec![4];
     let ranges = vec![0.0, 8.0];
     let channels = vec![0];
-    let h1 = calc_hist_uniform(&mv, &channels, None, &hist_size, &ranges, false).unwrap();
+    let h1 = calc_hist_uniform(&mv, &channels, None, &hist_size, &ranges, false, None).unwrap();
     assert_eq!(h1.rows(), 4);
     assert_eq!(h1.cols(), 1);
 
     let score = compare_hist(&h1, &h1, hist_cmp_correl()).unwrap();
     assert!((score - 1.0).abs() < 1e-4);
+
+    // 8 pixel values (0..8) into 4 bins over [0,8) -> 2 pixels per bin.
+    assert_eq!(h1.data_f32().unwrap(), vec![2.0, 2.0, 2.0, 2.0]);
+
+    // accumulate=true should add onto existing_hist, not start from zero.
+    let h2 = calc_hist_uniform(&mv, &channels, None, &hist_size, &ranges, true, Some(h1)).unwrap();
+    assert_eq!(h2.data_f32().unwrap(), vec![4.0, 4.0, 4.0, 4.0]);
+}
+
+#[wasm_bindgen_test]
+fn test_calc_back_project_2d_shape() {
+    // Regression test: calc_back_project_uniform now requires an explicit
+    // hist_size, so the flat 8-bin histogram below is correctly treated as
+    // a [2, 4] shape rather than guessed (and previously miscomputed as
+    // [1, 8]) from its bin count alone.
+    let mut mv = MatVector::new();
+    let img = Mat::from_u8_data(1, 1, 2, &[1u8, 7]).unwrap();
+    mv.push(&img);
+
+    let hist_data: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
+    let hist = Mat::from_f32_data(8, 1, 1, &hist_data).unwrap();
+
+    let bp = calc_back_project_uniform(&mv, &[0, 1], &[2, 4], &hist, &[0.0, 2.0, 0.0, 8.0], 1.0)
+        .unwrap();
+    // channel 0 (value 1, range [0,2), 2 bins) -> bin 1
+    // channel 1 (value 7, range [0,8), 4 bins)  -> bin 3
+    // flat index with strides [4, 1] -> 1*4 + 3 = 7 -> hist.data[7] = 80.0
+    assert_eq!(bp.data_f32().unwrap(), vec![80.0]);
+}
+
+#[wasm_bindgen_test]
+fn test_calc_back_project_mismatched_image_size_error() {
+    let mut mv = MatVector::new();
+    mv.push(&Mat::from_u8_data(2, 2, 1, &[0u8, 1, 2, 3]).unwrap());
+    mv.push(&Mat::from_u8_data(3, 3, 1, &[0u8; 9]).unwrap());
+
+    let hist = Mat::from_f32_data(4, 1, 1, &[1.0, 2.0, 3.0, 4.0]).unwrap();
+    assert!(calc_back_project_uniform(&mv, &[0, 1], &[4], &hist, &[0.0, 4.0], 1.0).is_err());
+}
+
+#[wasm_bindgen_test]
+fn test_calc_hist_multichannel_mask_error() {
+    let mut mv = MatVector::new();
+    mv.push(&Mat::from_u8_data(2, 2, 1, &[0u8, 1, 2, 3]).unwrap());
+
+    let mask = Mat::from_u8_data(2, 2, 3, &[1u8; 12]).unwrap();
+    assert!(calc_hist_uniform(&mv, &[0], Some(mask), &[4], &[0.0, 4.0], false, None).is_err());
 }
