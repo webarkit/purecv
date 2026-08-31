@@ -1,7 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use purecv_wasm::{
-    find_homography_wasm, rodrigues_wasm, solve_pnp_wasm, Mat, Point2fVector, Point3fVector,
+    calc_hist_uniform, compare_hist, equalize_hist, find_homography_wasm, hist_cmp_correl,
+    rodrigues_wasm, solve_pnp_wasm, Clahe, Mat, MatVector, Point2fVector, Point3fVector,
 };
 use wasm_bindgen_test::*;
 
@@ -119,4 +120,45 @@ fn test_find_homography() {
         3.0,
     )
     .unwrap();
+}
+
+#[wasm_bindgen_test]
+fn test_equalize_hist() {
+    let data = vec![0, 50, 100, 150, 200, 255];
+    let src = Mat::from_u8_data(2, 3, 1, &data).unwrap();
+    let eq = equalize_hist(&src).unwrap();
+    assert_eq!(eq.rows(), 2);
+    assert_eq!(eq.cols(), 3);
+}
+
+#[wasm_bindgen_test]
+fn test_clahe() {
+    let data = vec![128u8; 64];
+    let src = Mat::from_u8_data(8, 8, 1, &data).unwrap();
+    let mut clahe = Clahe::new(40.0, 8, 8);
+    assert_eq!(clahe.clip_limit(), 40.0);
+    clahe.set_clip_limit(20.0);
+    assert_eq!(clahe.clip_limit(), 20.0);
+    let dst = clahe.apply(&src).unwrap();
+    assert_eq!(dst.rows(), 8);
+    assert_eq!(dst.cols(), 8);
+}
+
+#[wasm_bindgen_test]
+fn test_calc_hist_and_compare() {
+    let mut mv = MatVector::new();
+    let data = vec![0u8, 1, 2, 3, 4, 5, 6, 7];
+    let img = Mat::from_u8_data(2, 4, 1, &data).unwrap();
+    mv.push(&img);
+    assert_eq!(mv.length(), 1);
+
+    let hist_size = vec![4];
+    let ranges = vec![0.0, 8.0];
+    let channels = vec![0];
+    let h1 = calc_hist_uniform(&mv, &channels, None, &hist_size, &ranges, false).unwrap();
+    assert_eq!(h1.rows(), 4);
+    assert_eq!(h1.cols(), 1);
+
+    let score = compare_hist(&h1, &h1, hist_cmp_correl()).unwrap();
+    assert!((score - 1.0).abs() < 1e-4);
 }
