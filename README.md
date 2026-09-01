@@ -60,6 +60,7 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Hough Transform:** Standard (`hough_lines`) and Probabilistic (`hough_lines_p`) line detection, plus Hough Circle Transform (`hough_circles`) using internally computed Sobel gradients. Fully parallelized via the `parallel` feature.
 - **Resizing:** `resize` function utilizing high-performance bilinear interpolation, fully compatible with `parallel` Rayon multi-threading.
 - **Geometric Transformations:** `remap` (with bilinear and nearest-neighbor interpolation) and `warp_perspective` (perspective transformations) fully parallelized and SIMD-accelerated.
+- **Histograms & Contrast:** `calc_hist` (multi-dimensional, uniform or non-uniform bins, optional mask and accumulation) and `calc_back_project` for histogram back-projection; `compare_hist` with all 6 OpenCV comparison methods (`Correl`, `ChiSqr`, `ChiSqrAlt`, `Intersection`, `Bhattacharyya`, `KullbackLeibler`), SIMD-accelerated via the `simd` feature; `equalize_hist` for global histogram equalization; and `Clahe` (Contrast Limited Adaptive Histogram Equalization) for `u8`/`u16` images. `calc_hist`, `calc_back_project`, `equalize_hist`, and `Clahe` are all parallelized via the `parallel` feature.
 
 ### `purecv-features2d`
 - **FAST Feature Detector:** Real-time corner detector (`FastFeatureDetector`) supporting Type 5_8, 7_12, and 9_16 neighborhood configurations, plus optional non-maximum suppression.
@@ -312,6 +313,9 @@ cargo run --example morphology
 # Gaussian pyramids (pyr_down, pyr_up)
 cargo run --example pyramids
 
+# Histograms & contrast (calc_hist, calc_back_project, compare_hist, equalize_hist, CLAHE)
+cargo run --example histogram
+
 # Hough Transform (Lines and Circles detection)
 cargo run --example hough_transform
 
@@ -344,10 +348,10 @@ cargo run --example rectification
 ## 🧪 Testing & Benchmarking
 
 ### Running Tests
-PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **308 unit tests** (plus **40 doc-tests**) covering:
+PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **342 unit tests** (plus **40 doc-tests**) covering:
 
 - **Core module:** Matrix factories, scalar arithmetic variants, bitwise scalar ops, min/max, comparison ops (`compare`, `in_range`), reduction (`reduce`, `count_non_zero`), polar/cartesian conversions, linear algebra (`determinant`, `invert`, `solve`), channel ops (`extract_channel`, `insert_channel`), `DynamicMatrix`, transforms, sorting, clustering, and RNG.
-- **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), and kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`).
+- **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`), and histograms/CLAHE (`calc_hist`, `calc_back_project`, `compare_hist`, `equalize_hist`, `Clahe`).
 - **Features2d module:** Keypoint structures (`KeyPoint`), FAST corner detection (`FastFeatureDetector`), scale pyramids, and ORB feature extraction & BRIEF descriptor extraction (`Orb`).
 - **Video module:** Tracking and optical flow capabilities including `calc_optical_flow_pyr_lk` and `build_optical_flow_pyramid` implementations.
 - **Calib3d module:** SVD, homography estimation, pose estimation (`solve_pnp`), and `rodrigues`.

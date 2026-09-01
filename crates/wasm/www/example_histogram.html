@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<!--
+ *  example_histogram.html
+ *  purecv
+ *
+ *  This file is part of purecv - WebARKit.
+ *
+ *  purecv is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  purecv is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with purecv.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *  As a special exception, the copyright holders of this library give you
+ *  permission to link this library with independent modules to produce an
+ *  executable, regardless of the license terms of these independent modules, and to
+ *  copy and distribute the resulting executable under terms of your choice,
+ *  provided that you also meet, for each linked independent module, the terms and
+ *  conditions of the license of that module. An independent module is a module
+ *  which is neither derived from nor based on this library. If you modify this
+ *  library, you may extend this exception to your version of the library, but you
+ *  are not obligated to do so. If you do not wish to do so, delete this exception
+ *  statement from your version.
+ *
+ *  Copyright 2026 WebARKit.
+ *
+ *  Author(s): Walter Perdan @kalwalt https://github.com/kalwalt
+ *
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PureCV - Histogram & CLAHE</title>
+    <style>
+        :root {
+            --primary: #43e97b;
+            --secondary: #38f9d7;
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #f8fafc;
+        }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1000px;
+            width: 90%;
+            margin: 2rem 0;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        .card {
+            background: var(--card);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            margin-bottom: 1.5rem;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+        .compare-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 1rem;
+            background: #000;
+            border-radius: 0.5rem;
+        }
+        .level-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .level-box canvas {
+            border: 1px solid #334155;
+            background: #000;
+            max-width: 280px;
+            height: auto;
+        }
+        .level-label {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        #histogram-canvas {
+            width: 100%;
+            height: 160px;
+            background: #000;
+            border-radius: 0.5rem;
+            display: block;
+        }
+        .scores {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.75rem;
+            font-size: 0.875rem;
+        }
+        .score-item {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+        }
+        .score-item .name {
+            color: #94a3b8;
+            display: block;
+            font-size: 0.75rem;
+        }
+        .score-item .value {
+            color: var(--secondary);
+            font-weight: 600;
+        }
+        .uploader {
+            border: 2px dashed #334155;
+            padding: 2rem;
+            text-align: center;
+            border-radius: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 1rem;
+        }
+        .uploader:hover { border-color: var(--primary); background: rgba(67, 233, 123, 0.05); }
+        .uploader p { margin: 0; color: #94a3b8; }
+        .loading {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: flex; justify-content: center; align-items: center; z-index: 100;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="loader" class="loading">
+        <p>Initializing WASM...</p>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Histogram & CLAHE</h1>
+            <p>calc_hist, compare_hist, equalize_hist &amp; Contrast Limited Adaptive Histogram Equalization</p>
+        </div>
+
+        <div class="card">
+            <div id="drop-zone" class="uploader">
+                <p>Click or drag image here</p>
+                <input type="file" id="file-input" accept="image/*" class="hidden">
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>CLAHE Clip Limit: <span id="val-clip">40</span></label>
+                    <input type="range" id="clip-limit" min="1" max="100" value="40">
+                </div>
+                <div class="control-group">
+                    <label>CLAHE Tile Grid: <span id="val-tiles">8</span>x<span id="val-tiles-2">8</span></label>
+                    <input type="range" id="tile-grid" min="2" max="16" value="8">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div id="compare-row" class="compare-row">
+                <!-- Canvases injected here: Grayscale | equalize_hist | CLAHE -->
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="level-label" style="margin-bottom: 0.5rem;">256-bin uniform histogram of the grayscale source (calc_hist)</div>
+            <canvas id="histogram-canvas"></canvas>
+        </div>
+
+        <div class="card">
+            <div class="level-label" style="margin-bottom: 0.75rem;">compare_hist: source histogram vs. CLAHE-equalized histogram</div>
+            <div id="scores" class="scores">
+                <!-- Score items injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="example_histogram.js"></script>
+</body>
+</html>
