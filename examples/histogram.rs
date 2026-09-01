@@ -36,8 +36,7 @@
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 use purecv::core::logging::tags;
-use purecv::core::types::Size2i;
-use purecv::core::Matrix;
+use purecv::core::{Matrix, Size2i};
 use purecv::imgproc::{
     calc_back_project, calc_hist, compare_hist, create_clahe, cvt_color_rgb_to_gray, equalize_hist,
     HistCompMethods, RangeSpec,
@@ -76,6 +75,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rgb_img = img.to_rgb8();
     let mat_rgb = Matrix::from_vec(height as usize, width as usize, 3, rgb_img.into_raw());
     let mat_gray = cvt_color_rgb_to_gray(&mat_rgb)?;
+
+    // Create output directory if it doesn't exist.
+    std::fs::create_dir_all("examples/data/out")?;
 
     // --- calc_hist: uniform bins ---
 

@@ -122,26 +122,36 @@ function processImage() {
     const clipLimit = parseFloat(clipSlider.value);
     const tileGrid = parseInt(tileSlider.value);
 
+    // Declared outside the try so a mid-way failure can still free whatever
+    // was already allocated (WASM objects are not garbage-collected).
+    let images = null;
+    let hist = null;
+    let equalized = null;
+    let clahe = null;
+    let claheOut = null;
+    let claheImages = null;
+    let claheHist = null;
+
     try {
         // --- calc_hist: 256-bin uniform histogram of the grayscale source ---
-        const images = new cv.MatVector();
+        images = new cv.MatVector();
         images.push(gray);
         const histSize = [256];
         const ranges = [0.0, 256.0];
-        const hist = cv.calcHistUniform(images, [0], undefined, histSize, ranges, false, undefined);
+        hist = cv.calcHistUniform(images, [0], undefined, histSize, ranges, false, undefined);
         drawHistogram(histCanvas, hist.dataF32(), '#43e97b');
 
         // --- equalize_hist: global histogram equalization ---
-        const equalized = cv.equalizeHist(gray);
+        equalized = cv.equalizeHist(gray);
 
         // --- CLAHE: contrast-limited adaptive histogram equalization ---
-        const clahe = new cv.Clahe(clipLimit, tileGrid, tileGrid);
-        const claheOut = clahe.apply(gray);
+        clahe = new cv.Clahe(clipLimit, tileGrid, tileGrid);
+        claheOut = clahe.apply(gray);
 
         // --- compare_hist: source vs. CLAHE-equalized histograms ---
-        const claheImages = new cv.MatVector();
+        claheImages = new cv.MatVector();
         claheImages.push(claheOut);
-        const claheHist = cv.calcHistUniform(claheImages, [0], undefined, histSize, ranges, false, undefined);
+        claheHist = cv.calcHistUniform(claheImages, [0], undefined, histSize, ranges, false, undefined);
 
         for (const method of COMPARE_METHODS) {
             const score = cv.compareHist(hist, claheHist, method.ctor(cv));
@@ -155,19 +165,18 @@ function processImage() {
         matToCanvas(gray, addCanvasBox(`Grayscale: ${gray.cols}x${gray.rows}`));
         matToCanvas(equalized, addCanvasBox('equalize_hist'));
         matToCanvas(claheOut, addCanvasBox(`CLAHE (clip=${clipLimit}, ${tileGrid}x${tileGrid})`));
-
-        hist.free();
-        equalized.free();
-        clahe.free();
-        claheOut.free();
-        claheHist.free();
-        images.free();
-        claheImages.free();
     } catch (e) {
         console.error("Histogram/CLAHE error:", e);
+    } finally {
+        gray.free();
+        images?.free();
+        hist?.free();
+        equalized?.free();
+        clahe?.free();
+        claheOut?.free();
+        claheImages?.free();
+        claheHist?.free();
     }
-
-    gray.free();
 }
 
 clipSlider.oninput = () => {
@@ -184,13 +193,29 @@ tileSlider.oninput = () => {
 const fileInput = document.getElementById('file-input');
 const dropZone = document.getElementById('drop-zone');
 
-dropZone.onclick = () => fileInput.click();
-fileInput.onchange = async (e) => {
-    if (e.target.files.length > 0) {
-        const url = URL.createObjectURL(e.target.files[0]);
+async function loadFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    try {
         sourceImage = await loadImage(url);
         processImage();
+    } finally {
+        URL.revokeObjectURL(url);
     }
+}
+
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = (e) => loadFile(e.target.files[0]);
+
+dropZone.ondragover = (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+};
+dropZone.ondragleave = () => dropZone.classList.remove('drag-over');
+dropZone.ondrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    loadFile(e.dataTransfer.files[0]);
 };
 
 start();
