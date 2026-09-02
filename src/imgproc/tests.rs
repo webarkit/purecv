@@ -1617,6 +1617,25 @@ mod imgproc_tests {
     }
 
     #[test]
+    fn test_calc_back_project_hist_size_overflow_error() {
+        // Regression test: validate_hist_ranges computed hist_size[d] + 1
+        // unchecked, so hist_size[d] == usize::MAX panicked with "attempt to
+        // add with overflow" instead of returning an InvalidInput error.
+        // Confirmed the pre-fix code panics here via std::panic::catch_unwind.
+        let img = Matrix::from_vec(1, 1, 1, vec![0u8]);
+        let hist = Matrix::from_vec(1, 1, 1, vec![1.0f32]);
+        let result = calc_back_project(
+            &[&img],
+            &[0],
+            &[usize::MAX],
+            &hist,
+            &[RangeSpec::NonUniform(vec![])],
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_compare_hist_correl_identical() {
         let h1 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
         let h2 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
