@@ -1557,6 +1557,66 @@ mod imgproc_tests {
     }
 
     #[test]
+    fn test_calc_back_project_invalid_uniform_range_error() {
+        // Regression test: calc_back_project used to skip the range
+        // validation calc_hist already had (lo < hi, NaN rejection,
+        // non-uniform boundary shape/ordering), silently producing a
+        // plausible-but-wrong projection instead of an error.
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+
+        // NaN bounds: lo.partial_cmp(hi) is None, must be rejected.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(f32::NAN, f32::NAN)],
+            1.0,
+        )
+        .is_err());
+
+        // lo >= hi.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(4.0, 0.0)],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_invalid_nonuniform_boundaries_error() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+
+        // Wrong length: needs hist_size[0] + 1 = 5 boundaries, only 3 given.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::NonUniform(vec![0.0, 2.0, 4.0])],
+            1.0,
+        )
+        .is_err());
+
+        // Not strictly increasing.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::NonUniform(vec![0.0, 2.0, 1.0, 3.0, 4.0])],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn test_compare_hist_correl_identical() {
         let h1 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
         let h2 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
@@ -1967,5 +2027,43 @@ mod imgproc_tests {
         let clahe = create_clahe(0.0, Size2i::new(4, 4));
         let dst = clahe.apply_u8(&img).unwrap();
         assert_eq!(dst.data.len(), 256);
+    }
+
+    #[test]
+    fn test_clahe_tile_interp_weights_are_bounded() {
+        // Regression test: the interpolation fraction used to be derived
+        // *after* clamping the tile index, which produced weights outside
+        // [0, 1] (extrapolation) at the top/left edges - e.g. at y=0 with
+        // tile_rows=4, tyf=-0.5 used to yield ya=-0.5, ya1=1.5 instead of a
+        // convex blend. Check the invariant holds across the coordinate
+        // range that actually occurs (coord_f = pixel*inv_tile_extent - 0.5,
+        // for pixel in 0..src_extent), for several tile counts.
+        use crate::imgproc::histogram::tile_interp_weights;
+
+        for num_tiles in [1usize, 2, 3, 5] {
+            let tile_extent = 4usize; // pixels per tile
+            let inv = 1.0 / tile_extent as f64;
+            let src_extent = num_tiles * tile_extent;
+
+            for pixel in 0..src_extent {
+                let coord_f = pixel as f64 * inv - 0.5;
+                let (idx1, idx2, w1, w2) = tile_interp_weights(coord_f, num_tiles);
+
+                assert!(
+                    (0.0..=1.0).contains(&w1) && (0.0..=1.0).contains(&w2),
+                    "weights out of [0,1] at pixel={pixel}, num_tiles={num_tiles}: w1={w1}, w2={w2}"
+                );
+                assert!(
+                    (w1 + w2 - 1.0).abs() < 1e-12,
+                    "weights don't sum to 1 at pixel={pixel}: w1={w1}, w2={w2}"
+                );
+                assert!(idx1 < num_tiles && idx2 < num_tiles);
+            }
+        }
+
+        // The exact case from the bug report: y=0, tile_rows=4 -> tyf=-0.5.
+        let (idx1, idx2, w1, w2) = tile_interp_weights(-0.5, 2);
+        assert_eq!((idx1, idx2), (0, 0)); // both clamp to the first tile
+        assert!((w1 - 0.5).abs() < 1e-12 && (w2 - 0.5).abs() < 1e-12);
     }
 }
