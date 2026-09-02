@@ -47,6 +47,7 @@ use crate::core::types::{BorderTypes, Size2i};
 use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
 use crate::cv_bail;
+use crate::cv_err;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -207,7 +208,18 @@ fn validate_hist_ranges(fn_name: &str, hist_size: &[usize], ranges: &[RangeSpec]
                 }
             }
             RangeSpec::NonUniform(boundaries) => {
-                if boundaries.len() != sz + 1 {
+                let expected_len = sz.checked_add(1).ok_or_else(|| {
+                    cv_err!(
+                        tags::IMGPROC,
+                        InvalidInput,
+                        "{}: hist_size[{}] ({}) is too large (hist_size[{}]+1 overflows)",
+                        fn_name,
+                        d,
+                        sz,
+                        d
+                    )
+                })?;
+                if boundaries.len() != expected_len {
                     cv_bail!(
                         tags::IMGPROC,
                         InvalidInput,
@@ -216,7 +228,7 @@ fn validate_hist_ranges(fn_name: &str, hist_size: &[usize], ranges: &[RangeSpec]
                         d,
                         boundaries.len(),
                         d,
-                        sz + 1
+                        expected_len
                     );
                 }
                 for k in 0..boundaries.len() - 1 {
