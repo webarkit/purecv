@@ -171,6 +171,76 @@ fn map_bin(val: f32, range: &RangeSpec, hist_size: usize) -> Option<usize> {
     }
 }
 
+/// Validates that `hist_size` and `ranges` describe a well-formed set of
+/// histogram dimensions, shared by `calc_hist` and `calc_back_project` so
+/// the two can't drift: `hist_size[d] > 0`, `Uniform(lo, hi)` satisfies
+/// `lo < hi` (also rejects NaN, since `partial_cmp` returns `None` for it),
+/// and `NonUniform(boundaries)` has exactly `hist_size[d] + 1` strictly
+/// increasing entries.
+///
+/// `fn_name` is used as the error-message prefix so callers keep their own
+/// identity in the message (e.g. `"calc_hist: ..."` vs
+/// `"calc_back_project: ..."`).
+fn validate_hist_ranges(fn_name: &str, hist_size: &[usize], ranges: &[RangeSpec]) -> Result<()> {
+    for (d, &sz) in hist_size.iter().enumerate() {
+        if sz == 0 {
+            cv_bail!(
+                tags::IMGPROC,
+                InvalidInput,
+                "{}: hist_size[{}] must be > 0 (got 0)",
+                fn_name,
+                d
+            );
+        }
+        match &ranges[d] {
+            RangeSpec::Uniform(lo, hi) => {
+                if lo.partial_cmp(hi) != Some(Ordering::Less) {
+                    cv_bail!(
+                        tags::IMGPROC,
+                        InvalidInput,
+                        "{}: Uniform range [{}] must satisfy lo < hi (got {} >= {})",
+                        fn_name,
+                        d,
+                        lo,
+                        hi
+                    );
+                }
+            }
+            RangeSpec::NonUniform(boundaries) => {
+                if boundaries.len() != sz + 1 {
+                    cv_bail!(
+                        tags::IMGPROC,
+                        InvalidInput,
+                        "{}: NonUniform boundaries[{}] length {} must be hist_size[{}]+1 ({})",
+                        fn_name,
+                        d,
+                        boundaries.len(),
+                        d,
+                        sz + 1
+                    );
+                }
+                for k in 0..boundaries.len() - 1 {
+                    if boundaries[k].partial_cmp(&boundaries[k + 1]) != Some(Ordering::Less) {
+                        cv_bail!(
+                            tags::IMGPROC,
+                            InvalidInput,
+                            "{}: NonUniform boundaries[{}][{}] ({}) must be < boundaries[{}][{}] ({})",
+                            fn_name,
+                            d,
+                            k,
+                            boundaries[k],
+                            d,
+                            k + 1,
+                            boundaries[k + 1]
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 //  calc_hist
 // ---------------------------------------------------------------------------
@@ -269,58 +339,7 @@ pub fn calc_hist<T: ToPrimitive + Clone + Default + Send + Sync>(
     }
 
     // Validate hist_size and ranges (prevents panics in bin mapping)
-    for (d, &sz) in hist_size.iter().enumerate() {
-        if sz == 0 {
-            cv_bail!(
-                tags::IMGPROC,
-                InvalidInput,
-                "calc_hist: hist_size[{}] must be > 0 (got 0)",
-                d
-            );
-        }
-        match &ranges[d] {
-            RangeSpec::Uniform(lo, hi) => {
-                if lo.partial_cmp(hi) != Some(Ordering::Less) {
-                    cv_bail!(
-                        tags::IMGPROC,
-                        InvalidInput,
-                        "calc_hist: Uniform range [{}] must satisfy lo < hi (got {} >= {})",
-                        d,
-                        lo,
-                        hi
-                    );
-                }
-            }
-            RangeSpec::NonUniform(boundaries) => {
-                if boundaries.len() != sz + 1 {
-                    cv_bail!(
-                        tags::IMGPROC,
-                        InvalidInput,
-                        "calc_hist: NonUniform boundaries[{}] length {} must be hist_size[{}]+1 ({})",
-                        d,
-                        boundaries.len(),
-                        d,
-                        sz + 1
-                    );
-                }
-                for k in 0..boundaries.len() - 1 {
-                    if boundaries[k].partial_cmp(&boundaries[k + 1]) != Some(Ordering::Less) {
-                        cv_bail!(
-                            tags::IMGPROC,
-                            InvalidInput,
-                            "calc_hist: NonUniform boundaries[{}][{}] ({}) must be < boundaries[{}][{}] ({})",
-                            d,
-                            k,
-                            boundaries[k],
-                            d,
-                            k + 1,
-                            boundaries[k + 1]
-                        );
-                    }
-                }
-            }
-        }
-    }
+    validate_hist_ranges("calc_hist", hist_size, ranges)?;
 
     let total_bins: usize = hist_size.iter().product();
 
@@ -477,6 +496,7 @@ pub fn calc_back_project<T: ToPrimitive + Clone + Default + Send + Sync>(
             dims
         );
     }
+    validate_hist_ranges("calc_back_project", hist_size, ranges)?;
 
     let rows = images[0].rows;
     let cols = images[0].cols;
@@ -1199,6 +1219,30 @@ fn clip_and_redistribute(tile_hist: &mut [i32], clip_limit: i32, hist_size: usiz
     }
 }
 
+/// Computes the pair of tile indices and blend weight for CLAHE's bilinear
+/// tile interpolation along one axis.
+///
+/// `coord_f` is the pixel's tile-space coordinate, already offset by -0.5 so
+/// tile centers land on integers. Returns `(idx1, idx2, weight1, weight2)`
+/// where `weight1 + weight2 == 1.0` and both weights are in `[0, 1]`.
+///
+/// The fraction is derived from the *unclamped* floor of `coord_f` so it
+/// always lands in `[0, 1)` - a genuine convex blend. Only the indices used
+/// for LUT lookup are clamped to the valid tile range; clamping the index
+/// *before* computing the fraction (as an earlier version of this code did)
+/// produces fractions outside `[0, 1]` at the first/last tile, extrapolating
+/// beyond that tile's LUT instead of blending within it.
+#[inline(always)]
+pub(crate) fn tile_interp_weights(coord_f: f64, num_tiles: usize) -> (usize, usize, f64, f64) {
+    let idx1_raw = coord_f.floor() as i32;
+    let weight2 = coord_f - idx1_raw as f64;
+    let weight1 = 1.0 - weight2;
+    let max_idx = num_tiles as i32 - 1;
+    let idx1 = idx1_raw.clamp(0, max_idx) as usize;
+    let idx2 = (idx1_raw + 1).clamp(0, max_idx) as usize;
+    (idx1, idx2, weight1, weight2)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn interpolate_tiles_u8(
     src: &Matrix<u8>,
@@ -1219,21 +1263,11 @@ fn interpolate_tiles_u8(
 
     let process_row = |y: usize, dst_row: &mut [u8]| {
         let tyf = y as f64 * inv_th - 0.5;
-        let ty1 = (tyf.floor() as i32).max(0);
-        let ty2 = (ty1 + 1).min(tiles_y as i32 - 1);
-        let ya = tyf - ty1 as f64;
-        let ya1 = 1.0 - ya;
-        let ty1 = ty1 as usize;
-        let ty2 = ty2 as usize;
+        let (ty1, ty2, ya1, ya) = tile_interp_weights(tyf, tiles_y);
 
         for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let txf = x as f64 * inv_tw - 0.5;
-            let tx1 = (txf.floor() as i32).max(0);
-            let tx2 = (tx1 + 1).min(tiles_x as i32 - 1);
-            let xa = txf - tx1 as f64;
-            let xa1 = 1.0 - xa;
-            let tx1 = tx1 as usize;
-            let tx2 = tx2 as usize;
+            let (tx1, tx2, xa1, xa) = tile_interp_weights(txf, tiles_x);
 
             let src_val = *src.get(y, x, 0).unwrap_or(&0) as usize;
             let bin = (src_val >> bit_shift).min(hist_size - 1);
@@ -1286,21 +1320,11 @@ fn interpolate_tiles_u16(
 
     let process_row = |y: usize, dst_row: &mut [u16]| {
         let tyf = y as f64 * inv_th - 0.5;
-        let ty1 = (tyf.floor() as i32).max(0);
-        let ty2 = (ty1 + 1).min(tiles_y as i32 - 1);
-        let ya = tyf - ty1 as f64;
-        let ya1 = 1.0 - ya;
-        let ty1 = ty1 as usize;
-        let ty2 = ty2 as usize;
+        let (ty1, ty2, ya1, ya) = tile_interp_weights(tyf, tiles_y);
 
         for (x, out_pixel) in dst_row.iter_mut().enumerate() {
             let txf = x as f64 * inv_tw - 0.5;
-            let tx1 = (txf.floor() as i32).max(0);
-            let tx2 = (tx1 + 1).min(tiles_x as i32 - 1);
-            let xa = txf - tx1 as f64;
-            let xa1 = 1.0 - xa;
-            let tx1 = tx1 as usize;
-            let tx2 = tx2 as usize;
+            let (tx1, tx2, xa1, xa) = tile_interp_weights(txf, tiles_x);
 
             let src_val = *src.get(y, x, 0).unwrap_or(&0) as usize;
             let bin = (src_val >> bit_shift).min(hist_size - 1);
