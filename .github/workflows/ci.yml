@@ -37,6 +37,9 @@ jobs:
     - name: Run tests
       run: cargo test --workspace
 
+    - name: Run tests (sequential, parallel disabled)
+      run: cargo test --workspace --no-default-features --features std
+
     - name: Run tests (with parallel feature)
       run: cargo test --workspace --features parallel
 
