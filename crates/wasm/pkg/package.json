@@ -5,7 +5,7 @@
                           "Walter Perdan \u003chttps://github.com/kalwalt\u003e"
                       ],
     "description":  "A pure Rust, high-performance computer vision library focused on safety and portability.",
-    "version":  "0.7.1",
+    "version":  "0.8.0",
     "license":  "LGPL-2.1-or-later",
     "repository":  {
                        "type":  "git",
