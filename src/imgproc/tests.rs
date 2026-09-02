@@ -1316,4 +1316,773 @@ mod imgproc_tests {
 
         assert_eq!(res.data, vec![0.0, 10.0, 0.0, 30.0]);
     }
+
+    #[test]
+    fn test_compare_hist_simd_coverage() {
+        let mut h1 = Matrix::<f32>::new(1, 10, 1);
+        let mut h2 = Matrix::<f32>::new(1, 10, 1);
+        for i in 0..10 {
+            *h1.at_mut(0, i, 0).unwrap() = i as f32;
+            *h2.at_mut(0, i, 0).unwrap() = (9 - i) as f32;
+        }
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Correl).unwrap();
+        assert!(c > -1.1 && c < 1.1);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::ChiSqr).unwrap();
+        assert!(c >= 0.0);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Intersection).unwrap();
+        assert!(c >= 0.0);
+
+        let c = compare_hist(&h1, &h2, HistCompMethods::Bhattacharyya).unwrap();
+        assert!(c >= 0.0);
+    }
+
+    #[test]
+    fn test_calc_hist_uniform_1d() {
+        let data: Vec<u8> = (0..16).collect();
+        let img = Matrix::from_vec(4, 4, 1, data);
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[16],
+            &[RangeSpec::Uniform(0.0, 16.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data.len(), 16);
+        for &v in hist.data.iter() {
+            assert_eq!(v, 1.0);
+        }
+    }
+
+    #[test]
+    fn test_calc_hist_uniform_1d_fewer_bins() {
+        let data: Vec<u8> = (0..16).collect();
+        let img = Matrix::from_vec(4, 4, 1, data);
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 16.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data.len(), 4);
+        for &v in hist.data.iter() {
+            assert_eq!(v, 4.0);
+        }
+    }
+
+    #[test]
+    fn test_calc_hist_mask() {
+        let img = Matrix::from_vec(3, 4, 1, vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        // Partial mask: checkerboard
+        let mask = Matrix::from_vec(3, 4, 1, vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
+        let h = calc_hist(
+            &[&img],
+            &[0],
+            Some(&mask),
+            &[4],
+            &[RangeSpec::Uniform(0.0, 12.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(h.data, vec![1.0, 2.0, 1.0, 2.0]);
+
+        // All-zero mask: nothing counted
+        let img2 = Matrix::from_vec(2, 2, 1, vec![0u8, 1, 2, 3]);
+        let mask_zero = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+        let h = calc_hist(
+            &[&img2],
+            &[0],
+            Some(&mask_zero),
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(h.data, vec![0.0, 0.0, 0.0, 0.0]);
+
+        // All-one mask: all counted
+        let mask_one = Matrix::from_vec(2, 2, 1, vec![1u8; 4]);
+        let h = calc_hist(
+            &[&img2],
+            &[0],
+            Some(&mask_one),
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(h.data, vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_calc_hist_multichannel_mask_error() {
+        // Regression test: a mask must be single-channel. Previously only
+        // rows/cols were checked, so a multichannel mask was silently
+        // accepted and only its channel 0 was ever read.
+        let img = Matrix::from_vec(2, 2, 1, vec![0u8, 1, 2, 3]);
+        let mask = Matrix::from_vec(2, 2, 3, vec![1u8; 12]);
+        assert!(calc_hist(
+            &[&img],
+            &[0],
+            Some(&mask),
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_hist_multi_image_channel_indexing() {
+        // images[0] has 2 channels, images[1] has 1 channel
+        let img0 = Matrix::from_vec(2, 1, 2, vec![10, 20, 30, 40]);
+        let img1 = Matrix::from_vec(2, 1, 1, vec![100, 200]);
+
+        let hist = calc_hist(
+            &[&img0, &img1],
+            &[0, 2],
+            None,
+            &[2, 2],
+            &[
+                RangeSpec::Uniform(0.0, 50.0),
+                RangeSpec::Uniform(0.0, 250.0),
+            ],
+            false,
+            None,
+        )
+        .unwrap();
+
+        // pixel(0,0): ch0=10->bin0, ch2=100->bin0 -> idx=0
+        // pixel(1,0): ch0=30->bin1, ch2=200->bin1 -> idx=3
+        assert_eq!(hist.data[0], 1.0);
+        assert_eq!(hist.data[1], 0.0);
+        assert_eq!(hist.data[2], 0.0);
+        assert_eq!(hist.data[3], 1.0);
+    }
+
+    #[test]
+    fn test_calc_hist_nonuniform() {
+        let data: Vec<u8> = (0..20).collect();
+        let img = Matrix::from_vec(4, 5, 1, data);
+        // Non-uniform: boundaries [0, 5, 20] -> 2 bins: [0,5) and [5,20)
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[2],
+            &[RangeSpec::NonUniform(vec![0.0, 5.0, 20.0])],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data[0], 5.0); // values 0..4
+        assert_eq!(hist.data[1], 15.0); // values 5..19
+    }
+
+    #[test]
+    fn test_calc_back_project() {
+        let data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let img = Matrix::from_vec(2, 4, 1, data);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+        let bp = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 8.0)],
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(
+            bp.data,
+            vec![10.0, 10.0, 20.0, 20.0, 30.0, 30.0, 40.0, 40.0]
+        );
+    }
+
+    #[test]
+    fn test_calc_back_project_2d_shape() {
+        // Regression test: without an explicit hist_size, a flat 8-bin
+        // histogram used to have its shape *guessed* from its length alone
+        // (infer_hist_size), which silently produced the wrong shape for any
+        // non-perfect-power dims (e.g. [2, 4] was inferred as [1, 8]) and
+        // corrupted the bin math. hist_size is now required explicitly.
+        let img = Matrix::from_vec(1, 1, 2, vec![1u8, 7]);
+        let hist = Matrix::from_vec(
+            8,
+            1,
+            1,
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+        );
+        let bp = calc_back_project(
+            &[&img],
+            &[0, 1],
+            &[2, 4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 2.0), RangeSpec::Uniform(0.0, 8.0)],
+            1.0,
+        )
+        .unwrap();
+        // channel 0 (value 1, range [0,2), 2 bins) -> bin 1
+        // channel 1 (value 7, range [0,8), 4 bins)  -> bin 3
+        // flat index with strides [4, 1] -> 1*4 + 3 = 7 -> hist.data[7] = 80.0
+        assert_eq!(bp.data, vec![80.0]);
+    }
+
+    #[test]
+    fn test_calc_back_project_hist_size_mismatch_error() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[3], // doesn't match hist's 4 bins
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_invalid_uniform_range_error() {
+        // Regression test: calc_back_project used to skip the range
+        // validation calc_hist already had (lo < hi, NaN rejection,
+        // non-uniform boundary shape/ordering), silently producing a
+        // plausible-but-wrong projection instead of an error.
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+
+        // NaN bounds: lo.partial_cmp(hi) is None, must be rejected.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(f32::NAN, f32::NAN)],
+            1.0,
+        )
+        .is_err());
+
+        // lo >= hi.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(4.0, 0.0)],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_invalid_nonuniform_boundaries_error() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+
+        // Wrong length: needs hist_size[0] + 1 = 5 boundaries, only 3 given.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::NonUniform(vec![0.0, 2.0, 4.0])],
+            1.0,
+        )
+        .is_err());
+
+        // Not strictly increasing.
+        assert!(calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::NonUniform(vec![0.0, 2.0, 1.0, 3.0, 4.0])],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_hist_size_overflow_error() {
+        // Regression test: validate_hist_ranges computed hist_size[d] + 1
+        // unchecked, so hist_size[d] == usize::MAX panicked with "attempt to
+        // add with overflow" instead of returning an InvalidInput error.
+        // Confirmed the pre-fix code panics here via std::panic::catch_unwind.
+        let img = Matrix::from_vec(1, 1, 1, vec![0u8]);
+        let hist = Matrix::from_vec(1, 1, 1, vec![1.0f32]);
+        let result = calc_back_project(
+            &[&img],
+            &[0],
+            &[usize::MAX],
+            &hist,
+            &[RangeSpec::NonUniform(vec![])],
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compare_hist_correl_identical() {
+        let h1 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
+        let h2 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
+        let corr = compare_hist(&h1, &h2, HistCompMethods::Correl).unwrap();
+        assert!((corr - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compare_hist_correl_opposite() {
+        let h1 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
+        let h2 = Matrix::from_vec(4, 1, 1, vec![4.0, 3.0, 2.0, 1.0]);
+        let corr = compare_hist(&h1, &h2, HistCompMethods::Correl).unwrap();
+        assert!((corr - (-1.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compare_hist_intersect() {
+        let h1 = Matrix::from_vec(4, 1, 1, vec![1.0, 2.0, 3.0, 4.0]);
+        let h2 = Matrix::from_vec(4, 1, 1, vec![4.0, 3.0, 2.0, 1.0]);
+        let inter = compare_hist(&h1, &h2, HistCompMethods::Intersection).unwrap();
+        assert!((inter - 6.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compare_hist_chi_sqr() {
+        let h1 = Matrix::from_vec(3, 1, 1, vec![1.0, 2.0, 3.0]);
+        let h2 = Matrix::from_vec(3, 1, 1, vec![1.0, 2.0, 3.0]);
+        let chi = compare_hist(&h1, &h2, HistCompMethods::ChiSqr).unwrap();
+        assert!((chi - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compare_hist_bhattacharyya_identical() {
+        let h1 = Matrix::from_vec(4, 1, 1, vec![0.25, 0.25, 0.25, 0.25]);
+        let h2 = Matrix::from_vec(4, 1, 1, vec![0.25, 0.25, 0.25, 0.25]);
+        let bc = compare_hist(&h1, &h2, HistCompMethods::Bhattacharyya).unwrap();
+        assert!(bc.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compare_hist_kl_divergence() {
+        let h1 = Matrix::from_vec(3, 1, 1, vec![0.5, 0.3, 0.2]);
+        let h2 = Matrix::from_vec(3, 1, 1, vec![0.5, 0.3, 0.2]);
+        let kl = compare_hist(&h1, &h2, HistCompMethods::KullbackLeibler).unwrap();
+        assert!(kl.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_equalize_hist_uniform() {
+        let img = Matrix::from_vec(4, 4, 1, vec![128u8; 16]);
+        let dst = equalize_hist(&img).unwrap();
+        for &v in dst.data.iter() {
+            assert_eq!(v, 128);
+        }
+    }
+
+    #[test]
+    fn test_equalize_hist_gradient() {
+        let data: Vec<u8> = (0..=255).collect();
+        let img = Matrix::from_vec(16, 16, 1, data);
+        let dst = equalize_hist(&img).unwrap();
+        assert_eq!(dst.rows, 16);
+        assert_eq!(dst.cols, 16);
+        assert_eq!(dst.channels, 1);
+        let min_val = *dst.data.iter().min().unwrap();
+        let max_val = *dst.data.iter().max().unwrap();
+        assert_eq!(min_val, 0);
+        assert_eq!(max_val, 255);
+    }
+
+    #[test]
+    fn test_clahe_basic() {
+        let data: Vec<u8> = (0..=255).collect();
+        let img = Matrix::from_vec(16, 16, 1, data);
+        let clahe = create_clahe(40.0, Size2i::new(4, 4));
+        let dst = clahe.apply_u8(&img).unwrap();
+        assert_eq!(dst.rows, 16);
+        assert_eq!(dst.cols, 16);
+        assert_eq!(dst.channels, 1);
+        assert_eq!(dst.data.len(), 256);
+    }
+
+    #[test]
+    fn test_clahe_u16() {
+        let data: Vec<u16> = (0..=1023).collect();
+        let img = Matrix::from_vec(32, 32, 1, data);
+        let clahe = create_clahe(40.0, Size2i::new(4, 4));
+        let dst = clahe.apply_u16(&img).unwrap();
+        assert_eq!(dst.rows, 32);
+        assert_eq!(dst.cols, 32);
+        assert_eq!(dst.channels, 1);
+    }
+
+    #[test]
+    fn test_calc_hist_2d() {
+        let img = Matrix::from_vec(3, 3, 1, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let hist = calc_hist(
+            &[&img, &img],
+            &[0, 0],
+            None,
+            &[3, 3],
+            &[RangeSpec::Uniform(0.0, 9.0), RangeSpec::Uniform(0.0, 9.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data.len(), 9);
+        assert_eq!(hist.data[0], 3.0);
+        assert_eq!(hist.data[1], 0.0);
+        assert_eq!(hist.data[2], 0.0);
+        assert_eq!(hist.data[3], 0.0);
+        assert_eq!(hist.data[4], 3.0);
+        assert_eq!(hist.data[5], 0.0);
+        assert_eq!(hist.data[6], 0.0);
+        assert_eq!(hist.data[7], 0.0);
+        assert_eq!(hist.data[8], 3.0);
+    }
+
+    #[test]
+    fn test_calc_hist_empty_images_error() {
+        assert!(calc_hist::<u8>(
+            &[],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_hist_mismatched_channels_error() {
+        let img = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+        assert!(calc_hist(
+            &[&img],
+            &[0, 1],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_empty_channels_error() {
+        let img = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
+        assert!(calc_back_project::<u8>(
+            &[&img],
+            &[],
+            &[],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_back_project_zero_width() {
+        // Regression test: chunks_mut/par_chunks_mut panic on a zero chunk
+        // size regardless of slice length, so a zero-width image must not
+        // reach the row-chunking dispatch.
+        let img = Matrix::<u8>::from_vec(3, 0, 1, vec![]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
+        let dst = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(dst.rows, 3);
+        assert_eq!(dst.cols, 0);
+        assert_eq!(dst.data.len(), 0);
+    }
+
+    #[test]
+    fn test_calc_hist_u16_input() {
+        let data: Vec<u16> = vec![0, 100, 200, 300, 400, 500];
+        let img = Matrix::from_vec(2, 3, 1, data);
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[3],
+            &[RangeSpec::Uniform(0.0, 600.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data, vec![2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn test_calc_hist_f32_input() {
+        let data: Vec<f32> = vec![0.5, 1.5, 2.5, 3.5];
+        let img = Matrix::from_vec(2, 2, 1, data);
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data, vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_calc_hist_boundary_exclusion() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 4, 8, 12]);
+        let hist = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 16.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data, vec![1.0, 1.0, 1.0, 1.0]);
+
+        // Value at exact hi boundary should be excluded
+        let img2 = Matrix::from_vec(1, 2, 1, vec![4u8, 4]);
+        let hist2 = calc_hist(
+            &[&img2],
+            &[0],
+            None,
+            &[2],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist2.data, vec![0.0, 0.0]);
+
+        // Value just below hi should be included
+        let img3 = Matrix::from_vec(1, 1, 1, vec![3u8]);
+        let hist3 = calc_hist(
+            &[&img3],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist3.data[3], 1.0);
+    }
+
+    #[test]
+    fn test_calc_hist_accumulate() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let h1 = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(h1.data, vec![1.0, 1.0, 1.0, 1.0]);
+
+        let h2 = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            true,
+            Some(&h1),
+        )
+        .unwrap();
+        assert_eq!(h2.data, vec![2.0, 2.0, 2.0, 2.0]);
+
+        let h3 = calc_hist(
+            &[&img],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            true,
+            Some(&h2),
+        )
+        .unwrap();
+        assert_eq!(h3.data, vec![3.0, 3.0, 3.0, 3.0]);
+    }
+
+    #[test]
+    fn test_compare_hist_edge_cases() {
+        let z = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, 0.0]);
+        assert!((compare_hist(&z, &z, HistCompMethods::Correl).unwrap() - 1.0).abs() < 1e-10);
+        assert!((compare_hist(&z, &z, HistCompMethods::Intersection).unwrap()).abs() < 1e-10);
+        assert!(
+            (compare_hist(&z, &z, HistCompMethods::Bhattacharyya).unwrap() - 1.0).abs() < 1e-10
+        );
+
+        let p1 = Matrix::from_vec(4, 1, 1, vec![0.5, 0.25, 0.125, 0.125]);
+        let p2 = Matrix::from_vec(4, 1, 1, vec![0.5, 0.25, 0.125, 0.125]);
+        assert!((compare_hist(&p1, &p2, HistCompMethods::Correl).unwrap() - 1.0).abs() < 1e-10);
+        assert!((compare_hist(&p1, &p2, HistCompMethods::ChiSqr).unwrap()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_calc_back_project_scale() {
+        let img = Matrix::from_vec(1, 4, 1, vec![0u8, 1, 2, 3]);
+        let hist = Matrix::from_vec(4, 1, 1, vec![10.0, 20.0, 30.0, 40.0]);
+        let bp = calc_back_project(
+            &[&img],
+            &[0],
+            &[4],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            2.0,
+        )
+        .unwrap();
+        assert_eq!(bp.data, vec![20.0, 40.0, 60.0, 80.0]);
+    }
+
+    #[test]
+    fn test_calc_hist_errors() {
+        let img = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+        assert!(calc_hist::<u8>(
+            &[],
+            &[0],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+        assert!(calc_hist(
+            &[&img],
+            &[0, 1],
+            None,
+            &[4],
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            false,
+            None,
+        )
+        .is_err());
+        let img2 = Matrix::from_vec(3, 3, 1, vec![0u8; 9]);
+        assert!(calc_hist(
+            &[&img, &img2],
+            &[0, 0],
+            None,
+            &[2, 2],
+            &[RangeSpec::Uniform(0.0, 2.0), RangeSpec::Uniform(0.0, 2.0)],
+            false,
+            None,
+        )
+        .is_err());
+        let hist = Matrix::from_vec(4, 1, 1, vec![0.0; 4]);
+        assert!(calc_back_project::<u8>(
+            &[&img],
+            &[],
+            &[],
+            &hist,
+            &[RangeSpec::Uniform(0.0, 4.0)],
+            1.0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_calc_hist_multichannel_select() {
+        let img = Matrix::from_vec(
+            1,
+            3,
+            3,
+            vec![
+                10, 100, 200, // pixel 0
+                20, 150, 250, // pixel 1
+                30, 50, 100, // pixel 2
+            ],
+        );
+        let hist = calc_hist(
+            &[&img],
+            &[1],
+            None,
+            &[3],
+            &[RangeSpec::Uniform(0.0, 200.0)],
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hist.data, vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_clahe_no_clip() {
+        let data: Vec<u8> = (0..=255).collect();
+        let img = Matrix::from_vec(16, 16, 1, data);
+        let clahe = create_clahe(0.0, Size2i::new(4, 4));
+        let dst = clahe.apply_u8(&img).unwrap();
+        assert_eq!(dst.data.len(), 256);
+    }
+
+    #[test]
+    fn test_clahe_tile_interp_weights_are_bounded() {
+        // Regression test: the interpolation fraction used to be derived
+        // *after* clamping the tile index, which produced weights outside
+        // [0, 1] (extrapolation) at the top/left edges - e.g. at y=0 with
+        // tile_rows=4, tyf=-0.5 used to yield ya=-0.5, ya1=1.5 instead of a
+        // convex blend. Check the invariant holds across the coordinate
+        // range that actually occurs (coord_f = pixel*inv_tile_extent - 0.5,
+        // for pixel in 0..src_extent), for several tile counts.
+        use crate::imgproc::histogram::tile_interp_weights;
+
+        for num_tiles in [1usize, 2, 3, 5] {
+            let tile_extent = 4usize; // pixels per tile
+            let inv = 1.0 / tile_extent as f64;
+            let src_extent = num_tiles * tile_extent;
+
+            for pixel in 0..src_extent {
+                let coord_f = pixel as f64 * inv - 0.5;
+                let (idx1, idx2, w1, w2) = tile_interp_weights(coord_f, num_tiles);
+
+                assert!(
+                    (0.0..=1.0).contains(&w1) && (0.0..=1.0).contains(&w2),
+                    "weights out of [0,1] at pixel={pixel}, num_tiles={num_tiles}: w1={w1}, w2={w2}"
+                );
+                assert!(
+                    (w1 + w2 - 1.0).abs() < 1e-12,
+                    "weights don't sum to 1 at pixel={pixel}: w1={w1}, w2={w2}"
+                );
+                assert!(idx1 < num_tiles && idx2 < num_tiles);
+            }
+        }
+
+        // The exact case from the bug report: y=0, tile_rows=4 -> tyf=-0.5.
+        let (idx1, idx2, w1, w2) = tile_interp_weights(-0.5, 2);
+        assert_eq!((idx1, idx2), (0, 0)); // both clamp to the first tile
+        assert!((w1 - 0.5).abs() < 1e-12 && (w2 - 0.5).abs() < 1e-12);
+    }
 }

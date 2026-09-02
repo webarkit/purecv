@@ -41,6 +41,7 @@ use purecv::imgproc::derivatives::{laplacian, scharr, sobel};
 use purecv::imgproc::edge::canny;
 use purecv::imgproc::feature::corner_harris;
 use purecv::imgproc::filter::{bilateral_filter, box_filter, gaussian_blur};
+use purecv::imgproc::histogram::{calc_back_project, calc_hist, equalize_hist, Clahe, RangeSpec};
 use purecv::imgproc::hough::{hough_circles, hough_lines, hough_lines_p};
 use purecv::imgproc::threshold::{threshold, ThresholdTypes};
 use purecv::imgproc::{cvt_color, ColorConversionCode};
@@ -250,6 +251,100 @@ fn bench_imgproc(c: &mut Criterion) {
                 30.0,  // param2
                 0,     // min_radius
                 0,     // max_radius
+            )
+            .unwrap()
+        })
+    });
+
+    // calc_hist benchmark setup
+    let mut img_hist = Matrix::<u8>::new(size, size, 1);
+    for (i, p) in img_hist.data.iter_mut().enumerate() {
+        *p = (i % 256) as u8;
+    }
+    let hist_ranges = [RangeSpec::Uniform(0.0, 256.0)];
+
+    c.bench_function("calc_hist_1024x1024", |b| {
+        b.iter(|| {
+            calc_hist(
+                black_box(&[&img_hist]),
+                &[0],
+                None,
+                &[256],
+                &hist_ranges,
+                false,
+                None,
+            )
+            .unwrap()
+        })
+    });
+
+    // calc_back_project benchmark setup
+    let hist_for_backproj =
+        calc_hist(&[&img_hist], &[0], None, &[256], &hist_ranges, false, None).unwrap();
+
+    c.bench_function("calc_back_project_1024x1024", |b| {
+        b.iter(|| {
+            calc_back_project(
+                black_box(&[&img_hist]),
+                &[0],
+                &[256],
+                &hist_for_backproj,
+                &hist_ranges,
+                1.0,
+            )
+            .unwrap()
+        })
+    });
+
+    // equalize_hist benchmark setup
+    c.bench_function("equalize_hist_1024x1024", |b| {
+        b.iter(|| equalize_hist(black_box(&img_hist)).unwrap())
+    });
+
+    // Clahe::apply_u8 benchmark setup
+    let clahe = Clahe::new(2.0, Size2i::new(8, 8));
+
+    c.bench_function("clahe_apply_u8_1024x1024", |b| {
+        b.iter(|| clahe.apply_u8(black_box(&img_hist)).unwrap())
+    });
+    // compare_hist benchmark setup
+    let mut hist1 = Matrix::<f32>::new(256, 1, 1);
+    let mut hist2 = Matrix::<f32>::new(256, 1, 1);
+    for (i, p) in hist1.data.iter_mut().enumerate() {
+        *p = (i as f32 * 0.1).sin().abs();
+    }
+    for (i, p) in hist2.data.iter_mut().enumerate() {
+        *p = (i as f32 * 0.1).cos().abs();
+    }
+
+    c.bench_function("compare_hist_correl_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::Correl,
+            )
+            .unwrap()
+        })
+    });
+
+    c.bench_function("compare_hist_intersection_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::Intersection,
+            )
+            .unwrap()
+        })
+    });
+
+    c.bench_function("compare_hist_kullback_256", |b| {
+        b.iter(|| {
+            purecv::imgproc::histogram::compare_hist(
+                black_box(&hist1),
+                black_box(&hist2),
+                purecv::imgproc::histogram::HistCompMethods::KullbackLeibler,
             )
             .unwrap()
         })

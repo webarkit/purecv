@@ -28,7 +28,11 @@ Publishing a new version requires a mix of manual changelog curation and automat
 2. Verify that all CI checks (Formatting, Clippy, Tests for `parallel` and `simd`) are passing on the latest commit.
 
 ### Step 2: Bump the Version
-Update the version number in the `Cargo.toml` file of the workspace in [package] and [workspace.package] sections. 
+Update the version number in the `Cargo.toml` file of the workspace in [package] and [workspace.package] sections, and in the root `package.json`.
+
+Also check `README.md` and `crates/wasm/README.md` for hardcoded version strings in
+installation snippets (e.g. `purecv = "0.6"`) — these don't update automatically and
+are easy to miss. Search for the old version number across both files before moving on.
 
 ### Step 3: Generate the Local Changelog
 We use `git-cliff` to parse the conventional commits and update the historical changelog. Run the following command in the root directory:

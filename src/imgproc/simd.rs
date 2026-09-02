@@ -265,3 +265,109 @@ mod tests {
         assert_eq!(dst[3], 4.0);
     }
 }
+/// SIMD-friendly (LLVM auto-vectorized) compare_hist methods.
+#[cfg(feature = "simd")]
+pub(crate) fn simd_compare_hist_f32(h1: &[f32], h2: &[f32], method: u8) -> Option<f64> {
+    match method {
+        0 => {
+            // Correl
+            let mut s1 = 0.0f64;
+            let mut s2 = 0.0f64;
+            let mut s11 = 0.0f64;
+            let mut s12 = 0.0f64;
+            let mut s22 = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                s1 += a;
+                s2 += b;
+                s11 += a * a;
+                s22 += b * b;
+                s12 += a * b;
+            }
+            let n = h1.len() as f64;
+            let scale = 1.0 / n;
+            let num = s12 - s1 * s2 * scale;
+            let denom2 = (s11 - s1 * s1 * scale) * (s22 - s2 * s2 * scale);
+            Some(if denom2.abs() > f64::EPSILON {
+                num / denom2.sqrt()
+            } else {
+                1.0
+            })
+        }
+        1 => {
+            // ChiSqr
+            let mut result = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                let diff = a - b;
+                let a_adj = if a.abs() <= f64::EPSILON { 1.0 } else { a };
+                let val = diff * diff / a_adj;
+                let add_val = if a.abs() > f64::EPSILON { val } else { 0.0 };
+                result += add_val;
+            }
+            Some(result)
+        }
+        2 => {
+            // ChiSqrAlt
+            let mut result = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                let sum = a + b;
+                let diff = a - b;
+                let sum_adj = if sum.abs() <= f64::EPSILON { 1.0 } else { sum };
+                let val = diff * diff / sum_adj;
+                let add_val = if sum.abs() > f64::EPSILON { val } else { 0.0 };
+                result += add_val;
+            }
+            Some(result * 2.0)
+        }
+        3 => {
+            // Intersection
+            let mut result = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                result += a.min(b);
+            }
+            Some(result)
+        }
+        4 => {
+            // Bhattacharyya
+            let mut s1 = 0.0f64;
+            let mut s2 = 0.0f64;
+            let mut bc = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                s1 += a;
+                s2 += b;
+                bc += (a * b).sqrt();
+            }
+            let norm = s1 * s2;
+            let norm_factor = if norm.abs() > f64::EPSILON {
+                1.0 / norm.sqrt()
+            } else {
+                1.0
+            };
+            Some(((1.0 - bc * norm_factor).max(0.0)).sqrt())
+        }
+        5 => {
+            // KullbackLeibler
+            let mut result = 0.0f64;
+            for (a, b) in h1.iter().copied().zip(h2.iter().copied()) {
+                let a = a as f64;
+                let b = b as f64;
+                let q_adj = if b.abs() <= f64::EPSILON { 1e-10 } else { b };
+                let p_adj = if a.abs() <= f64::EPSILON { 1.0 } else { a };
+                let val = a * (p_adj / q_adj).ln();
+                let add_val = if a.abs() > f64::EPSILON { val } else { 0.0 };
+                result += add_val;
+            }
+            Some(result)
+        }
+        _ => None,
+    }
+}

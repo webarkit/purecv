@@ -57,6 +57,7 @@ pub mod edge;
 pub mod feature;
 pub mod filter;
 pub mod geometric;
+pub mod histogram;
 pub mod hough;
 pub mod morph;
 pub mod pyramid;
@@ -79,6 +80,10 @@ pub use edge::*;
 pub use feature::*;
 pub use filter::*;
 pub use geometric::{remap, warp_perspective, InterpolationFlags};
+pub use histogram::{
+    calc_back_project, calc_hist, compare_hist, create_clahe, equalize_hist, Clahe,
+    HistCompMethods, RangeSpec,
+};
 pub use hough::*;
 pub use morph::{dilate, erode, get_structuring_element, morphology_ex, MorphShapes, MorphTypes};
 pub use pyramid::{build_pyramid, pyr_down, pyr_up};

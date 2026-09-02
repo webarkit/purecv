@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-09-02
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Pin stable toolchain and allow the new chunks_exact_to_as_chunks lint
+
+### ⚡ Performance
+
+- *(imgproc)* SIMD-accelerate compare_hist
+- *(imgproc)* SIMD-accelerate compare_hist
+- *(ci)* Run the sequential (non-parallel) test suite in CI
+
+### 🐛 Bug Fixes
+
+- *(imgproc)* Address review comments for histogram module
+- *(imgproc)* Guard calc_back_project against zero-width images
+- *(imgproc)* Address Qodo review comments for SIMD compare_hist
+- *(wasm)* Address Qodo review findings on histogram bindings
+- Address Qodo review findings on histogram examples
+
+### 📚 Documentation
+
+- Record the release workflow and merge policy in CLAUDE.md
+- Add histogram/CLAHE examples (Rust + WASM) and update READMEs
+
+### 🕸️ WebAssembly & Emscripten
+
+- *(wasm)* Expose histogram module bindings
+
+### 🚀 Features
+
+- *(imgproc)* Add histogram module
+- *(imgproc)* Add parallel support to histogram module
+
+### 🚜 Refactor
+
+- *(imgproc)* Use as_chunks instead of allowing the new clippy lint
+
+### 🧪 Testing
+
+- *(imgproc)* Move histogram module tests into src/imgproc/tests.rs
+
 ## [0.7.1] - 2026-08-10
 
 ### ⚙️ Miscellaneous Tasks
