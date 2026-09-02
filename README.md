@@ -87,7 +87,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-purecv = "0.6"
+purecv = "0.8"
 ```
 
 PureCV's minimum supported Rust version (MSRV) is **1.88**.
@@ -105,7 +105,7 @@ PureCV's minimum supported Rust version (MSRV) is **1.88**.
 ### `no_std` / embedded support
 
 Build with `--no-default-features` to run on bare-metal targets such as the
-ESP32 (`purecv = { version = "0.6", default-features = false }`). Only `core`
+ESP32 (`purecv = { version = "0.8", default-features = false }`). Only `core`
 and `alloc` are required (an allocator must be provided by the target).
 
 | Module | `no_std` | Notes |
@@ -121,7 +121,7 @@ features gives the scalar, single-threaded code paths.
 
 ```toml
 [dependencies]
-purecv = { version = "0.6", default-features = false }
+purecv = { version = "0.8", default-features = false }
 ```
 
 ```rust
@@ -150,14 +150,14 @@ To enable the `ndarray` feature:
 
 ```toml
 [dependencies]
-purecv = { version = "0.6", features = ["ndarray"] }
+purecv = { version = "0.8", features = ["ndarray"] }
 ```
 
 To enable SIMD + Parallel for maximum performance:
 
 ```toml
 [dependencies]
-purecv = { version = "0.6", features = ["parallel", "simd"] }
+purecv = { version = "0.8", features = ["parallel", "simd"] }
 ```
 
 ### Usage Example
