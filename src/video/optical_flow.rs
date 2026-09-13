@@ -362,12 +362,13 @@ fn lk_single_level(
     };
 
     // -------------------------------------------------------------------
-    // Compute min eigenvalue of H (normalised by window area).
+    // Compute min eigenvalue of H on OpenCV's scale.
     // -------------------------------------------------------------------
     let win_area = ((2 * half_win_w + 1) * (2 * half_win_h + 1)) as f64;
-    let h00n = h00 / win_area;
-    let h01n = h01 / win_area;
-    let h11n = h11 / win_area;
+    let flt_scale = 2f64.powi(-20);
+    let h00n = h00 * flt_scale / (2.0 * win_area);
+    let h01n = h01 * flt_scale / (2.0 * win_area);
+    let h11n = h11 * flt_scale / (2.0 * win_area);
 
     let trace = h00n + h11n;
     let det_n = h00n * h11n - h01n * h01n;
