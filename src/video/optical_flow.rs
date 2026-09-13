@@ -64,7 +64,7 @@ use crate::core::logging::tags;
 use crate::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use crate::core::Matrix;
 use crate::cv_log_debug;
-use crate::imgproc::derivatives::sobel;
+use crate::imgproc::derivatives::{scharr, sobel};
 use crate::imgproc::pyramid::pyr_down;
 
 #[cfg(feature = "parallel")]
@@ -188,8 +188,9 @@ pub fn build_optical_flow_pyramid(
         levels.push(next);
     }
 
-    // Optionally compute Sobel derivatives for each level.
-    // When the `parallel` feature is enabled the per-level Sobel passes run
+    // Optionally compute Scharr derivatives for each level, matching
+    // OpenCV's calcScharrDeriv (lkpyramid.cpp) — see #130.
+    // When the `parallel` feature is enabled the per-level passes run
     // concurrently via Rayon; otherwise they execute sequentially.
     let (dx, dy) = if with_derivatives {
         #[cfg(feature = "parallel")]
@@ -197,8 +198,8 @@ pub fn build_optical_flow_pyramid(
             let pairs: Result<Vec<(Matrix<f32>, Matrix<f32>)>> = levels
                 .par_iter()
                 .map(|level| {
-                    let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, deriv_border)?;
-                    let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, deriv_border)?;
+                    let ix: Matrix<f32> = scharr(level, 1, 0, 1.0, 0.0, deriv_border)?;
+                    let iy: Matrix<f32> = scharr(level, 0, 1, 1.0, 0.0, deriv_border)?;
                     Ok((ix, iy))
                 })
                 .collect();
@@ -212,8 +213,8 @@ pub fn build_optical_flow_pyramid(
             let mut all_dx: Vec<Matrix<f32>> = Vec::with_capacity(n);
             let mut all_dy: Vec<Matrix<f32>> = Vec::with_capacity(n);
             for level in &levels {
-                let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, deriv_border)?;
-                let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, deriv_border)?;
+                let ix: Matrix<f32> = scharr(level, 1, 0, 1.0, 0.0, deriv_border)?;
+                let iy: Matrix<f32> = scharr(level, 0, 1, 1.0, 0.0, deriv_border)?;
                 all_dx.push(ix);
                 all_dy.push(iy);
             }
