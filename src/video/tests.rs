@@ -85,9 +85,11 @@ mod video_tests {
         assert_eq!(pyr.levels[3].rows, 8);
     }
 
-    // miri: ~45s under interpretation. The Sobel `unsafe` fast path it exercises
-    // is still covered by imgproc::tests::test_sobel (f32/ksize 3, ~0.8s under
-    // Miri), so no UB coverage is lost here. See .agents/MIRI_PLAN.md §4.
+    // miri: ~45s under interpretation. Post-#130 this exercises the Scharr
+    // `unsafe` fast path (build_optical_flow_pyramid switched from Sobel to
+    // Scharr), still covered by imgproc::tests::test_scharr (f32/ksize -1,
+    // ~0.8s under Miri), so no UB coverage is lost here. See
+    // .agents/MIRI_PLAN.md §4.
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_build_pyramid_with_derivatives() {
@@ -111,10 +113,10 @@ mod video_tests {
         }
     }
 
-    // miri: exercises the same unsafe Scharr fast path as
-    // test_build_pyramid_with_derivatives — skip under Miri, see
-    // .agents/MIRI_PLAN.md §4.
-    #[cfg_attr(miri, ignore)]
+    // Not Miri-ignored: measured at ~0.8s under Miri (std,simd), well under
+    // the >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
+    // exercising the same unsafe Scharr fast path as
+    // test_build_pyramid_with_derivatives.
     #[test]
     fn test_build_pyramid_derivatives_use_scharr() {
         // 5x5 linear ramp v(x, y) = 2*x + y. For a linear ramp the 3x3
@@ -449,10 +451,10 @@ mod video_tests {
     /// it against `err[0]` (min eigenvalue) reported via
     /// OPTFLOW_LK_GET_MIN_EIGENVALS. purecv#130: pins the Scharr operator;
     /// this test failed against the pre-fix Sobel implementation.
-    // miri: exercises the same unsafe Scharr fast path as
-    // test_build_pyramid_with_derivatives — skip under Miri, see
-    // .agents/MIRI_PLAN.md §4.
-    #[cfg_attr(miri, ignore)]
+    // Not Miri-ignored: measured at ~18s under Miri (std,simd), under the
+    // >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
+    // exercising the same unsafe Scharr fast path as
+    // test_build_pyramid_with_derivatives.
     #[test]
     fn test_calc_optical_flow_pyramid_lk_uses_scharr_derivatives() {
         // Same textured frame as the module's doc example: an 8x8 bright

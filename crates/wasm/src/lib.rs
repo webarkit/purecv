@@ -2042,7 +2042,10 @@ pub fn wasm_build_optical_flow_pyramid(
 ///   gradient matrix is built from Scharr derivatives, matching
 ///   `cv::calcOpticalFlowPyrLK` (see #130). Thresholds tuned against a purecv
 ///   build predating this fix, which used Sobel derivatives, will read
-///   differently on this scale and should be retuned.
+///   differently on this scale and should be retuned. Note that the
+///   eigenvalue here is normalized by window area only; OpenCV additionally
+///   scales by `FLT_SCALE = 2^-20`, so thresholds are still not directly
+///   transferable between the two libraries even after this fix.
 ///
 /// ```js
 /// const gray0 = Mat.fromU8Data(h, w, 1, frameData0);

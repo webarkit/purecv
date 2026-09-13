@@ -154,10 +154,14 @@ tests are 82% of total runtime, while the remaining **293 tests complete in 139s
 combined**. Nine annotations take the suite from 41 minutes to roughly 4.
 
 **Coverage check on the one borderline case.** `test_build_pyramid_with_derivatives`
-exercises the Sobel path, which under `simd` reaches the `unsafe` in
-`derivatives.rs:346,349`. That coverage is **not** lost: `imgproc::tests::test_sobel`
-calls `sobel(&src_f32, 1, 0, 3, …)` (`src/imgproc/tests.rs:138`), matching
-`fast_deriv_3x3`'s `TypeId == f32 && ksize == 3` trigger, and runs in 0.8s under Miri.
+exercises the Scharr path (Sobel before #130, switched to Scharr by that fix), which
+under `simd` reaches the `unsafe` in `derivatives.rs:346,349`. That coverage is
+**not** lost: `imgproc::tests::test_scharr` calls `scharr(&src, 1, 0, …)`
+(`src/imgproc/tests.rs:154`), matching `fast_deriv_3x3`'s `TypeId == f32 &&
+kernel-length == 3` trigger (true for both Sobel `ksize=3` and Scharr `ksize=-1`,
+since `get_deriv_kernel` returns a 3-element kernel for both), and runs in ~0.75s
+under Miri — same order of magnitude as `test_sobel`, which still covers the
+Sobel path used elsewhere (`canny`, `hough_circles`, …).
 
 ### Annotation convention
 
@@ -493,5 +497,5 @@ This turns a claim Miri would contradict into one Miri actively backs.
 |-----------------------|--------------|
 | Miri CI job passes on `dev` | ✅ Both legs green locally (§9). Pending confirmation on `ubuntu-latest`. |
 | All existing unsafe verified UB-free, or documented exceptions | ✅ 6 of 6 reachable production blocks verified clean. Exception: the `parallel`-only pair, documented in §5. |
-| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 11 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. |
+| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 9 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. #130 added two more tests exercising the same unsafe Scharr fast path, but both measured well under the 30s threshold (§4) and are not excluded. |
 | Plan document identifying included/excluded code with rationale | ✅ This document, tracked in git via a `.gitignore` exception. |
