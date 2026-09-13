@@ -515,9 +515,10 @@ mod video_tests {
         .unwrap();
 
         assert_eq!(status[0], 1);
+        let relative_error = (err[0] as f64 - expected_min_eigen).abs() / expected_min_eigen.abs();
         assert!(
-            (err[0] as f64 - expected_min_eigen).abs() < 1e-3,
-            "expected min_eigen {expected_min_eigen} (Scharr), got {}; \
+            relative_error < 1e-5,
+            "expected min_eigen {expected_min_eigen} (Scharr), got {} (relative error {relative_error}); \
              calc_optical_flow_pyramid_lk must use the same Scharr derivatives as scharr()",
             err[0]
         );
