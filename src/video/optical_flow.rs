@@ -64,7 +64,7 @@ use crate::core::logging::tags;
 use crate::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use crate::core::Matrix;
 use crate::cv_log_debug;
-use crate::imgproc::derivatives::{scharr, sobel};
+use crate::imgproc::derivatives::scharr;
 use crate::imgproc::pyramid::pyr_down;
 
 #[cfg(feature = "parallel")]
@@ -524,7 +524,11 @@ fn compute_tracking_error(
 /// * `flags`               — Option flags; combine [`OPTFLOW_USE_INITIAL_FLOW`]
 ///   and/or [`OPTFLOW_LK_GET_MIN_EIGENVALS`].
 /// * `min_eigen_threshold` — Points whose spatial-gradient matrix has a
-///   minimum eigenvalue below this threshold are marked as lost.
+///   minimum eigenvalue below this threshold are marked as lost. The
+///   gradient matrix is built from Scharr derivatives, matching
+///   `cv::calcOpticalFlowPyrLK` (see #130). Thresholds tuned against a
+///   purecv build predating that fix, which used Sobel derivatives, will
+///   read roughly 16x smaller on this scale and should be retuned.
 ///
 /// # Returns
 /// A tuple `(next_pts, status, err)`:
@@ -623,15 +627,16 @@ pub fn calc_optical_flow_pyramid_lk(
     let next_pyr = build_f32_pyramid(&next_f32, max_level)?;
     let actual_levels = prev_pyr.len().min(next_pyr.len());
 
-    // Pre-compute Sobel derivatives for each level of the previous frame.
-    // When `parallel` is enabled the per-level Sobel passes run concurrently.
+    // Pre-compute Scharr derivatives for each level of the previous frame,
+    // matching OpenCV's calcScharrDeriv (lkpyramid.cpp) — see #130. When
+    // `parallel` is enabled the per-level passes run concurrently.
     #[cfg(feature = "parallel")]
     let (prev_ix, prev_iy): (Vec<Matrix<f32>>, Vec<Matrix<f32>>) = {
         let pairs: Result<Vec<(Matrix<f32>, Matrix<f32>)>> = prev_pyr[..actual_levels]
             .par_iter()
             .map(|level| {
-                let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
-                let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+                let ix: Matrix<f32> = scharr(level, 1, 0, 1.0, 0.0, BorderTypes::Reflect101)?;
+                let iy: Matrix<f32> = scharr(level, 0, 1, 1.0, 0.0, BorderTypes::Reflect101)?;
                 Ok((ix, iy))
             })
             .collect();
@@ -643,8 +648,8 @@ pub fn calc_optical_flow_pyramid_lk(
         let mut prev_ix: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
         let mut prev_iy: Vec<Matrix<f32>> = Vec::with_capacity(actual_levels);
         for level in &prev_pyr[..actual_levels] {
-            let ix: Matrix<f32> = sobel(level, 1, 0, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
-            let iy: Matrix<f32> = sobel(level, 0, 1, 3, 1.0, 0.0, BorderTypes::Reflect101)?;
+            let ix: Matrix<f32> = scharr(level, 1, 0, 1.0, 0.0, BorderTypes::Reflect101)?;
+            let iy: Matrix<f32> = scharr(level, 0, 1, 1.0, 0.0, BorderTypes::Reflect101)?;
             prev_ix.push(ix);
             prev_iy.push(iy);
         }
