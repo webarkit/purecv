@@ -493,5 +493,5 @@ This turns a claim Miri would contradict into one Miri actively backs.
 |-----------------------|--------------|
 | Miri CI job passes on `dev` | ✅ Both legs green locally (§9). Pending confirmation on `ubuntu-latest`. |
 | All existing unsafe verified UB-free, or documented exceptions | ✅ 6 of 6 reachable production blocks verified clean. Exception: the `parallel`-only pair, documented in §5. |
-| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 9 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. |
+| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 11 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. |
 | Plan document identifying included/excluded code with rationale | ✅ This document, tracked in git via a `.gitignore` exception. |

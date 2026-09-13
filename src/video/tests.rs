@@ -447,8 +447,8 @@ mod video_tests {
     /// so pin it through the public interface: independently compute the
     /// documented H-matrix formula from a direct `scharr()` call, and check
     /// it against `err[0]` (min eigenvalue) reported via
-    /// OPTFLOW_LK_GET_MIN_EIGENVALS. purecv#130: today this uses Sobel
-    /// internally and will not match.
+    /// OPTFLOW_LK_GET_MIN_EIGENVALS. purecv#130: pins the Scharr operator;
+    /// this test failed against the pre-fix Sobel implementation.
     // miri: exercises the same unsafe Scharr fast path as
     // test_build_pyramid_with_derivatives — skip under Miri, see
     // .agents/MIRI_PLAN.md §4.
@@ -479,6 +479,10 @@ mod video_tests {
         let px = pt.x as i32;
         let py = pt.y as i32;
         let cols = ix.cols;
+        // keep in sync with lk_single_level's H/eigenvalue computation
+        // (src/video/optical_flow.rs, near the min_eigen_threshold handling
+        // in the single-level LK solver) — this test intentionally
+        // duplicates that private formula for black-box verification.
         let mut h00 = 0.0f64;
         let mut h01 = 0.0f64;
         let mut h11 = 0.0f64;
@@ -515,6 +519,10 @@ mod video_tests {
         .unwrap();
 
         assert_eq!(status[0], 1);
+        debug_assert!(
+            expected_min_eigen > 0.0,
+            "test fixture must produce a non-degenerate H matrix"
+        );
         let relative_error = (err[0] as f64 - expected_min_eigen).abs() / expected_min_eigen.abs();
         assert!(
             relative_error < 1e-5,

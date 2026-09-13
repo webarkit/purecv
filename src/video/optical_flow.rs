@@ -105,9 +105,9 @@ pub const OPTFLOW_LK_GET_MIN_EIGENVALS: i32 = 8;
 pub struct OpticalFlowPyramid {
     /// Pyramid levels from finest (index 0) to coarsest (index n).
     pub levels: Vec<Matrix<f32>>,
-    /// Sobel-x derivative for each level (empty when not requested).
+    /// Scharr-x derivative for each level (empty when not requested).
     pub dx: Vec<Matrix<f32>>,
-    /// Sobel-y derivative for each level (empty when not requested).
+    /// Scharr-y derivative for each level (empty when not requested).
     pub dy: Vec<Matrix<f32>>,
 }
 
@@ -131,8 +131,9 @@ pub struct OpticalFlowPyramid {
 /// * `max_level`        — Maximum number of additional pyramid levels to build
 ///   on top of the original (level 0).  The returned pyramid has at most
 ///   `max_level + 1` levels.
-/// * `with_derivatives` — When `true`, the Sobel-x and Sobel-y derivatives
-///   are computed for every level and stored in the returned struct.
+/// * `with_derivatives` — When `true`, the Scharr-x and Scharr-y derivatives
+///   are computed for every level and stored in the returned struct
+///   (matching `cv::buildOpticalFlowPyramid`).
 /// * `pyr_border`       — Border interpolation used when downsampling.
 /// * `deriv_border`     — Border interpolation used when computing derivatives.
 ///
@@ -280,8 +281,8 @@ fn bilinear_interp(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
 ///
 /// * `prev`      — previous frame at this level (single-channel f32).
 /// * `next`      — next frame at this level (single-channel f32).
-/// * `prev_ix`   — Sobel-x derivative of `prev`.
-/// * `prev_iy`   — Sobel-y derivative of `prev`.
+/// * `prev_ix`   — Scharr-x derivative of `prev`.
+/// * `prev_iy`   — Scharr-y derivative of `prev`.
 /// * `px`, `py`  — reference-point coordinates in this level's space.
 /// * `init_u`, `init_v` — initial optical flow estimate at this level.
 /// * `half_win_w`, `half_win_h` — half-sizes of the tracking window.
@@ -526,9 +527,13 @@ fn compute_tracking_error(
 /// * `min_eigen_threshold` — Points whose spatial-gradient matrix has a
 ///   minimum eigenvalue below this threshold are marked as lost. The
 ///   gradient matrix is built from Scharr derivatives, matching
-///   `cv::calcOpticalFlowPyrLK` (see #130). Thresholds tuned against a
-///   purecv build predating that fix, which used Sobel derivatives, will
-///   read roughly 16x smaller on this scale and should be retuned.
+///   `cv::calcOpticalFlowPyrLK` (see #130). Note that the eigenvalue here
+///   is normalized by window area only; OpenCV additionally scales by
+///   `FLT_SCALE = 2^-20`, so `min_eigen_threshold` values are still not
+///   directly transferable between the two libraries even after this fix.
+///   Thresholds tuned against a purecv build predating that fix, which
+///   used Sobel derivatives, will read roughly 16x smaller on this scale
+///   and should be retuned.
 ///
 /// # Returns
 /// A tuple `(next_pts, status, err)`:
