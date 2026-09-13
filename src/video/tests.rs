@@ -110,6 +110,56 @@ mod video_tests {
         }
     }
 
+    // miri: exercises the same unsafe Scharr fast path as
+    // test_build_pyramid_with_derivatives — skip under Miri, see
+    // .agents/MIRI_PLAN.md §4.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_build_pyramid_derivatives_use_scharr() {
+        // 5x5 linear ramp v(x, y) = 2*x + y. For a linear ramp the 3x3
+        // derivative response at any interior pixel has an exact closed
+        // form: Ix = 2*a*sum(ky), Iy = 2*b*sum(ky), where sum(ky) is 4 for
+        // Sobel's [1,2,1] smoothing kernel or 16 for Scharr's [3,10,3].
+        // purecv#130: this must be 16 (Scharr), not 4 (Sobel).
+        let a = 2.0f32;
+        let b = 1.0f32;
+        let mut data = vec![0u8; 5 * 5];
+        for y in 0..5usize {
+            for x in 0..5usize {
+                data[y * 5 + x] = (a * x as f32 + b * y as f32) as u8;
+            }
+        }
+        let img = Matrix::<u8>::from_vec(5, 5, 1, data);
+
+        let pyr = build_optical_flow_pyramid(
+            &img,
+            Size2i::new(3, 3),
+            0, // single level: pure derivative check, no pyr_down involved
+            true,
+            BorderTypes::Reflect101,
+            BorderTypes::Reflect101,
+        )
+        .unwrap();
+
+        // Center pixel (2, 2): full 3x3 neighborhood inside the image, so
+        // border interpolation never kicks in and the closed form is exact.
+        let idx = 2 * 5 + 2;
+        let expected_ix = 32.0 * a; // Scharr: 2*a*16
+        let expected_iy = 32.0 * b;
+
+        assert!(
+            (pyr.dx[0].data[idx] - expected_ix).abs() < 1e-4,
+            "expected Ix = {expected_ix} (Scharr), got {}; build_optical_flow_pyramid \
+             must use Scharr, not Sobel, derivatives",
+            pyr.dx[0].data[idx]
+        );
+        assert!(
+            (pyr.dy[0].data[idx] - expected_iy).abs() < 1e-4,
+            "expected Iy = {expected_iy} (Scharr), got {}",
+            pyr.dy[0].data[idx]
+        );
+    }
+
     #[test]
     fn test_build_pyramid_rejects_multi_channel() {
         let img = Matrix::<u8>::new(64, 64, 3);
