@@ -1966,7 +1966,7 @@ pub fn morph_blackhat() -> i32 {
 ///
 /// * `win_w`, `win_h` – Tracking window size.
 /// * `max_level`      – Maximum number of additional pyramid levels.
-/// * `with_derivatives`– Compute Sobel derivatives alongside the pyramid.
+/// * `with_derivatives`– Compute Scharr derivatives alongside the pyramid.
 /// * `pyr_border`     – Border interpolation for downsampling.
 /// * `deriv_border`   – Border interpolation for derivatives.
 ///
@@ -2038,7 +2038,11 @@ pub fn wasm_build_optical_flow_pyramid(
 /// * `epsilon`        – Convergence threshold.
 /// * `flags`          – Combine `OPTFLOW_USE_INITIAL_FLOW()` and/or
 ///   `OPTFLOW_LK_GET_MIN_EIGENVALS()`.
-/// * `min_eigen_threshold` – Min eigenvalue below which a point is lost.
+/// * `min_eigen_threshold` – Min eigenvalue below which a point is lost. The
+///   gradient matrix is built from Scharr derivatives, matching
+///   `cv::calcOpticalFlowPyrLK` (see #130). Thresholds tuned against a purecv
+///   build predating this fix, which used Sobel derivatives, will read
+///   differently on this scale and should be retuned.
 ///
 /// ```js
 /// const gray0 = Mat.fromU8Data(h, w, 1, frameData0);
