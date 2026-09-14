@@ -40,7 +40,7 @@ mod video_tests {
     use crate::core::Matrix;
     use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
-        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, FLT_SCALE,
+        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, lk_iterate, FLT_SCALE,
         OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 
@@ -590,6 +590,41 @@ mod video_tests {
             "min eigenvalue must be on OpenCV's scale: expected {expected}, got {} \
              (relative error {relative_error})",
             err[0]
+        );
+    }
+
+    /// Hand-crafted mismatch sequence that oscillates by construction, so
+    /// this test needs no real image data. H = identity (h00=h11=1, h01=0)
+    /// makes eta = (bx, by) directly. purecv#131: without the oscillation
+    /// half-step fallback, iteration continues past the cancelling pair
+    /// instead of stopping there — see this function's own comment for the
+    /// full trace.
+    #[test]
+    fn test_lk_iterate_applies_oscillation_half_step() {
+        let mut call = 0;
+        let (u, v) = lk_iterate(
+            1.0, 0.0, 1.0, // h00, h01, h11
+            1.0,           // inv_det
+            0.0, 0.0,      // init_u, init_v
+            10,            // max_iters
+            1e-9,          // eps: tiny, never satisfied by these steps
+            |_u, _v| {
+                call += 1;
+                match call {
+                    1 => (1.0, 0.5),
+                    2 => (-1.0, -0.5),
+                    _ => (0.0, 0.0),
+                }
+            },
+        );
+
+        assert!(
+            (u - 0.5).abs() < 1e-9,
+            "expected u = 0.5 (oscillation half-step fallback), got {u}"
+        );
+        assert!(
+            (v - 0.25).abs() < 1e-9,
+            "expected v = 0.25 (oscillation half-step fallback), got {v}"
         );
     }
 }
