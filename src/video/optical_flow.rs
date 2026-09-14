@@ -409,59 +409,107 @@ fn lk_single_level(
     let inv_det = 1.0 / det;
 
     // -------------------------------------------------------------------
-    // Iterative refinement.
+    // Iterative refinement. The Newton loop itself lives in `lk_iterate`
+    // (kept separate so it is directly unit-testable without real image
+    // data -- see its own doc comment and #131).
     // -------------------------------------------------------------------
-    let mut u = init_u as f64;
-    let mut v = init_v as f64;
 
-    // SIMD path: pre-allocate a reusable i2 buffer; refill each iteration.
     #[cfg(feature = "simd")]
-    let mut i2_win = vec![0.0f32; ix_win.len()];
+    {
+        // Pre-allocate a reusable i2 buffer; refilled each iteration.
+        let mut i2_win = vec![0.0f32; ix_win.len()];
+        let (u, v) = lk_iterate(
+            h00,
+            h01,
+            h11,
+            inv_det,
+            init_u as f64,
+            init_v as f64,
+            max_iters,
+            eps,
+            move |u, v| {
+                // Regather I2 at current flow estimate (u, v).
+                let mut w_idx = 0usize;
+                for dy in -half_win_h..=half_win_h {
+                    for dx in -half_win_w..=half_win_w {
+                        let sx = px as f64 + dx as f64;
+                        let sy = py as f64 + dy as f64;
+                        i2_win[w_idx] = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
+                        w_idx += 1;
+                    }
+                }
+                video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win)
+            },
+        );
+        (u as f32, v as f32, min_eigen, true)
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        let (u, v) = lk_iterate(
+            h00,
+            h01,
+            h11,
+            inv_det,
+            init_u as f64,
+            init_v as f64,
+            max_iters,
+            eps,
+            move |u, v| {
+                let mut bx = 0.0f64;
+                let mut by = 0.0f64;
+                for dy in -half_win_h..=half_win_h {
+                    for dx in -half_win_w..=half_win_w {
+                        let sx = px as f64 + dx as f64;
+                        let sy = py as f64 + dy as f64;
+
+                        let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
+                        let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
+                        let it = i2 - i1;
+
+                        let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
+                        let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
+
+                        bx -= ix * it;
+                        by -= iy * it;
+                    }
+                }
+                (bx, by)
+            },
+        );
+        (u as f32, v as f32, min_eigen, true)
+    }
+}
+
+/// Run the Newton-Raphson refinement loop for a single LK pyramid level,
+/// given a fixed spatial-gradient matrix `H` and a way to compute the
+/// mismatch vector `b` at the current flow estimate.
+///
+/// Extracted from [`lk_single_level`] so the iteration itself is directly
+/// unit-testable without needing real image data (see `video::tests`).
+///
+/// `compute_mismatch(u, v)` returns `(bx, by)`, the mismatch vector at flow
+/// estimate `(u, v)`; production callers sample it from the image pair via
+/// bilinear interpolation (see [`lk_single_level`]'s two call sites), but
+/// any function works for testing.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn lk_iterate(
+    h00: f64,
+    h01: f64,
+    h11: f64,
+    inv_det: f64,
+    init_u: f64,
+    init_v: f64,
+    max_iters: i32,
+    eps: f64,
+    mut compute_mismatch: impl FnMut(f64, f64) -> (f64, f64),
+) -> (f64, f64) {
+    let mut u = init_u;
+    let mut v = init_v;
 
     for _iter in 0..max_iters {
-        // ---------------------------------------------------------------
-        // Accumulate the mismatch vector b = -Σ [Ix·It, Iy·It].
-        // ---------------------------------------------------------------
-
-        #[cfg(feature = "simd")]
-        let (bx, by) = {
-            // Regather I2 at current flow estimate (u, v).
-            let mut w_idx = 0usize;
-            for dy in -half_win_h..=half_win_h {
-                for dx in -half_win_w..=half_win_w {
-                    let sx = px as f64 + dx as f64;
-                    let sy = py as f64 + dy as f64;
-                    i2_win[w_idx] = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
-                    w_idx += 1;
-                }
-            }
-            video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win)
-        };
-
-        #[cfg(not(feature = "simd"))]
-        let (bx, by) = {
-            let mut bx = 0.0f64;
-            let mut by = 0.0f64;
-            for dy in -half_win_h..=half_win_h {
-                for dx in -half_win_w..=half_win_w {
-                    let sx = px as f64 + dx as f64;
-                    let sy = py as f64 + dy as f64;
-
-                    let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
-                    let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
-                    let it = i2 - i1;
-
-                    let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
-                    let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
-
-                    bx -= ix * it;
-                    by -= iy * it;
-                }
-            }
-            (bx, by)
-        };
-
         // Solve H * (eta_u, eta_v) = (bx, by)
+        let (bx, by) = compute_mismatch(u, v);
         let eta_u = (h11 * bx - h01 * by) * inv_det;
         let eta_v = (-h01 * bx + h00 * by) * inv_det;
 
@@ -473,7 +521,7 @@ fn lk_single_level(
         }
     }
 
-    (u as f32, v as f32, min_eigen, true)
+    (u, v)
 }
 
 /// Compute the mean-absolute error (MAE) between matching `win_size`
