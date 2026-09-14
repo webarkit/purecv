@@ -492,6 +492,12 @@ fn lk_single_level(
 /// estimate `(u, v)`; production callers sample it from the image pair via
 /// bilinear interpolation (see [`lk_single_level`]'s two call sites), but
 /// any function works for testing.
+///
+/// Mirrors OpenCV's per-iteration loop, including the oscillation check
+/// (`modules/video/src/lkpyramid.cpp:610-627`, see #131): if two
+/// consecutive Newton steps nearly cancel (`|eta_i + eta_{i-1}| < 0.01` on
+/// both axes, checked from the second iteration on), the solver undoes
+/// half of the just-applied step and stops.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lk_iterate(
     h00: f64,
@@ -506,8 +512,10 @@ pub(crate) fn lk_iterate(
 ) -> (f64, f64) {
     let mut u = init_u;
     let mut v = init_v;
+    let mut prev_eta_u = 0.0f64;
+    let mut prev_eta_v = 0.0f64;
 
-    for _iter in 0..max_iters {
+    for iter in 0..max_iters {
         // Solve H * (eta_u, eta_v) = (bx, by)
         let (bx, by) = compute_mismatch(u, v);
         let eta_u = (h11 * bx - h01 * by) * inv_det;
@@ -519,6 +527,20 @@ pub(crate) fn lk_iterate(
         if eta_u * eta_u + eta_v * eta_v < eps {
             break;
         }
+
+        // Oscillation fallback, mirroring OpenCV
+        // (modules/video/src/lkpyramid.cpp:620-626, see #131): if this
+        // step nearly cancels the previous one, the solve is bouncing
+        // around the optimum rather than converging onto it. Undo half
+        // of the just-applied step and stop, instead of risking another
+        // full step that overshoots again.
+        if iter > 0 && (eta_u + prev_eta_u).abs() < 0.01 && (eta_v + prev_eta_v).abs() < 0.01 {
+            u -= eta_u * 0.5;
+            v -= eta_v * 0.5;
+            break;
+        }
+        prev_eta_u = eta_u;
+        prev_eta_v = eta_v;
     }
 
     (u, v)
