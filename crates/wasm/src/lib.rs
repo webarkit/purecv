@@ -2039,13 +2039,12 @@ pub fn wasm_build_optical_flow_pyramid(
 /// * `flags`          – Combine `OPTFLOW_USE_INITIAL_FLOW()` and/or
 ///   `OPTFLOW_LK_GET_MIN_EIGENVALS()`.
 /// * `min_eigen_threshold` – Min eigenvalue below which a point is lost. The
-///   gradient matrix is built from Scharr derivatives, matching
-///   `cv::calcOpticalFlowPyrLK` (see #130). Thresholds tuned against a purecv
-///   build predating this fix, which used Sobel derivatives, will read
-///   differently on this scale and should be retuned. Note that the
-///   eigenvalue here is normalized by window area only; OpenCV additionally
-///   scales by `FLT_SCALE = 2^-20`, so thresholds are still not directly
-///   transferable between the two libraries even after this fix.
+///   gradient matrix is built from Scharr derivatives and normalized by
+///   `FLT_SCALE = 2^-20` and the window area, matching
+///   `cv::calcOpticalFlowPyrLK` (see #130 and #138), so this value is on the
+///   same scale as OpenCV's and its `1e-4` default transfers directly.
+///   Thresholds tuned against a purecv build predating those fixes read about
+///   `2^20` times larger on this scale and must be retuned.
 ///
 /// ```js
 /// const gray0 = Mat.fromU8Data(h, w, 1, frameData0);
