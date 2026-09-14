@@ -543,11 +543,13 @@ fn compute_tracking_error(
 /// * `min_eigen_threshold` — Points whose spatial-gradient matrix has a
 ///   minimum eigenvalue below this threshold are marked as lost. The
 ///   gradient matrix is built from Scharr derivatives and normalised by
-///   [`FLT_SCALE`] and the window area, matching `cv::calcOpticalFlowPyrLK`
-///   (see #130 and #138), so this value is on the same scale as OpenCV's and
-///   its `1e-4` default transfers directly. Thresholds tuned against a purecv
-///   build predating those fixes read about `2^20` times larger on this scale
-///   and must be retuned.
+///   OpenCV's `FLT_SCALE = 2^-20` and the window area, matching
+///   `cv::calcOpticalFlowPyrLK` (see #130 and #138), so this value is on the
+///   same scale as OpenCV's and its `1e-4` default transfers directly.
+///   Thresholds tuned against a purecv build predating both fixes must be
+///   retuned: Scharr multiplies the gradient matrix by 16 relative to the
+///   Sobel derivatives used then, and `FLT_SCALE` divides by `2^20`, so such
+///   thresholds read about `2^20 / 16 = 65536` times larger on this scale.
 ///
 /// # Returns
 /// A tuple `(next_pts, status, err)`:

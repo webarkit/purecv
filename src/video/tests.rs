@@ -581,7 +581,9 @@ mod video_tests {
         .unwrap();
 
         assert_eq!(status[0], 1);
-        let expected = 51200.0 * FLT_SCALE / 9.0; // 0.005425347222...
+        // Literal, deliberately not derived from FLT_SCALE: this test must
+        // fail if that constant is ever changed, not follow it.
+        let expected = 51200.0 / (9.0 * 1048576.0); // 0.005425347222...
         let relative_error = (err[0] as f64 - expected).abs() / expected;
         assert!(
             relative_error < 1e-5,
