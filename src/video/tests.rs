@@ -38,6 +38,7 @@
 mod video_tests {
     use crate::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
     use crate::core::Matrix;
+    use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
         build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OPTFLOW_LK_GET_MIN_EIGENVALS,
         OPTFLOW_USE_INITIAL_FLOW,
@@ -84,9 +85,11 @@ mod video_tests {
         assert_eq!(pyr.levels[3].rows, 8);
     }
 
-    // miri: ~45s under interpretation. The Sobel `unsafe` fast path it exercises
-    // is still covered by imgproc::tests::test_sobel (f32/ksize 3, ~0.8s under
-    // Miri), so no UB coverage is lost here. See .agents/MIRI_PLAN.md §4.
+    // miri: ~45s under interpretation. Post-#130 this exercises the Scharr
+    // `unsafe` fast path (build_optical_flow_pyramid switched from Sobel to
+    // Scharr), still covered by imgproc::tests::test_scharr (f32/ksize -1,
+    // ~0.8s under Miri), so no UB coverage is lost here. See
+    // .agents/MIRI_PLAN.md §4.
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_build_pyramid_with_derivatives() {
@@ -108,6 +111,56 @@ mod video_tests {
             assert_eq!(pyr.dx[l].rows, pyr.levels[l].rows);
             assert_eq!(pyr.dx[l].cols, pyr.levels[l].cols);
         }
+    }
+
+    // Not Miri-ignored: measured at ~0.8s under Miri (std,simd), well under
+    // the >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
+    // exercising the same unsafe Scharr fast path as
+    // test_build_pyramid_with_derivatives.
+    #[test]
+    fn test_build_pyramid_derivatives_use_scharr() {
+        // 5x5 linear ramp v(x, y) = 2*x + y. For a linear ramp the 3x3
+        // derivative response at any interior pixel has an exact closed
+        // form: Ix = 2*a*sum(ky), Iy = 2*b*sum(ky), where sum(ky) is 4 for
+        // Sobel's [1,2,1] smoothing kernel or 16 for Scharr's [3,10,3].
+        // purecv#130: this must be 16 (Scharr), not 4 (Sobel).
+        let a = 2.0f32;
+        let b = 1.0f32;
+        let mut data = vec![0u8; 5 * 5];
+        for y in 0..5usize {
+            for x in 0..5usize {
+                data[y * 5 + x] = (a * x as f32 + b * y as f32) as u8;
+            }
+        }
+        let img = Matrix::<u8>::from_vec(5, 5, 1, data);
+
+        let pyr = build_optical_flow_pyramid(
+            &img,
+            Size2i::new(3, 3),
+            0, // single level: pure derivative check, no pyr_down involved
+            true,
+            BorderTypes::Reflect101,
+            BorderTypes::Reflect101,
+        )
+        .unwrap();
+
+        // Center pixel (2, 2): full 3x3 neighborhood inside the image, so
+        // border interpolation never kicks in and the closed form is exact.
+        let idx = 2 * 5 + 2;
+        let expected_ix = 32.0 * a; // Scharr: 2*a*16
+        let expected_iy = 32.0 * b;
+
+        assert!(
+            (pyr.dx[0].data[idx] - expected_ix).abs() < 1e-4,
+            "expected Ix = {expected_ix} (Scharr), got {}; build_optical_flow_pyramid \
+             must use Scharr, not Sobel, derivatives",
+            pyr.dx[0].data[idx]
+        );
+        assert!(
+            (pyr.dy[0].data[idx] - expected_iy).abs() < 1e-4,
+            "expected Iy = {expected_iy} (Scharr), got {}",
+            pyr.dy[0].data[idx]
+        );
     }
 
     #[test]
@@ -390,5 +443,94 @@ mod video_tests {
 
         assert_eq!(status[0], 1);
         assert!((next_pts[0].x - 32.0).abs() < 1.0);
+    }
+
+    /// `calc_optical_flow_pyramid_lk`'s derivative computation is private,
+    /// so pin it through the public interface: independently compute the
+    /// documented H-matrix formula from a direct `scharr()` call, and check
+    /// it against `err[0]` (min eigenvalue) reported via
+    /// OPTFLOW_LK_GET_MIN_EIGENVALS. purecv#130: pins the Scharr operator;
+    /// this test failed against the pre-fix Sobel implementation.
+    // Not Miri-ignored: measured at ~18s under Miri (std,simd), under the
+    // >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
+    // exercising the same unsafe Scharr fast path as
+    // test_build_pyramid_with_derivatives.
+    #[test]
+    fn test_calc_optical_flow_pyramid_lk_uses_scharr_derivatives() {
+        // Same textured frame as the module's doc example: an 8x8 bright
+        // square gives a genuinely 2D gradient (non-degenerate H) at its
+        // edges, unlike a flat region or a pure linear ramp.
+        let mut data = vec![0u8; 64 * 64];
+        for r in 28..36 {
+            for c in 28..36 {
+                data[r * 64 + c] = 200;
+            }
+        }
+        let frame = Matrix::<u8>::from_vec(64, 64, 1, data);
+        let pt = Point2f::new(32.0, 32.0);
+        let win_size = Size2i::new(11, 11);
+        let half_win_w = win_size.width / 2;
+        let half_win_h = win_size.height / 2;
+
+        // Reference: replicate the documented H-matrix formula using a
+        // direct scharr() call — the operator OpenCV actually uses.
+        let frame_f32 = frame.convert_to::<f32>().unwrap();
+        let ix = scharr(&frame_f32, 1, 0, 1.0, 0.0, BorderTypes::Reflect101).unwrap();
+        let iy = scharr(&frame_f32, 0, 1, 1.0, 0.0, BorderTypes::Reflect101).unwrap();
+
+        let px = pt.x as i32;
+        let py = pt.y as i32;
+        let cols = ix.cols;
+        // keep in sync with lk_single_level's H/eigenvalue computation
+        // (src/video/optical_flow.rs, near the min_eigen_threshold handling
+        // in the single-level LK solver) — this test intentionally
+        // duplicates that private formula for black-box verification.
+        let mut h00 = 0.0f64;
+        let mut h01 = 0.0f64;
+        let mut h11 = 0.0f64;
+        for dy in -half_win_h..=half_win_h {
+            for dx in -half_win_w..=half_win_w {
+                let idx = ((py + dy) as usize) * cols + (px + dx) as usize;
+                let vx = ix.data[idx] as f64;
+                let vy = iy.data[idx] as f64;
+                h00 += vx * vx;
+                h01 += vx * vy;
+                h11 += vy * vy;
+            }
+        }
+        let win_area = ((2 * half_win_w + 1) * (2 * half_win_h + 1)) as f64;
+        let (h00n, h01n, h11n) = (h00 / win_area, h01 / win_area, h11 / win_area);
+        let trace = h00n + h11n;
+        let det_n = h00n * h11n - h01n * h01n;
+        let disc = (trace * trace - 4.0 * det_n).max(0.0).sqrt();
+        let expected_min_eigen = (trace - disc) * 0.5;
+
+        // Actual: what calc_optical_flow_pyramid_lk reports.
+        let criteria = TermCriteria::new(TermType::Both, 20, 0.03);
+        let (_next_pts, status, err) = calc_optical_flow_pyramid_lk(
+            &frame,
+            &frame,
+            &[pt],
+            None,
+            win_size,
+            0, // max_level: single level keeps point coordinates unscaled
+            criteria,
+            OPTFLOW_LK_GET_MIN_EIGENVALS,
+            0.0, // min_eigen_threshold: accept regardless of scale
+        )
+        .unwrap();
+
+        assert_eq!(status[0], 1);
+        debug_assert!(
+            expected_min_eigen > 0.0,
+            "test fixture must produce a non-degenerate H matrix"
+        );
+        let relative_error = (err[0] as f64 - expected_min_eigen).abs() / expected_min_eigen.abs();
+        assert!(
+            relative_error < 1e-5,
+            "expected min_eigen {expected_min_eigen} (Scharr), got {} (relative error {relative_error}); \
+             calc_optical_flow_pyramid_lk must use the same Scharr derivatives as scharr()",
+            err[0]
+        );
     }
 }

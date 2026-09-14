@@ -106,10 +106,13 @@ Parallel + SIMD achieves the best throughput.
 
 #### `build_optical_flow_pyramid` with derivatives
 
-When `with_derivatives = true`, the per-level Sobel (Ix, Iy) passes are
-independent across pyramid levels and run concurrently via Rayon with the
-`parallel` feature.  For a 4-level pyramid the expected speedup is up to
-4× (level count) times the per-level Sobel speedup.  In practice the
+When `with_derivatives = true`, the per-level Scharr (Ix, Iy) passes
+(Sobel before #130, switched to Scharr to match OpenCV) are independent
+across pyramid levels and run concurrently via Rayon with the `parallel`
+feature.  Scharr shares the same `fast_deriv_3x3` code path as Sobel, so
+the performance characteristics below are unchanged by that switch.  For
+a 4-level pyramid the expected speedup is up to 4× (level count) times
+the per-level Scharr speedup.  In practice the
 coarser levels are very small so the scaling is sub-linear, but a 2–3×
 wall-clock gain is typical.
 

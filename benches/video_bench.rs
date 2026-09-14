@@ -111,7 +111,7 @@ fn make_grid_points(size: usize, step: usize) -> Vec<Point2f> {
 ///
 /// Benchmark names:
 /// * `build_optical_flow_pyramid/no_deriv` — pyramid only
-/// * `build_optical_flow_pyramid/with_deriv` — pyramid + Sobel Ix, Iy per level
+/// * `build_optical_flow_pyramid/with_deriv` — pyramid + Scharr Ix, Iy per level
 ///   (this is where the `parallel` feature gives the most gain in this function)
 fn bench_build_pyramid(c: &mut Criterion) {
     let size = 512usize;
