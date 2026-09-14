@@ -594,21 +594,38 @@ mod video_tests {
     }
 
     /// Hand-crafted mismatch sequence that oscillates by construction, so
-    /// this test needs no real image data. H = identity (h00=h11=1, h01=0)
-    /// makes eta = (bx, by) directly. purecv#131: without the oscillation
-    /// half-step fallback, iteration continues past the cancelling pair
-    /// instead of stopping there — see this function's own comment for the
-    /// full trace.
+    /// this test needs no real image data. H = identity (h00=h11=1, h01=0),
+    /// so inv_det=1 and eta=(bx, by) directly. The closure returns (1.0,
+    /// 0.5) on call 1, (-1.0, -0.5) on call 2, and (0.0, 0.0) on every call
+    /// after that. Trace:
+    ///
+    /// - iter 0: eta=(1.0, 0.5) -> u,v=(1.0, 0.5) (not converged; eps=1e-9
+    ///   is tiny)
+    /// - iter 1: eta=(-1.0, -0.5) -> u,v=(0.0, 0.0) (not converged) — but
+    ///   eta_1 + eta_0 = (0, 0) on both axes, so the oscillation fallback
+    ///   fires: u,v = (0.0, 0.0) - (-1.0, -0.5) * 0.5 = (0.5, 0.25)
+    ///
+    /// purecv#131: without the fix, iteration would continue instead — a
+    /// 3rd call returning (0, 0) converges immediately at (0.0, 0.0). That
+    /// is exactly what Task 1's unfixed `lk_iterate` did, confirmed RED.
+    ///
+    /// This pins the math directly via `lk_iterate` rather than through a
+    /// real-image `calc_optical_flow_pyramid_lk` call because a systematic
+    /// search across several synthetic image patterns (periodic gratings,
+    /// thin bars, Gaussian dots, random noise, occlusion boundaries) found
+    /// no real-image scenario in this codebase that naturally triggers the
+    /// oscillation branch — and OpenCV's own test suite has no dedicated
+    /// test for this branch either.
     #[test]
     fn test_lk_iterate_applies_oscillation_half_step() {
         let mut call = 0;
         let (u, v) = lk_iterate(
-            1.0,
-            0.0,
-            1.0, // h00, h01, h11
-            1.0, // inv_det
-            0.0,
-            0.0,  // init_u, init_v
+            1.0,  // h00
+            0.0,  // h01
+            1.0,  // h11
+            1.0,  // inv_det
+            0.0,  // init_u
+            0.0,  // init_v
             10,   // max_iters
             1e-9, // eps: tiny, never satisfied by these steps
             |_u, _v| {
