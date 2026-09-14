@@ -40,8 +40,8 @@ mod video_tests {
     use crate::core::Matrix;
     use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
-        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OPTFLOW_LK_GET_MIN_EIGENVALS,
-        OPTFLOW_USE_INITIAL_FLOW,
+        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, FLT_SCALE,
+        OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 
     // ------------------------------------------------------------------
@@ -499,7 +499,13 @@ mod video_tests {
             }
         }
         let win_area = ((2 * half_win_w + 1) * (2 * half_win_h + 1)) as f64;
-        let (h00n, h01n, h11n) = (h00 / win_area, h01 / win_area, h11 / win_area);
+        // purecv#138: H is scaled by OpenCV's FLT_SCALE = 2^-20 as well as by
+        // the window area.
+        let (h00n, h01n, h11n) = (
+            h00 * FLT_SCALE / win_area,
+            h01 * FLT_SCALE / win_area,
+            h11 * FLT_SCALE / win_area,
+        );
         let trace = h00n + h11n;
         let det_n = h00n * h11n - h01n * h01n;
         let disc = (trace * trace - 4.0 * det_n).max(0.0).sqrt();
@@ -530,6 +536,57 @@ mod video_tests {
             relative_error < 1e-5,
             "expected min_eigen {expected_min_eigen} (Scharr), got {} (relative error {relative_error}); \
              calc_optical_flow_pyramid_lk must use the same Scharr derivatives as scharr()",
+            err[0]
+        );
+    }
+
+    /// Pins the reported minimum eigenvalue to OpenCV's scale — `FLT_SCALE`
+    /// (`2^-20`) with the window area as the only other divisor — against a
+    /// closed-form value. purecv#138: the pre-fix code omitted `FLT_SCALE`
+    /// entirely, and dividing by `2 * win_area` instead of `win_area` would
+    /// halve the result, since `min_eigen` already applies the `* 0.5` of the
+    /// eigenvalue formula.
+    #[test]
+    fn test_lk_min_eigen_matches_opencv_scale() {
+        // Separable image v(x, y) = f(x) + g(y). For a separable image the
+        // Scharr response is exact and depends on one axis only:
+        //     Ix(x) = 16 * (f(x+1) - f(x-1)),  Iy(y) = 16 * (g(y+1) - g(y-1))
+        // (16 = sum of Scharr's [3,10,3] smoothing kernel).
+        // Over the 3x3 window at (32,32): Ix = 160 on the x=31 column only,
+        // Iy = 160 on the y=33 row only, so
+        //     h00 = h11 = 3*160^2 = 76800,  h01 = 160*160 = 25600
+        // and, since h00n == h11n, min_eigen = h00n - |h01n| =
+        //     (76800 - 25600) * 2^-20 / 9 = 51200 / 9437184
+        let mut data = vec![0u8; 64 * 64];
+        for y in 0..64usize {
+            for x in 0..64usize {
+                let f = if x == 32 || x == 34 { 10u16 } else { 0 };
+                let g = if y == 34 { 10u16 } else { 0 };
+                data[y * 64 + x] = (f + g) as u8;
+            }
+        }
+        let frame = Matrix::<u8>::from_vec(64, 64, 1, data);
+        let criteria = TermCriteria::new(TermType::Both, 20, 0.03);
+        let (_next_pts, status, err) = calc_optical_flow_pyramid_lk(
+            &frame,
+            &frame,
+            &[Point2f::new(32.0, 32.0)],
+            None,
+            Size2i::new(3, 3),
+            0, // max_level: single level keeps point coordinates unscaled
+            criteria,
+            OPTFLOW_LK_GET_MIN_EIGENVALS,
+            0.0, // min_eigen_threshold: accept regardless of scale
+        )
+        .unwrap();
+
+        assert_eq!(status[0], 1);
+        let expected = 51200.0 * FLT_SCALE / 9.0; // 0.005425347222...
+        let relative_error = (err[0] as f64 - expected).abs() / expected;
+        assert!(
+            relative_error < 1e-5,
+            "min eigenvalue must be on OpenCV's scale: expected {expected}, got {} \
+             (relative error {relative_error})",
             err[0]
         );
     }

@@ -73,6 +73,16 @@ use rayon::prelude::*;
 #[cfg(feature = "simd")]
 use super::simd as video_simd;
 
+/// Fixed-point normalisation factor applied to the spatial gradient matrix `H`
+/// before the minimum-eigenvalue test, matching OpenCV's `FLT_SCALE`
+/// (`modules/video/src/lkpyramid.cpp:115`).
+///
+/// OpenCV accumulates `H` from *unnormalised* Scharr derivatives and rescales
+/// by `2^-20` so that `min_eigen_threshold` is a small, resolution-independent
+/// number (its default is `1e-4`). Applying the same factor here keeps
+/// thresholds transferable between the two libraries.
+pub(crate) const FLT_SCALE: f64 = 1.0 / (1u32 << 20) as f64;
+
 // ---------------------------------------------------------------------------
 // Public flags (mirror OpenCV's OpticalFlowFlags)
 // ---------------------------------------------------------------------------
@@ -364,11 +374,16 @@ fn lk_single_level(
     // -------------------------------------------------------------------
     // Compute min eigenvalue of H on OpenCV's scale.
     // -------------------------------------------------------------------
+    // OpenCV (`modules/video/src/lkpyramid.cpp:115,415-417`) scales the raw
+    // Scharr-derived H by `FLT_SCALE`, then writes
+    //     minEig = (A11 + A22 - sqrt((A11-A22)^2 + 4*A12^2)) / (2*W*H)
+    // That numerator is `2*lambda_min`, not `lambda_min`, so OpenCV's
+    // effective divisor on a true `lambda_min` is `W*H` -- do NOT also divide
+    // by 2 here, because `min_eigen` below already applies the `* 0.5`.
     let win_area = ((2 * half_win_w + 1) * (2 * half_win_h + 1)) as f64;
-    let flt_scale = 2f64.powi(-20);
-    let h00n = h00 * flt_scale / (2.0 * win_area);
-    let h01n = h01 * flt_scale / (2.0 * win_area);
-    let h11n = h11 * flt_scale / (2.0 * win_area);
+    let h00n = h00 * FLT_SCALE / win_area;
+    let h01n = h01 * FLT_SCALE / win_area;
+    let h11n = h11 * FLT_SCALE / win_area;
 
     let trace = h00n + h11n;
     let det_n = h00n * h11n - h01n * h01n;
@@ -527,14 +542,12 @@ fn compute_tracking_error(
 ///   and/or [`OPTFLOW_LK_GET_MIN_EIGENVALS`].
 /// * `min_eigen_threshold` — Points whose spatial-gradient matrix has a
 ///   minimum eigenvalue below this threshold are marked as lost. The
-///   gradient matrix is built from Scharr derivatives, matching
-///   `cv::calcOpticalFlowPyrLK` (see #130). Note that the eigenvalue here
-///   is normalized by window area only; OpenCV additionally scales by
-///   `FLT_SCALE = 2^-20`, so `min_eigen_threshold` values are still not
-///   directly transferable between the two libraries even after this fix.
-///   Thresholds tuned against a purecv build predating that fix, which
-///   used Sobel derivatives, will read roughly 16x smaller on this scale
-///   and should be retuned.
+///   gradient matrix is built from Scharr derivatives and normalised by
+///   [`FLT_SCALE`] and the window area, matching `cv::calcOpticalFlowPyrLK`
+///   (see #130 and #138), so this value is on the same scale as OpenCV's and
+///   its `1e-4` default transfers directly. Thresholds tuned against a purecv
+///   build predating those fixes read about `2^20` times larger on this scale
+///   and must be retuned.
 ///
 /// # Returns
 /// A tuple `(next_pts, status, err)`:
