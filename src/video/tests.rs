@@ -603,11 +603,14 @@ mod video_tests {
     fn test_lk_iterate_applies_oscillation_half_step() {
         let mut call = 0;
         let (u, v) = lk_iterate(
-            1.0, 0.0, 1.0, // h00, h01, h11
-            1.0,           // inv_det
-            0.0, 0.0,      // init_u, init_v
-            10,            // max_iters
-            1e-9,          // eps: tiny, never satisfied by these steps
+            1.0,
+            0.0,
+            1.0, // h00, h01, h11
+            1.0, // inv_det
+            0.0,
+            0.0,  // init_u, init_v
+            10,   // max_iters
+            1e-9, // eps: tiny, never satisfied by these steps
             |_u, _v| {
                 call += 1;
                 match call {
