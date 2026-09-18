@@ -546,6 +546,10 @@ mod video_tests {
     /// entirely, and dividing by `2 * win_area` instead of `win_area` would
     /// halve the result, since `min_eigen` already applies the `* 0.5` of the
     /// eigenvalue formula.
+    // Not Miri-ignored: measured at ~11.9s under Miri (std,simd), well under
+    // the >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
+    // reaching the same unsafe Scharr fast path as the #130 tests (this one
+    // goes through calc_optical_flow_pyramid_lk -> scharr -> fast_deriv_3x3).
     #[test]
     fn test_lk_min_eigen_matches_opencv_scale() {
         // Separable image v(x, y) = f(x) + g(y). For a separable image the

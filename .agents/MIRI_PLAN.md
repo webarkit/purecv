@@ -150,8 +150,8 @@ algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them contain or reach
 | `features2d::tests::test_orb_pyramid_dimensions` | 30.2s | `src/features2d/tests.rs` |
 
 **Why so few exclusions suffice.** The distribution is extremely skewed: the top 5
-tests are 82% of total runtime, while the remaining **293 tests complete in 139s
-combined**. Nine annotations take the suite from 41 minutes to roughly 4.
+tests are 82% of total runtime, while the remaining **341 tests complete in well
+under two minutes combined**. Nine annotations take the suite from 41 minutes to roughly 4.
 
 **Coverage check on the one borderline case.** `test_build_pyramid_with_derivatives`
 exercises the Scharr path (Sobel before #130, switched to Scharr by that fix), which
@@ -487,7 +487,7 @@ This turns a claim Miri would contradict into one Miri actively backs.
 | # | Decision | Alternatives considered | Rationale |
 |---|----------|-------------------------|-----------|
 | 10 | Set `MIRIFLAGS: -Zmiri-deterministic-floats` — **revises #4** | `#[cfg_attr(miri, ignore)]` on `test_randn_determinism`; leave the failure | #4 said "no flags", but measurement found a genuine need. The flag keeps the RNG determinism contract under test instead of disabling it, and targets a documented Miri behaviour rather than a real defect |
-| 11 | Exclude the 9 tests over 30s — **implements #2** | Exclude >10s (15 tests); shrink inputs under `cfg(miri)`; exclude nothing and raise the timeout | Measurement showed an extreme skew: 5 tests = 82% of runtime, 293 tests = 139s. Nine annotations buy a 10× speedup; none of the nine touch `unsafe`, so no UB coverage is lost |
+| 11 | Exclude the 9 tests over 30s — **implements #2** | Exclude >10s (15 tests); shrink inputs under `cfg(miri)`; exclude nothing and raise the timeout | Measurement showed an extreme skew: 5 tests = 82% of runtime, the rest (341 tests as of #131) well under two minutes combined. Nine annotations buy a 10× speedup; none of the nine touch `unsafe`, so no UB coverage is lost |
 
 ---
 
@@ -497,5 +497,5 @@ This turns a claim Miri would contradict into one Miri actively backs.
 |-----------------------|--------------|
 | Miri CI job passes on `dev` | ✅ Both legs green locally (§9). Pending confirmation on `ubuntu-latest`. |
 | All existing unsafe verified UB-free, or documented exceptions | ✅ 6 of 6 reachable production blocks verified clean. Exception: the `parallel`-only pair, documented in §5. |
-| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 9 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. #130 added two more tests exercising the same unsafe Scharr fast path, but both measured well under the 30s threshold (§4) and are not excluded. |
+| Incompatible tests annotated `#[cfg_attr(miri, ignore)]` | ✅ 9 tests, each with a reason comment (§4). Excluded for runtime, not incompatibility — nothing in the suite proved Miri-incompatible. #130 and #138 together added three more tests exercising the same unsafe Scharr fast path, but all three measured well under the 30s threshold (§4) and are not excluded. |
 | Plan document identifying included/excluded code with rationale | ✅ This document, tracked in git via a `.gitignore` exception. |

@@ -429,7 +429,7 @@ fn draw_line(
 /// The output has one header row followed by one data row per point:
 /// ```text
 /// idx,prev_x,prev_y,next_x,next_y,flow_x,flow_y,status,min_eigen
-/// 0,158.000,124.000,162.010,127.000,4.010,3.000,1,88873.757813
+/// 0,158.000,124.000,161.922,126.883,3.922,2.883,1,1.470835
 /// …
 /// ```
 ///
