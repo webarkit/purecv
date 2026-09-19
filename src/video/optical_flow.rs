@@ -392,7 +392,13 @@ fn lk_single_level(
 
     let det = h00 * h11 - h01 * h01;
 
-    if min_eigen < min_eigen_threshold || det.abs() < f64::EPSILON {
+    // OpenCV compares its FLT_SCALE-scaled determinant `D` against
+    // `FLT_EPSILON` (`modules/video/src/lkpyramid.cpp:419,426`, see #142).
+    // `det` here is deliberately left unscaled for the Newton solve below
+    // (FLT_SCALE cancels out of it algebraically), so apply the same
+    // FLT_SCALE^2 factor just for this comparison, matching OpenCV's
+    // effective raw threshold.
+    if min_eigen < min_eigen_threshold || det.abs() * FLT_SCALE * FLT_SCALE < f32::EPSILON as f64 {
         cv_log_debug!(
             tags::VIDEO,
             "LK tracking lost at ({:.2}, {:.2}): min_eigen = {:.6} (threshold = {:.6}), det = {:.6e}",
