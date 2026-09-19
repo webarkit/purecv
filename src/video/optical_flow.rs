@@ -621,7 +621,10 @@ fn compute_tracking_error(
 ///   gradient matrix is built from Scharr derivatives and normalised by
 ///   OpenCV's `FLT_SCALE = 2^-20` and the window area, matching
 ///   `cv::calcOpticalFlowPyrLK` (see #130 and #138), so this value is on the
-///   same scale as OpenCV's and its `1e-4` default transfers directly.
+///   same scale as OpenCV's and its `1e-4` default transfers directly. A
+///   point can also be marked lost independently of this threshold when
+///   its gradient matrix is near-singular (the determinant guard,
+///   matching OpenCV's `D < FLT_EPSILON`).
 ///   Thresholds tuned against a purecv build predating both fixes must be
 ///   retuned: Scharr multiplies the gradient matrix by 16 relative to the
 ///   Sobel derivatives used then, and `FLT_SCALE` divides by `2^20`, so such

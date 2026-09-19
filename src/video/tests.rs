@@ -659,15 +659,17 @@ mod video_tests {
     /// only slightly rank-deficient (not exactly singular) passed through
     /// uncaught.
     ///
-    /// This 3x3 window is a near-degenerate case found by direct search: a
-    /// minimum-contrast (0/1) vertical edge, with the edge shifted by one
-    /// pixel for a single row inside the window. That single-pixel
-    /// deviation gives a tiny nonzero y-gradient, so `det` is small and
-    /// positive (114620, confirmed by direct computation) rather than
-    /// exactly zero -- large enough that the old `f64::EPSILON` check
-    /// accepted it (as a real tracked point, `status = 1`), but well under
-    /// OpenCV's effective raw threshold of `f32::EPSILON / FLT_SCALE^2`
-    /// (131072 (`2^17`)), so it should be rejected (`status = 0`) like OpenCV would.
+    /// This 3x3 window is a near-degenerate case found by direct search:
+    /// a minimum-contrast (0/1) vertical edge, with the edge shifted by
+    /// one pixel for a single row inside the window. That single-pixel
+    /// deviation gives a tiny nonzero y-gradient (with the Scharr
+    /// `[3,10,3]`/`[-1,0,1]` kernels purecv uses; see #130), so `det` is
+    /// small and positive (114620, confirmed by direct computation)
+    /// rather than exactly zero -- large enough that the old
+    /// `f64::EPSILON` check accepted it (as a real tracked point,
+    /// `status = 1`), but well under OpenCV's effective raw threshold of
+    /// `f32::EPSILON / FLT_SCALE^2` = `2^17` = 131072, so it should be
+    /// rejected (`status = 0`) like OpenCV would.
     #[test]
     fn test_lk_rejects_near_degenerate_window() {
         let size = 32usize;
