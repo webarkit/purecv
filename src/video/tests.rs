@@ -667,7 +667,7 @@ mod video_tests {
     /// exactly zero -- large enough that the old `f64::EPSILON` check
     /// accepted it (as a real tracked point, `status = 1`), but well under
     /// OpenCV's effective raw threshold of `f32::EPSILON / FLT_SCALE^2`
-    /// (~130795), so it should be rejected (`status = 0`) like OpenCV would.
+    /// (131072 (`2^17`)), so it should be rejected (`status = 0`) like OpenCV would.
     #[test]
     fn test_lk_rejects_near_degenerate_window() {
         let size = 32usize;
@@ -704,7 +704,7 @@ mod video_tests {
         assert_eq!(
             status[0], 0,
             "near-degenerate window (det=114620, well under OpenCV's effective \
-             raw threshold of ~130795) must be rejected, matching OpenCV"
+             raw threshold of 131072 (2^17)) must be rejected, matching OpenCV"
         );
     }
 }
