@@ -89,6 +89,18 @@ pub(crate) const FLT_SCALE: f64 = 1.0 / (1u32 << 20) as f64;
 /// `FLT_EPSILON / FLT_SCALE^2 = 2^-23 / 2^-40 = 2^17 = 131072`.
 pub(crate) const LK_DET_EPSILON: f64 = f32::EPSILON as f64 / (FLT_SCALE * FLT_SCALE);
 
+/// Gain of the Scharr derivatives relative to the true image gradient: the
+/// `[3, 10, 3]` smoothing sums to 16 and the `[-1, 0, 1]` difference spans
+/// 2 px, so a unit-slope ramp gives 32.
+///
+/// `H` and `b` are built from these x32 derivatives, so the temporal
+/// difference `It` in `b` must carry the same x32 for the Newton step
+/// `H^-1 b` to come out in pixels. OpenCV gets this from its fixed-point
+/// window samples (`CV_DESCALE(..., W_BITS1-5)`, i.e. intensities x32, in
+/// `modules/video/src/lkpyramid.cpp`); without it every step is 1/32 of the
+/// true step (see #149).
+const SCHARR_GAIN: f64 = 32.0;
+
 // ---------------------------------------------------------------------------
 // Public flags (mirror OpenCV's OpticalFlowFlags)
 // ---------------------------------------------------------------------------
@@ -486,7 +498,10 @@ fn lk_single_level(
                     let sy = py as f64 + dy as f64;
                     *i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
                 }
-                video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win)
+                let (bx, by) =
+                    video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win);
+                // Bring It to the derivatives' Scharr scale (#149).
+                (bx * SCHARR_GAIN, by * SCHARR_GAIN)
             },
         );
         (u as f32, v as f32, min_eigen, true)
@@ -520,7 +535,8 @@ fn lk_single_level(
                     bx -= ix * it;
                     by -= iy * it;
                 }
-                (bx, by)
+                // Bring It to the derivatives' Scharr scale (#149).
+                (bx * SCHARR_GAIN, by * SCHARR_GAIN)
             },
         );
         (u as f32, v as f32, min_eigen, true)
