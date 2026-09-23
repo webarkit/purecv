@@ -41,7 +41,7 @@ mod video_tests {
     use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
         build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, lk_iterate, FLT_SCALE,
-        OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
+        LK_DET_EPSILON, OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 
     // ------------------------------------------------------------------
@@ -708,5 +708,64 @@ mod video_tests {
             "near-degenerate window (det=114620, well under OpenCV's effective \
              raw threshold of 131072 (2^17)) must be rejected, matching OpenCV"
         );
+    }
+
+    /// Accept-side companion to `test_lk_rejects_near_degenerate_window`:
+    /// pins the determinant guard from above so it cannot silently start
+    /// over-rejecting (e.g. a wrong `FLT_SCALE` power or a flipped
+    /// comparison).
+    ///
+    /// Same minimum-contrast (0/1) vertical edge at x = 16, but the three
+    /// window rows (y = 15, 16, 17) put the edge at x = 15, 14, 15. With
+    /// purecv's Scharr kernels (#130) this 3x3 window gives `det = 139552`
+    /// (exact integer arithmetic, confirmed by direct computation) --
+    /// about 6.5% above `LK_DET_EPSILON` = 2^17 = 131072 -- so the point
+    /// must still be tracked (`status = 1`).
+    #[test]
+    fn test_lk_accepts_window_just_above_det_threshold() {
+        assert_eq!(LK_DET_EPSILON, 131072.0);
+
+        let size = 32usize;
+        let cy = 16usize;
+        let edge_x = 16usize;
+
+        let mut data = vec![0u8; size * size];
+        for y in 0..size {
+            let ex = match y {
+                15 | 17 => edge_x - 1,
+                16 => edge_x - 2,
+                _ => edge_x,
+            };
+            for x in 0..size {
+                data[y * size + x] = if x >= ex { 1 } else { 0 };
+            }
+        }
+        let prev = Matrix::<u8>::from_vec(size, size, 1, data.clone());
+        let next = Matrix::<u8>::from_vec(size, size, 1, data);
+
+        let pts = vec![Point2f::new(edge_x as f32, cy as f32)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.03);
+
+        let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
+            &prev,
+            &next,
+            &pts,
+            None,
+            Size2i::new(3, 3),
+            0, // max_level: single level, keeps point coordinates unscaled
+            criteria,
+            0,
+            0.0, // min_eigen_threshold: 0 so only the determinant guard can reject
+        )
+        .unwrap();
+
+        assert_eq!(
+            status[0], 1,
+            "window with det=139552, just above the effective raw threshold \
+             of 131072 (2^17), must still be tracked"
+        );
+        // Identical frames: the tracked point must not move.
+        assert!((next_pts[0].x - pts[0].x).abs() < 1e-3);
+        assert!((next_pts[0].y - pts[0].y).abs() < 1e-3);
     }
 }
