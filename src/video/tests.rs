@@ -872,4 +872,163 @@ mod video_tests {
         );
         assert!((next_pts[0].y - 32.0).abs() < 1e-3);
     }
+
+    // ------------------------------------------------------------------
+    // Tracking-window sampling for even and non-square win_size (#144)
+    // ------------------------------------------------------------------
+
+    /// 33x33 quadratic bowl `I = (x-16)^2 + (y-16)^2` (clamped to 255 far
+    /// from the centre, outside anything the tests below sample).
+    ///
+    /// Scharr of it is exact and linear: `Ix = 16 * (I(x+1) - I(x-1)) =
+    /// 64 (x-16)`, likewise `Iy = 64 (y-16)`, and bilinear interpolation of
+    /// a linear function is exact, so window sums have closed forms.
+    fn quadratic_bowl() -> Matrix<u8> {
+        let size = 33usize;
+        let mut data = vec![0u8; size * size];
+        for y in 0..size {
+            for x in 0..size {
+                let (dx, dy) = (x as i32 - 16, y as i32 - 16);
+                data[y * size + x] = (dx * dx + dy * dy).min(255) as u8;
+            }
+        }
+        Matrix::<u8>::from_vec(size, size, 1, data)
+    }
+
+    /// purecv#144: like OpenCV, the window must hold exactly
+    /// `win_size.width x win_size.height` samples at offsets
+    /// `k - (n-1)/2`, `k = 0..n` (half-integers for even `n`), and the
+    /// eigenvalue is normalised by that same `W*H`.
+    ///
+    /// On `quadratic_bowl` centred at (16, 16), `H01 = 0` by symmetry and
+    /// `H00 / (W*H) = 64^2 * mean(dx^2)`, with `mean(dx^2) = (W^2 - 1) / 12`
+    /// over those offsets. After `FLT_SCALE = 2^-20`:
+    /// `min_eigen = (min(W, H)^2 - 1) / 3072`.
+    ///
+    /// The old integer half-window sampled `2*(n/2)+1` pixels, i.e. 11 for
+    /// n = 10 and 7 for n = 6, giving 120/3072 and 48/3072 instead.
+    #[test]
+    fn test_lk_min_eigen_uses_exact_win_size_samples() {
+        let img = quadratic_bowl();
+        let pts = vec![Point2f::new(16.0, 16.0)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
+
+        // (width, height, (min(W,H)^2 - 1) / 3072)
+        let cases = [
+            (9, 9, 80.0 / 3072.0),
+            (10, 10, 99.0 / 3072.0),
+            (10, 6, 35.0 / 3072.0),
+            (6, 10, 35.0 / 3072.0),
+        ];
+        for (w, h, want) in cases {
+            let (_next_pts, status, err) = calc_optical_flow_pyramid_lk(
+                &img,
+                &img,
+                &pts,
+                None,
+                Size2i::new(w, h),
+                0,
+                criteria,
+                OPTFLOW_LK_GET_MIN_EIGENVALS,
+                0.0,
+            )
+            .unwrap();
+            assert_eq!(status[0], 1, "win {w}x{h}");
+            assert!(
+                (err[0] as f64 - want).abs() < 1e-7,
+                "win {w}x{h}: expected min_eigen {want}, got {}",
+                err[0]
+            );
+        }
+    }
+
+    /// purecv#144: the tracking error (MAE) must also average over exactly
+    /// `W x H` samples at OpenCV's offsets.
+    ///
+    /// The next frame adds `10 |x - 16|` to `quadratic_bowl`, and zero
+    /// iterations keep the tracked point at (16, 16), so the error is
+    /// `10 * mean(|dx|)`: `(W^2 - 1) / (4W)` for odd W, `W / 4` for even W
+    /// (bilinear interpolation of `|x - 16|` is exact at half-integers).
+    /// The old 11-sample window for W = 10 gave 300/11 = 27.27 instead of 25.
+    #[test]
+    fn test_lk_tracking_error_uses_exact_win_size_samples() {
+        let prev = quadratic_bowl();
+        let mut next_data = prev.data.clone();
+        for y in 0..33usize {
+            for x in 0..33usize {
+                let add = 10 * (x as i32 - 16).unsigned_abs();
+                next_data[y * 33 + x] = (next_data[y * 33 + x] as u32 + add).min(255) as u8;
+            }
+        }
+        let next = Matrix::<u8>::from_vec(33, 33, 1, next_data);
+        let pts = vec![Point2f::new(16.0, 16.0)];
+        // Zero Newton iterations: the point stays put, isolating the
+        // error computation from the flow estimate.
+        let criteria = TermCriteria::new(TermType::Count, 0, 0.0);
+
+        // (width, height, 10 * mean(|dx|))
+        let cases = [
+            (9, 9, 200.0 / 9.0),
+            (10, 10, 25.0),
+            (10, 6, 25.0),
+            (6, 10, 15.0),
+        ];
+        for (w, h, want) in cases {
+            let (next_pts, status, err) = calc_optical_flow_pyramid_lk(
+                &prev,
+                &next,
+                &pts,
+                None,
+                Size2i::new(w, h),
+                0,
+                criteria,
+                0,
+                0.0,
+            )
+            .unwrap();
+            assert_eq!(status[0], 1, "win {w}x{h}");
+            assert_eq!((next_pts[0].x, next_pts[0].y), (16.0, 16.0), "win {w}x{h}");
+            assert!(
+                (err[0] - want).abs() < 1e-4,
+                "win {w}x{h}: expected error {want}, got {}",
+                err[0]
+            );
+        }
+    }
+
+    /// OpenCV asserts `winSize.width > 2 && winSize.height > 2`
+    /// (`lkpyramid.cpp`); smaller windows must be rejected rather than
+    /// producing an empty sample set (and a NaN eigenvalue) for `<= 0`.
+    #[test]
+    fn test_lk_rejects_win_size_below_3() {
+        let img = quadratic_bowl();
+        let pts = vec![Point2f::new(16.0, 16.0)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
+        for (w, h) in [(2, 5), (5, 2), (0, 0), (-3, 5)] {
+            let res = calc_optical_flow_pyramid_lk(
+                &img,
+                &img,
+                &pts,
+                None,
+                Size2i::new(w, h),
+                0,
+                criteria,
+                0,
+                0.0,
+            );
+            assert!(res.is_err(), "win {w}x{h} must be rejected");
+        }
+        let ok = calc_optical_flow_pyramid_lk(
+            &img,
+            &img,
+            &pts,
+            None,
+            Size2i::new(3, 3),
+            0,
+            criteria,
+            0,
+            0.0,
+        );
+        assert!(ok.is_ok(), "win 3x3 is the smallest valid size");
+    }
 }
