@@ -634,7 +634,10 @@ fn compute_tracking_error(
 ///   same scale as OpenCV's and its `1e-4` default transfers directly. A
 ///   point can also be marked lost independently of this threshold when
 ///   its gradient matrix is near-singular (the determinant guard,
-///   matching OpenCV's `D < FLT_EPSILON`).
+///   matching OpenCV's `D < FLT_EPSILON`). As in OpenCV, both guards only
+///   mark a point lost at the finest pyramid level (level 0); at a coarser
+///   level they skip refinement for that level and the propagated flow
+///   estimate carries on to the next finer one.
 ///   Thresholds tuned against a purecv build predating both fixes must be
 ///   retuned: Scharr multiplies the gradient matrix by 16 relative to the
 ///   Sobel derivatives used then, and `FLT_SCALE` divides by `2^20`, so such
@@ -851,9 +854,13 @@ pub fn calc_optical_flow_pyramid_lk(
             v = fv;
             min_eigen = ev;
 
-            if !success {
+            // Like OpenCV (`lkpyramid.cpp`, the `minEig < minEigThreshold ||
+            // D < FLT_EPSILON` branch), a degenerate window only loses the
+            // point at the finest level. At a coarser level it just skips
+            // refinement there: `lk_single_level` hands back the propagated
+            // (u, v) unchanged, which carries on to the next level (#145).
+            if !success && level == 0 {
                 tracked = false;
-                break;
             }
         }
 
