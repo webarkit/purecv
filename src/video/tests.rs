@@ -366,9 +366,10 @@ mod video_tests {
 
         assert_eq!(status[0], 1, "point should be tracked");
         let estimated_dx = next_pts[0].x - pts[0].x;
-        // Allow ±1.5 pixels tolerance for this simple test.
+        // Recovered to within ~0.005 px. This used to allow ±1.5 px, which
+        // hid #149 (Newton steps 1/32 too small): the estimate was 2.84.
         assert!(
-            (estimated_dx - shift as f32).abs() < 1.5,
+            (estimated_dx - shift as f32).abs() < 0.05,
             "expected flow ~{shift}, got {estimated_dx:.2}"
         );
     }
@@ -884,11 +885,17 @@ mod video_tests {
     /// 64 (x-16)`, likewise `Iy = 64 (y-16)`, and bilinear interpolation of
     /// a linear function is exact, so window sums have closed forms.
     fn quadratic_bowl() -> Matrix<u8> {
+        quadratic_bowl_at(16, 16)
+    }
+
+    /// `quadratic_bowl` with its centre moved to `(cx, cy)`, i.e. the bowl
+    /// translated by `(cx - 16, cy - 16)`.
+    fn quadratic_bowl_at(cx: i32, cy: i32) -> Matrix<u8> {
         let size = 33usize;
         let mut data = vec![0u8; size * size];
         for y in 0..size {
             for x in 0..size {
-                let (dx, dy) = (x as i32 - 16, y as i32 - 16);
+                let (dx, dy) = (x as i32 - cx, y as i32 - cy);
                 data[y * size + x] = (dx * dx + dy * dy).min(255) as u8;
             }
         }
@@ -1030,5 +1037,105 @@ mod video_tests {
             0.0,
         );
         assert!(ok.is_ok(), "win 3x3 is the smallest valid size");
+    }
+
+    // ------------------------------------------------------------------
+    // Newton step scale (#149)
+    // ------------------------------------------------------------------
+
+    /// purecv#149: a single LK Newton step must be the full Gauss-Newton
+    /// step, not 1/32 of it.
+    ///
+    /// Next frame = `quadratic_bowl` translated by an integer `(dx, dy)`.
+    /// At the first iteration (u = v = 0) every sample is on the lattice,
+    /// so with window offsets `(X, Y)`:
+    /// `It = (X-dx)^2 + (Y-dy)^2 - X^2 - Y^2 = -2 dx X - 2 dy Y + dx^2 + dy^2`
+    /// and the Scharr gradients are `Ix = 64 X`, `Iy = 64 Y`. Over a
+    /// symmetric window `sum X = sum X*Y = 0`, so `H = 4096 diag(sum X^2,
+    /// sum Y^2)` and `b = -sum [Ix, Iy] * It = 128 (dx sum X^2, dy sum Y^2)`
+    /// in raw intensity units. OpenCV carries `It` at the derivatives' x32
+    /// scale, so `b` gains a factor 32 and the step is
+    /// `32 * 128 / 4096 * (dx, dy) = (dx, dy)` exactly. Without the x32 it
+    /// is `(dx, dy) / 32`.
+    #[test]
+    fn test_lk_single_newton_step_is_exact_on_quadratic_bowl() {
+        let prev = quadratic_bowl();
+        let pts = vec![Point2f::new(16.0, 16.0)];
+        let one_iteration = TermCriteria::new(TermType::Count, 1, 0.0);
+
+        for (dx, dy) in [(1, 0), (0, -1), (2, 1)] {
+            let next = quadratic_bowl_at(16 + dx, 16 + dy);
+            let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
+                &prev,
+                &next,
+                &pts,
+                None,
+                Size2i::new(9, 9),
+                0,
+                one_iteration,
+                0,
+                0.0,
+            )
+            .unwrap();
+
+            assert_eq!(status[0], 1, "shift ({dx}, {dy})");
+            let (u, v) = (next_pts[0].x - 16.0, next_pts[0].y - 16.0);
+            assert!(
+                (u - dx as f32).abs() < 1e-4 && (v - dy as f32).abs() < 1e-4,
+                "shift ({dx}, {dy}): one Newton step gave ({u}, {v})"
+            );
+        }
+    }
+
+    /// Smooth texture for end-to-end accuracy checks, evaluated at
+    /// `(x - sx, y - sy)` so `(sx, sy)` is an exact sub-pixel translation,
+    /// then rounded to u8.
+    fn smooth_texture(size: usize, sx: f32, sy: f32) -> Matrix<u8> {
+        let mut data = vec![0u8; size * size];
+        for y in 0..size {
+            for x in 0..size {
+                let (xf, yf) = (x as f32 - sx, y as f32 - sy);
+                let v = 128.0
+                    + 50.0 * (0.15 * xf).sin()
+                    + 50.0 * (0.13 * yf).cos()
+                    + 20.0 * (0.1 * (xf + yf)).sin();
+                data[y * size + x] = v.round() as u8;
+            }
+        }
+        Matrix::<u8>::from_vec(size, size, 1, data)
+    }
+
+    /// purecv#149: with OpenCV's `calcOpticalFlowPyrLK` defaults (21x21
+    /// window, maxLevel 3, 30 iterations / epsilon 0.01, minEigThreshold
+    /// 1e-4), a known sub-pixel translation of a smooth texture must be
+    /// recovered to within 0.02 px. Before the fix each Newton step was
+    /// 1/32 of the true step, so a 1 px shift came out as ~0.7 px.
+    #[test]
+    fn test_lk_recovers_subpixel_shift_with_opencv_defaults() {
+        let (sx, sy) = (0.6f32, -0.4f32);
+        let prev = smooth_texture(128, 0.0, 0.0);
+        let next = smooth_texture(128, sx, sy);
+        let pts = vec![Point2f::new(64.0, 64.0)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
+
+        let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
+            &prev,
+            &next,
+            &pts,
+            None,
+            Size2i::new(21, 21),
+            3,
+            criteria,
+            0,
+            1e-4,
+        )
+        .unwrap();
+
+        assert_eq!(status[0], 1);
+        let (u, v) = (next_pts[0].x - 64.0, next_pts[0].y - 64.0);
+        assert!(
+            (u - sx).abs() < 0.02 && (v - sy).abs() < 0.02,
+            "expected flow ({sx}, {sy}), got ({u}, {v})"
+        );
     }
 }
