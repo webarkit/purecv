@@ -52,7 +52,7 @@
 //! | `calcOpticalFlowPyrLK` `nextPts` is `InputOutputArray` | initial guess passed via `initial_next_pts: Option<&[Point2f]>` |
 //! | `tryReuseInputImage` optimisation flag | not implemented (correctness only) |
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{format, string::ToString, vec::Vec};
 // `vec!` is only used by the SIMD-only windowed kernel below.
 #[cfg(feature = "simd")]
 use alloc::vec;
@@ -266,6 +266,47 @@ fn build_f32_pyramid(img: &Matrix<f32>, max_level: usize) -> Result<Vec<Matrix<f
     Ok(levels)
 }
 
+/// Sampling pattern of an LK tracking window, matching OpenCV's
+/// `halfWin((winSize.width-1)*0.5f, (winSize.height-1)*0.5f)`
+/// (`modules/video/src/lkpyramid.cpp`, see #144): exactly
+/// `width x height` samples at offsets `k - half`, `k = 0..n`, relative to
+/// the tracked point. For an even size the offsets are half-integers and
+/// bilinear interpolation supplies the samples.
+#[derive(Clone, Copy)]
+struct TrackingWindow {
+    width: i32,
+    height: i32,
+    half_w: f32,
+    half_h: f32,
+}
+
+impl TrackingWindow {
+    /// `win_size` must already be validated (both sides >= 3).
+    fn new(win_size: Size2i) -> Self {
+        Self {
+            width: win_size.width,
+            height: win_size.height,
+            half_w: (win_size.width - 1) as f32 * 0.5,
+            half_h: (win_size.height - 1) as f32 * 0.5,
+        }
+    }
+
+    /// Number of samples, `width * height`.
+    fn area(self) -> usize {
+        (self.width * self.height) as usize
+    }
+
+    /// `(dx, dy)` sample offsets in row-major order (dy outer, dx inner).
+    /// Every sampling loop uses this, so the SIMD path's gathered buffers
+    /// always line up sample-for-sample.
+    fn offsets(self) -> impl Iterator<Item = (f32, f32)> {
+        (0..self.height).flat_map(move |ky| {
+            let dy = ky as f32 - self.half_h;
+            (0..self.width).map(move |kx| (kx as f32 - self.half_w, dy))
+        })
+    }
+}
+
 /// Bilinear interpolation of a single-channel f32 image at fractional position
 /// `(x, y)`.  Out-of-bounds coordinates are clamped to the image border.
 #[inline]
@@ -301,7 +342,7 @@ fn bilinear_interp(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
 /// * `prev_iy`   — Scharr-y derivative of `prev`.
 /// * `px`, `py`  — reference-point coordinates in this level's space.
 /// * `init_u`, `init_v` — initial optical flow estimate at this level.
-/// * `half_win_w`, `half_win_h` — half-sizes of the tracking window.
+/// * `win`       — tracking-window sampling pattern (see [`TrackingWindow`]).
 /// * `max_iters` — maximum refinement iterations.
 /// * `eps`       — convergence threshold (step size squared).
 /// * `min_eigen_threshold` — reject tracking if min eigenvalue falls below this.
@@ -323,8 +364,7 @@ fn lk_single_level(
     py: f32,
     init_u: f32,
     init_v: f32,
-    half_win_w: i32,
-    half_win_h: i32,
+    win: TrackingWindow,
     max_iters: i32,
     eps: f64,
     min_eigen_threshold: f64,
@@ -339,19 +379,17 @@ fn lk_single_level(
 
     #[cfg(feature = "simd")]
     let (h00, h01, h11, ix_win, iy_win, i1_win) = {
-        let n_win = ((2 * half_win_h + 1) * (2 * half_win_w + 1)) as usize;
+        let n_win = win.area();
         let mut ix_win = Vec::with_capacity(n_win);
         let mut iy_win = Vec::with_capacity(n_win);
         let mut i1_win = Vec::with_capacity(n_win);
 
-        for dy in -half_win_h..=half_win_h {
-            for dx in -half_win_w..=half_win_w {
-                let sx = px + dx as f32;
-                let sy = py + dy as f32;
-                ix_win.push(bilinear_interp(prev_ix, sx, sy));
-                iy_win.push(bilinear_interp(prev_iy, sx, sy));
-                i1_win.push(bilinear_interp(prev, sx, sy));
-            }
+        for (dx, dy) in win.offsets() {
+            let sx = px + dx;
+            let sy = py + dy;
+            ix_win.push(bilinear_interp(prev_ix, sx, sy));
+            iy_win.push(bilinear_interp(prev_iy, sx, sy));
+            i1_win.push(bilinear_interp(prev, sx, sy));
         }
 
         let (h00, h01, h11) = video_simd::simd_lk_accumulate_h(&ix_win, &iy_win);
@@ -363,16 +401,14 @@ fn lk_single_level(
         let mut h00 = 0.0f64;
         let mut h01 = 0.0f64;
         let mut h11 = 0.0f64;
-        for dy in -half_win_h..=half_win_h {
-            for dx in -half_win_w..=half_win_w {
-                let sx = px + dx as f32;
-                let sy = py + dy as f32;
-                let ix = bilinear_interp(prev_ix, sx, sy) as f64;
-                let iy = bilinear_interp(prev_iy, sx, sy) as f64;
-                h00 += ix * ix;
-                h01 += ix * iy;
-                h11 += iy * iy;
-            }
+        for (dx, dy) in win.offsets() {
+            let sx = px + dx;
+            let sy = py + dy;
+            let ix = bilinear_interp(prev_ix, sx, sy) as f64;
+            let iy = bilinear_interp(prev_iy, sx, sy) as f64;
+            h00 += ix * ix;
+            h01 += ix * iy;
+            h11 += iy * iy;
         }
         (h00, h01, h11)
     };
@@ -386,7 +422,7 @@ fn lk_single_level(
     // That numerator is `2*lambda_min`, not `lambda_min`, so OpenCV's
     // effective divisor on a true `lambda_min` is `W*H` -- do NOT also divide
     // by 2 here, because `min_eigen` below already applies the `* 0.5`.
-    let win_area = ((2 * half_win_w + 1) * (2 * half_win_h + 1)) as f64;
+    let win_area = win.area() as f64;
     let h00n = h00 * FLT_SCALE / win_area;
     let h01n = h01 * FLT_SCALE / win_area;
     let h11n = h11 * FLT_SCALE / win_area;
@@ -445,14 +481,10 @@ fn lk_single_level(
             eps,
             move |u, v| {
                 // Regather I2 at current flow estimate (u, v).
-                let mut w_idx = 0usize;
-                for dy in -half_win_h..=half_win_h {
-                    for dx in -half_win_w..=half_win_w {
-                        let sx = px as f64 + dx as f64;
-                        let sy = py as f64 + dy as f64;
-                        i2_win[w_idx] = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
-                        w_idx += 1;
-                    }
+                for (i2, (dx, dy)) in i2_win.iter_mut().zip(win.offsets()) {
+                    let sx = px as f64 + dx as f64;
+                    let sy = py as f64 + dy as f64;
+                    *i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32);
                 }
                 video_simd::simd_lk_accumulate_mismatch(&ix_win, &iy_win, &i1_win, &i2_win)
             },
@@ -474,21 +506,19 @@ fn lk_single_level(
             move |u, v| {
                 let mut bx = 0.0f64;
                 let mut by = 0.0f64;
-                for dy in -half_win_h..=half_win_h {
-                    for dx in -half_win_w..=half_win_w {
-                        let sx = px as f64 + dx as f64;
-                        let sy = py as f64 + dy as f64;
+                for (dx, dy) in win.offsets() {
+                    let sx = px as f64 + dx as f64;
+                    let sy = py as f64 + dy as f64;
 
-                        let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
-                        let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
-                        let it = i2 - i1;
+                    let i1 = bilinear_interp(prev, sx as f32, sy as f32) as f64;
+                    let i2 = bilinear_interp(next, (sx + u) as f32, (sy + v) as f32) as f64;
+                    let it = i2 - i1;
 
-                        let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
-                        let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
+                    let ix = bilinear_interp(prev_ix, sx as f32, sy as f32) as f64;
+                    let iy = bilinear_interp(prev_iy, sx as f32, sy as f32) as f64;
 
-                        bx -= ix * it;
-                        by -= iy * it;
-                    }
+                    bx -= ix * it;
+                    by -= iy * it;
                 }
                 (bx, by)
             },
@@ -569,26 +599,15 @@ fn compute_tracking_error(
     next: &Matrix<f32>,
     prev_pt: Point2f,
     next_pt: Point2f,
-    half_win_w: i32,
-    half_win_h: i32,
+    win: TrackingWindow,
 ) -> f32 {
     let mut error = 0.0f32;
-    let mut count = 0u32;
-
-    for dy in -half_win_h..=half_win_h {
-        for dx in -half_win_w..=half_win_w {
-            let i1 = bilinear_interp(prev, prev_pt.x + dx as f32, prev_pt.y + dy as f32);
-            let i2 = bilinear_interp(next, next_pt.x + dx as f32, next_pt.y + dy as f32);
-            error += (i2 - i1).abs();
-            count += 1;
-        }
+    for (dx, dy) in win.offsets() {
+        let i1 = bilinear_interp(prev, prev_pt.x + dx, prev_pt.y + dy);
+        let i2 = bilinear_interp(next, next_pt.x + dx, next_pt.y + dy);
+        error += (i2 - i1).abs();
     }
-
-    if count > 0 {
-        error / count as f32
-    } else {
-        0.0
-    }
+    error / win.area() as f32
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +640,11 @@ fn compute_tracking_error(
 /// * `prev_pts`            — Feature points to track, in `prev_img` coordinates.
 /// * `initial_next_pts`    — Optional initial guess for `nextPts`.  Passed
 ///   together with [`OPTFLOW_USE_INITIAL_FLOW`]; ignored otherwise.
-/// * `win_size`            — Size of the search window at each pyramid level.
+/// * `win_size`            — Size of the search window at each pyramid level;
+///   both sides must be at least 3. As in OpenCV, the window holds exactly
+///   `width x height` samples centred on the point, at offsets
+///   `k - (n - 1) / 2` for `k = 0..n`, so an even size samples at
+///   half-integer offsets via bilinear interpolation.
 /// * `max_level`           — Pyramid depth (0 = no pyramid, just the original).
 /// * `criteria`            — Iteration termination criteria.
 /// * `flags`               — Option flags; combine [`OPTFLOW_USE_INITIAL_FLOW`]
@@ -652,7 +675,8 @@ fn compute_tracking_error(
 ///
 /// # Errors
 /// Returns [`PureCvError::InvalidInput`] if either input image is not
-/// single-channel, or if their dimensions differ.
+/// single-channel or `win_size` is smaller than 3x3, and
+/// [`PureCvError::InvalidDimensions`] if the images' dimensions differ.
 ///
 /// # Example
 /// ```
@@ -704,6 +728,13 @@ pub fn calc_optical_flow_pyramid_lk(
                 .to_string(),
         ));
     }
+    // Mirrors OpenCV's `CV_Assert(winSize.width > 2 && winSize.height > 2)`.
+    if win_size.width < 3 || win_size.height < 3 {
+        return Err(PureCvError::InvalidInput(format!(
+            "calc_optical_flow_pyramid_lk: win_size must be at least 3x3, got {}x{}",
+            win_size.width, win_size.height
+        )));
+    }
 
     let n_pts = prev_pts.len();
     if n_pts == 0 {
@@ -727,8 +758,7 @@ pub fn calc_optical_flow_pyramid_lk(
     let use_initial_flow = (flags & OPTFLOW_USE_INITIAL_FLOW) != 0;
     let get_min_eigenvals = (flags & OPTFLOW_LK_GET_MIN_EIGENVALS) != 0;
 
-    let half_win_w = win_size.width / 2;
-    let half_win_h = win_size.height / 2;
+    let win = TrackingWindow::new(win_size);
 
     // ------------------------------------------------------------------
     // Convert images to f32 and build pyramids
@@ -843,8 +873,7 @@ pub fn calc_optical_flow_pyramid_lk(
                 py,
                 u,
                 v,
-                half_win_w,
-                half_win_h,
+                win,
                 max_iters,
                 eps,
                 min_eigen_threshold,
@@ -869,9 +898,7 @@ pub fn calc_optical_flow_pyramid_lk(
             let e = if get_min_eigenvals {
                 min_eigen as f32
             } else {
-                compute_tracking_error(
-                    &prev_f32, &next_f32, prev_pt, next_pt, half_win_w, half_win_h,
-                )
+                compute_tracking_error(&prev_f32, &next_f32, prev_pt, next_pt, win)
             };
             (next_pt, 1u8, e)
         } else {
