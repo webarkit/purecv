@@ -83,6 +83,12 @@ use super::simd as video_simd;
 /// thresholds transferable between the two libraries.
 pub(crate) const FLT_SCALE: f64 = 1.0 / (1u32 << 20) as f64;
 
+/// Degeneracy threshold for the *unscaled* determinant of `H`, equivalent to
+/// OpenCV's `D < FLT_EPSILON` test on its `FLT_SCALE`-scaled determinant
+/// (`modules/video/src/lkpyramid.cpp:419,426`, see #142):
+/// `FLT_EPSILON / FLT_SCALE^2 = 2^-23 / 2^-40 = 2^17 = 131072`.
+pub(crate) const LK_DET_EPSILON: f64 = f32::EPSILON as f64 / (FLT_SCALE * FLT_SCALE);
+
 // ---------------------------------------------------------------------------
 // Public flags (mirror OpenCV's OpticalFlowFlags)
 // ---------------------------------------------------------------------------
@@ -392,21 +398,25 @@ fn lk_single_level(
 
     let det = h00 * h11 - h01 * h01;
 
-    // OpenCV compares its FLT_SCALE-scaled determinant `D` against
-    // `FLT_EPSILON` (`modules/video/src/lkpyramid.cpp:419,426`, see #142).
-    // `det` here is deliberately left unscaled for the Newton solve below
-    // (FLT_SCALE cancels out of it algebraically), so apply the same
-    // FLT_SCALE^2 factor just for this comparison, matching OpenCV's
-    // effective raw threshold.
-    if min_eigen < min_eigen_threshold || det.abs() * FLT_SCALE * FLT_SCALE < f32::EPSILON as f64 {
+    // `det` is deliberately left unscaled for the Newton solve below
+    // (FLT_SCALE cancels out of it algebraically), so it is compared against
+    // `LK_DET_EPSILON`, OpenCV's `FLT_EPSILON` threshold rescaled to the raw
+    // determinant. Like OpenCV's `D < FLT_EPSILON`, the comparison is signed:
+    // `H` is positive semi-definite, so a negative `det` is rounding noise on
+    // a singular matrix and must be rejected too.
+    let eigen_lost = min_eigen < min_eigen_threshold;
+    let det_lost = det < LK_DET_EPSILON;
+    if eigen_lost || det_lost {
         cv_log_debug!(
             tags::VIDEO,
-            "LK tracking lost at ({:.2}, {:.2}): min_eigen = {:.6} (threshold = {:.6}), det = {:.6e}",
+            "LK tracking lost at ({:.2}, {:.2}) by {} guard: min_eigen = {:.6} (threshold = {:.6}), det = {:.6e} (threshold = {:.6e})",
             px,
             py,
+            if eigen_lost { "min_eigen" } else { "determinant" },
             min_eigen,
             min_eigen_threshold,
-            det.abs()
+            det,
+            LK_DET_EPSILON
         );
         return (init_u, init_v, min_eigen, false);
     }
