@@ -768,4 +768,109 @@ mod video_tests {
         assert!((next_pts[0].x - pts[0].x).abs() < 1e-3);
         assert!((next_pts[0].y - pts[0].y).abs() < 1e-3);
     }
+
+    // ------------------------------------------------------------------
+    // Degenerate coarse pyramid level (#145)
+    // ------------------------------------------------------------------
+
+    /// 64x64 texture that only exists at full resolution: a separable
+    /// period-3 pattern (`[60, -30, -30]` along each axis around 128),
+    /// optionally shifted right by `shift_x` pixels.
+    ///
+    /// A period-3 sequence is a pure `2*pi/3` sinusoid plus DC, and
+    /// `pyr_down`'s `[1, 4, 6, 4, 1] / 16` kernel has gain
+    /// `(6 + 8 cos(2pi/3) + 2 cos(4pi/3)) / 16 = 1/16` at that frequency.
+    /// So level 1 keeps the pattern at 1/16 amplitude, and its gradient
+    /// matrix's minimum eigenvalue drops ~256x: 1.318 at level 0 for a 9x9
+    /// window vs ~0.005 at level 1.
+    fn full_resolution_only_texture(shift_x: i32) -> Matrix<u8> {
+        let size = 64usize;
+        let profile = [60i32, -30, -30];
+        let mut data = vec![0u8; size * size];
+        for y in 0..size {
+            for x in 0..size {
+                let px = (x as i32 - shift_x).rem_euclid(3) as usize;
+                data[y * size + x] = (128 + profile[px] + profile[y % 3]) as u8;
+            }
+        }
+        Matrix::<u8>::from_vec(size, size, 1, data)
+    }
+
+    /// Sits between the level-1 (~0.005) and level-0 (1.318) minimum
+    /// eigenvalues of `full_resolution_only_texture`, so only level 1 fails.
+    const COARSE_ONLY_EIGEN_THRESHOLD: f64 = 0.05;
+
+    /// purecv#145: a window that is degenerate only at a coarse pyramid
+    /// level must not lose the point. OpenCV (`lkpyramid.cpp`, the
+    /// `minEig < minEigThreshold || D < FLT_EPSILON` branch) only clears
+    /// `status` when the failing level is 0; at coarser levels it skips
+    /// refinement for that level and continues to the finer ones.
+    #[test]
+    fn test_lk_coarse_level_degeneracy_does_not_lose_point() {
+        let img = full_resolution_only_texture(0);
+        let pts = vec![Point2f::new(32.0, 32.0)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
+
+        let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
+            &img,
+            &img,
+            &pts,
+            None,
+            Size2i::new(9, 9),
+            1,
+            criteria,
+            0,
+            COARSE_ONLY_EIGEN_THRESHOLD,
+        )
+        .unwrap();
+
+        assert_eq!(
+            status[0], 1,
+            "level 1 is degenerate but level 0 is well-conditioned: the point \
+             must still be tracked, matching OpenCV"
+        );
+        assert!((next_pts[0].x - 32.0).abs() < 1e-3);
+        assert!((next_pts[0].y - 32.0).abs() < 1e-3);
+    }
+
+    /// purecv#145: when a coarse level is skipped, the flow estimate
+    /// propagated into it must carry on (x2) to the next finer level
+    /// unchanged, as OpenCV does (it has already written the propagated
+    /// guess into `nextPts` before the degeneracy check).
+    ///
+    /// The next frame is the texture shifted right by exactly 1 pixel and
+    /// the initial guess is that true shift. Level 1 is skipped, so level 0
+    /// starts from the carried guess u = 1, where the mismatch is exactly
+    /// zero (integer shift, bilinear samples on the lattice), and stays
+    /// there. Starting level 0 from u = 0 instead only reaches u ~ 0.61 on
+    /// this near-Nyquist texture, so a dropped or reset estimate fails.
+    #[test]
+    fn test_lk_coarse_level_degeneracy_keeps_propagated_flow() {
+        let prev = full_resolution_only_texture(0);
+        let next = full_resolution_only_texture(1);
+        let pts = vec![Point2f::new(32.0, 32.0)];
+        let guess = vec![Point2f::new(33.0, 32.0)];
+        let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
+
+        let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
+            &prev,
+            &next,
+            &pts,
+            Some(&guess),
+            Size2i::new(9, 9),
+            1,
+            criteria,
+            OPTFLOW_USE_INITIAL_FLOW,
+            COARSE_ONLY_EIGEN_THRESHOLD,
+        )
+        .unwrap();
+
+        assert_eq!(status[0], 1);
+        assert!(
+            (next_pts[0].x - 33.0).abs() < 1e-3,
+            "expected x = 33.0 (guess carried through the skipped level), got {}",
+            next_pts[0].x
+        );
+        assert!((next_pts[0].y - 32.0).abs() < 1e-3);
+    }
 }
