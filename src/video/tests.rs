@@ -774,8 +774,7 @@ mod video_tests {
     // ------------------------------------------------------------------
 
     /// 64x64 texture that only exists at full resolution: a separable
-    /// period-3 pattern (`[60, -30, -30]` along each axis around 128),
-    /// optionally shifted right by `shift_x` pixels.
+    /// period-3 pattern (`[60, -30, -30]` along each axis around 128).
     ///
     /// A period-3 sequence is a pure `2*pi/3` sinusoid plus DC, and
     /// `pyr_down`'s `[1, 4, 6, 4, 1] / 16` kernel has gain
@@ -783,14 +782,13 @@ mod video_tests {
     /// So level 1 keeps the pattern at 1/16 amplitude, and its gradient
     /// matrix's minimum eigenvalue drops ~256x: 1.318 at level 0 for a 9x9
     /// window vs ~0.005 at level 1.
-    fn full_resolution_only_texture(shift_x: i32) -> Matrix<u8> {
+    fn full_resolution_only_texture() -> Matrix<u8> {
         let size = 64usize;
         let profile = [60i32, -30, -30];
         let mut data = vec![0u8; size * size];
         for y in 0..size {
             for x in 0..size {
-                let px = (x as i32 - shift_x).rem_euclid(3) as usize;
-                data[y * size + x] = (128 + profile[px] + profile[y % 3]) as u8;
+                data[y * size + x] = (128 + profile[x % 3] + profile[y % 3]) as u8;
             }
         }
         Matrix::<u8>::from_vec(size, size, 1, data)
@@ -807,7 +805,7 @@ mod video_tests {
     /// refinement for that level and continues to the finer ones.
     #[test]
     fn test_lk_coarse_level_degeneracy_does_not_lose_point() {
-        let img = full_resolution_only_texture(0);
+        let img = full_resolution_only_texture();
         let pts = vec![Point2f::new(32.0, 32.0)];
         let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
 
@@ -838,23 +836,24 @@ mod video_tests {
     /// unchanged, as OpenCV does (it has already written the propagated
     /// guess into `nextPts` before the degeneracy check).
     ///
-    /// The next frame is the texture shifted right by exactly 1 pixel and
-    /// the initial guess is that true shift. Level 1 is skipped, so level 0
-    /// starts from the carried guess u = 1, where the mismatch is exactly
-    /// zero (integer shift, bilinear samples on the lattice), and stays
-    /// there. Starting level 0 from u = 0 instead only reaches u ~ 0.61 on
-    /// this near-Nyquist texture, so a dropped or reset estimate fails.
+    /// Identical frames, with an initial guess of one full texture period
+    /// (3 px) to the right. Because the texture is 3-periodic, both u = 3
+    /// and u = 0 are exact zero-mismatch solutions (integer offsets,
+    /// bilinear samples on the lattice), so level 0 stays wherever it
+    /// starts. Level 1 is skipped: if the carried guess survives, level 0
+    /// starts at u = 3 and returns x = 35; if the estimate is dropped or
+    /// reset, it starts at u = 0 and returns x = 32. This doesn't depend on
+    /// the Newton step size or iteration count.
     #[test]
     fn test_lk_coarse_level_degeneracy_keeps_propagated_flow() {
-        let prev = full_resolution_only_texture(0);
-        let next = full_resolution_only_texture(1);
+        let img = full_resolution_only_texture();
         let pts = vec![Point2f::new(32.0, 32.0)];
-        let guess = vec![Point2f::new(33.0, 32.0)];
+        let guess = vec![Point2f::new(35.0, 32.0)];
         let criteria = TermCriteria::new(TermType::Both, 30, 0.01);
 
         let (next_pts, status, _err) = calc_optical_flow_pyramid_lk(
-            &prev,
-            &next,
+            &img,
+            &img,
             &pts,
             Some(&guess),
             Size2i::new(9, 9),
@@ -867,8 +866,8 @@ mod video_tests {
 
         assert_eq!(status[0], 1);
         assert!(
-            (next_pts[0].x - 33.0).abs() < 1e-3,
-            "expected x = 33.0 (guess carried through the skipped level), got {}",
+            (next_pts[0].x - 35.0).abs() < 1e-3,
+            "expected x = 35.0 (guess carried through the skipped level), got {}",
             next_pts[0].x
         );
         assert!((next_pts[0].y - 32.0).abs() < 1e-3);
