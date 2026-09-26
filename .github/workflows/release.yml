@@ -108,18 +108,38 @@ jobs:
       - name: Publish to Crates.io
         run: cargo publish --token ${{ secrets.CRATES_TOKEN }} -p purecv
 
+  # Publishes @webarkit/purecv-wasm via npm Trusted Publishing (OIDC), not a
+  # long-lived NPM_TOKEN (#129). Requires a Trusted Publisher configured on
+  # npmjs.com for this package: owner `webarkit`, repository `purecv`,
+  # workflow `release.yml`, no environment.
   publish-npm:
     needs: [release]
     runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow-level block for this job:
+    # checkout only needs to read, and the OIDC token is what npm exchanges
+    # for a short-lived publish credential (and signs provenance with).
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.98.0
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      # Trusted publishing needs npm >= 11.5.1, and Node 24's bundled npm is
+      # not guaranteed to be new enough (24.18.0 ships npm 10.9.4, see #129).
+      - name: Ensure npm >= 11.5.1
+        run: |
+          npm install -g npm@11
+          npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11 || (a===11 && (b<5 || (b===5 && c<1)))) { console.error(`npm ${process.argv[1]} < 11.5.1`); process.exit(1); }' "$(npm --version)"
       - name: Build and Publish to NPM
         run: |
           npm run build:wasm
           cd crates/wasm/pkg
-          npm config set //registry.npmjs.org/:_authToken ${{ secrets.NPM_TOKEN }}
-          npm publish --access public
+          npm publish --access public --provenance
