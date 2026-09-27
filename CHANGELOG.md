@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-09-27
+
+### ⚙️ Miscellaneous Tasks
+
+- *(video)* Fix formatting/lint from oscillation half-step change (#131)
+
+### 🐛 Bug Fixes
+
+- *(video)* Use Scharr derivatives in build_optical_flow_pyramid (#130)
+- *(video)* Use Scharr derivatives in calc_optical_flow_pyramid_lk (#130)
+- *(video)* Match OpenCV LK eigenvalue scale
+- *(video)* [**breaking**] Correct LK eigenvalue divisor and pin OpenCV's scale
+- *(video)* Add OpenCV's oscillation half-step fallback to LK (#131)
+- *(video)* Scale the LK determinant guard to match OpenCV (#142)
+- *(video)* Use OpenCV's signed determinant test in the LK guard (#142)
+- *(video)* Only lose an LK point when level 0 is degenerate (#145)
+- *(video)* Sample exactly win_size pixels in the LK window, like OpenCV (#144)
+- *(video)* Scale LK's temporal difference to the Scharr gain (#149)
+- *(ci)* Publish to npm via trusted publishing (OIDC) instead of NPM_TOKEN (#129)
+
+### 📚 Documentation
+
+- *(video)* Correct stale Sobel references after Scharr switch (#130)
+- Update stale unit test count in README (342 -> 348)
+- *(video)* Address Copilot review findings on PR #137
+- *(video)* Correct the LK threshold migration factor
+- *(video)* Fix dangling trace reference and comment alignment (#131)
+- Fix cross-fix staleness found in pre-merge review (#130, #131, #138)
+- Address final-review findings for #142 (README count, doc polish)
+
+### 🚜 Refactor
+
+- *(video)* Extract lk_iterate from lk_single_level (#131)
+
+### 🧪 Testing
+
+- *(video)* Pin build_optical_flow_pyramid to Scharr derivatives (#130)
+- *(video)* Pin calc_optical_flow_pyramid_lk to Scharr derivatives (#130)
+- *(video)* Use relative tolerance for f32 min-eigen comparison (#130)
+- *(video)* Pin lk_iterate's oscillation half-step fallback (#131)
+- *(video)* Pin near-degenerate LK window rejection to OpenCV's scale (#142)
+- *(video)* Correct effective threshold value in test doc comment (#142)
+- *(video)* Pin the LK determinant guard from the accept side (#142)
+- *(video)* LK must survive a degenerate coarse pyramid level (#145)
+- *(video)* Make the #145 propagated-flow test step-size independent
+- *(video)* Pin LK window sampling for even and non-square win_size (#144)
+- *(video)* Pin the LK Newton step to the full Gauss-Newton step (#149)
+
 ## [0.8.0] - 2026-09-02
 
 ### ⚙️ Miscellaneous Tasks
