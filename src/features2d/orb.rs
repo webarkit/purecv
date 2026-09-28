@@ -90,6 +90,28 @@ impl Default for Orb {
     }
 }
 
+/// Raises `base` to the `n`-th power by repeated multiplication rather than `f64::powi`.
+///
+/// `f64::powi` uses exponentiation-by-squaring, whose multiplication order (and therefore
+/// last-bit rounding) is not guaranteed to match across platforms. Repeated multiplication in a
+/// fixed order is. Used by [`level_scale`] and `Orb::get_features_per_level`.
+fn pow_f64(base: f64, n: i32) -> f64 {
+    let mut result = 1.0f64;
+    for _ in 0..n {
+        result *= base;
+    }
+    result
+}
+
+/// Computes the ORB pyramid scale factor for a given level.
+///
+/// Matches OpenCV's `getScale`, which computes `(float)pow((double)scale_factor, level)`.
+/// Repeated `f64` multiplication (rather than `f64::powi`) is used so the result is identical
+/// across platforms, then rounded once to `f32`.
+pub(crate) fn level_scale(scale_factor: f32, level: i32) -> f32 {
+    pow_f64(scale_factor as f64, level) as f32
+}
+
 impl Orb {
     /// Creates a new ORB instance with customizable parameters.
     ///
@@ -223,7 +245,7 @@ impl Orb {
         let mut sum_features = 0;
         let factor = 1.0 / self.scale_factor;
         let ndesired_first = self.nfeatures as f64 * (1.0 - factor as f64)
-            / (1.0 - (factor as f64).powi(self.nlevels as i32));
+            / (1.0 - pow_f64(factor as f64, self.nlevels as i32));
         let mut ndesired = ndesired_first;
         for item in nfeatures_per_level.iter_mut().take(self.nlevels - 1) {
             *item = ndesired.round() as usize;
@@ -297,7 +319,7 @@ impl Orb {
             }
 
             // Assign intensity centroid orientation and scale up coordinates
-            let scale = self.scale_factor.powi(level as i32);
+            let scale = level_scale(self.scale_factor, level as i32);
             for kp in level_kpts.iter_mut() {
                 let angle = compute_orientation(
                     &pyramid[level],
@@ -358,7 +380,7 @@ impl Orb {
                             self.nlevels
                         )));
                     }
-                    let scale = self.scale_factor.powi(level);
+                    let scale = level_scale(self.scale_factor, level);
                     let mut level_kp = kp.clone();
                     level_kp.pt.x /= scale;
                     level_kp.pt.y /= scale;
@@ -389,7 +411,7 @@ impl Orb {
                             self.nlevels
                         )));
                     }
-                    let scale = self.scale_factor.powi(level);
+                    let scale = level_scale(self.scale_factor, level);
                     let mut level_kp = kp.clone();
                     level_kp.pt.x /= scale;
                     level_kp.pt.y /= scale;
@@ -448,8 +470,8 @@ pub fn build_orb_pyramid(
     pyramid.push(image.clone());
 
     for level in 1..nlevels {
-        let level_scale = scale_factor.powi(level as i32);
-        let inv_scale = 1.0 / level_scale;
+        let scale = level_scale(scale_factor, level as i32);
+        let inv_scale = 1.0 / scale;
 
         let cols_level = (image.cols as f32 * inv_scale).round() as usize;
         let rows_level = (image.rows as f32 * inv_scale).round() as usize;
@@ -601,9 +623,15 @@ pub fn compute_orientation(
         }
     }
 
-    let mut angle = (m_01 as f32).atan2(m_10 as f32) * 180.0 / std::f32::consts::PI;
-    if angle < 0.0 {
-        angle += 360.0;
+    // f64 atan2/to_degrees, rounded to f32 once, keeps this platform-independent: f32::atan2
+    // itself can differ in the last bit between platforms.
+    let mut angle_deg = (m_01 as f64).atan2(m_10 as f64).to_degrees();
+    if angle_deg < 0.0 {
+        angle_deg += 360.0;
+    }
+    let mut angle = angle_deg as f32;
+    if angle >= 360.0 {
+        angle -= 360.0;
     }
 
     Ok(angle)
@@ -624,9 +652,11 @@ pub fn compute_orb_descriptor(
         ));
     }
 
-    let angle_rad = keypoint.angle * std::f32::consts::PI / 180.0;
-    let cos_a = angle_rad.cos();
-    let sin_a = angle_rad.sin();
+    // f64 cos/sin, rounded to f32 once, keeps this platform-independent: f32::cos/f32::sin can
+    // differ by 1 ULP between platforms for about 1.3% of angles.
+    let angle_rad = (keypoint.angle as f64).to_radians();
+    let cos_a = angle_rad.cos() as f32;
+    let sin_a = angle_rad.sin() as f32;
 
     let cx = keypoint.pt.x.round() as i32;
     let cy = keypoint.pt.y.round() as i32;

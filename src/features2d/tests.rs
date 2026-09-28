@@ -35,7 +35,10 @@
  */
 
 use crate::core::types::Point2f;
+use crate::core::Matrix;
+use crate::features2d::orb::{compute_orientation, level_scale, precompute_umax};
 use crate::features2d::KeyPoint;
+use crate::features2d::{Orb, ScoreType};
 
 #[test]
 fn test_keypoint_default() {
@@ -631,4 +634,165 @@ fn test_drawing_primitives() {
     .unwrap();
     assert_eq!(drawn_matches.rows, 10);
     assert_eq!(drawn_matches.cols, 20); // 10 + 10
+}
+
+#[test]
+fn test_orb_level_scales_match_opencv_f64_scales() {
+    // (float)pow((double)1.2f, n), as OpenCV's getScale computes it (base 1.2000000476837158,
+    // not 1.2); equal to the f64 product rounded once. Cross-checked against opencv.js keypoint
+    // sizes (31 * layerScale), e.g. octave 3 = 53.5680046, which only 0x3fdd2f1c produces.
+    let want = [
+        0x3f80_0000u32,
+        0x3f99_999a,
+        0x3fb8_51ec,
+        0x3fdd_2f1c,
+        0x4004_b5de,
+        0x401f_40a5,
+        0x403f_1a60,
+        0x4065_52da,
+    ];
+    for (n, w) in want.iter().enumerate() {
+        // black_box: a constant exponent is folded at compile time and hides the runtime bug.
+        assert_eq!(
+            level_scale(1.2, std::hint::black_box(n as i32)).to_bits(),
+            *w,
+            "level {n}"
+        );
+    }
+}
+
+#[test]
+fn test_compute_orientation_never_returns_360() {
+    // 64x64 zero image, all pixels with x in 33..64 (every row) set to 255, then pixel
+    // (33, 33) dimmed to 254 (one below the bright plateau). This gives m_01 = -1 and
+    // m_10 = 4_783_544, above the 3_754_937 threshold at which today's f32 atan2/degrees
+    // formula rounds to exactly 360.0 (verified on Windows and Linux).
+    let mut img = Matrix::<u8>::new(64, 64, 1);
+    for y in 0..64 {
+        for x in 33..64 {
+            img.set(y, x, 0, 255);
+        }
+    }
+    img.set(33, 33, 0, 254);
+    let angle = compute_orientation(&img, 32, 32, 61, &precompute_umax(30)).unwrap();
+    assert!((0.0..360.0).contains(&angle), "angle = {angle}");
+}
+
+struct Lcg(u64);
+impl Lcg {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 33) as u32
+    }
+    fn below(&mut self, n: u32) -> u32 {
+        self.next_u32() % n
+    }
+}
+/// Mid-gray background, 500 filled rectangles (side 4..=63, value 0..=255), then ±6 noise.
+fn lcg_textured(rows: usize, cols: usize, seed: u64) -> Matrix<u8> {
+    let mut rng = Lcg(seed);
+    let mut buf = vec![128i32; rows * cols];
+    for _ in 0..500 {
+        let w = 4 + rng.below(60) as usize;
+        let h = 4 + rng.below(60) as usize;
+        let x0 = rng.below(cols as u32) as usize;
+        let y0 = rng.below(rows as u32) as usize;
+        let v = rng.below(256) as i32;
+        for y in y0..(y0 + h).min(rows) {
+            for x in x0..(x0 + w).min(cols) {
+                buf[y * cols + x] = v;
+            }
+        }
+    }
+    let mut img = Matrix::<u8>::new(rows, cols, 1);
+    for (d, s) in img.data.iter_mut().zip(buf.iter()) {
+        *d = (s + rng.below(13) as i32 - 6).clamp(0, 255) as u8;
+    }
+    img
+}
+
+/// Standard FNV-1a, 32-bit: offset basis `0x811c_9dc5`, prime `0x0100_0193`.
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c_9dc5u32;
+    for &b in bytes {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// One FNV-1a stream over `kps` in order: for each keypoint, the 24 little-endian bytes of
+/// `pt.x`, `pt.y`, `size`, `angle`, `response` (each `to_bits()`), then `octave`.
+fn keypoints_fnv(kps: &[KeyPoint]) -> u32 {
+    let mut bytes = Vec::with_capacity(kps.len() * 24);
+    for kp in kps {
+        bytes.extend_from_slice(&kp.pt.x.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&kp.pt.y.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&kp.size.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&kp.angle.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&kp.response.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&kp.octave.to_le_bytes());
+    }
+    fnv1a32(&bytes)
+}
+
+/// Golden values for `Orb::default()` on `lcg_textured(480, 640, 42)` (per-octave keypoint
+/// counts 109, 90, 75, 63, 52, 44, 36, 31). Measured on Windows and WSL Linux, in the default,
+/// `--no-default-features --features std`, and `--features simd,parallel` configurations.
+const ORB_GOLDEN_COUNT: usize = 500;
+const ORB_GOLDEN_KEYPOINTS_FNV: u32 = 0x6d03_920c;
+const ORB_GOLDEN_DESCRIPTORS_FNV: u32 = 0x3999_19b3;
+
+/// Golden values for `Orb::new(300, 1.5, 4, 20, 0, 2, ScoreType::Fast, 31, 15)` on
+/// `lcg_textured(240, 320, 11)`. Measured on Windows and WSL Linux, in the default,
+/// `--no-default-features --features std`, and `--features simd,parallel` configurations.
+const ORB_GOLDEN_COUNT_FAST_PARAMS: usize = 300;
+const ORB_GOLDEN_KEYPOINTS_FNV_FAST_PARAMS: u32 = 0x47a5_4378;
+const ORB_GOLDEN_DESCRIPTORS_FNV_FAST_PARAMS: u32 = 0xb444_b8e6;
+
+// miri: full ORB detect_and_compute on a 640x480 image is far heavier than
+// test_orb_full_pipeline (100x100, ~806s under interpretation). No `unsafe` on this path.
+// See .agents/MIRI_PLAN.md §4.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_detect_and_compute_golden() {
+    let img = lcg_textured(480, 640, 42);
+    let orb = Orb::default();
+    let (kps, desc) = orb.detect_and_compute(&img).unwrap();
+    assert_eq!(kps.len(), ORB_GOLDEN_COUNT, "keypoint count");
+    assert_eq!(
+        keypoints_fnv(&kps),
+        ORB_GOLDEN_KEYPOINTS_FNV,
+        "keypoints fnv"
+    );
+    assert_eq!(
+        fnv1a32(&desc.data),
+        ORB_GOLDEN_DESCRIPTORS_FNV,
+        "descriptors fnv"
+    );
+}
+
+// miri: full ORB detect_and_compute on a 320x240 image is far heavier than
+// test_orb_full_pipeline (100x100, ~806s under interpretation). No `unsafe` on this path.
+// See .agents/MIRI_PLAN.md §4.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_detect_and_compute_golden_fast_params() {
+    let img = lcg_textured(240, 320, 11);
+    let orb = Orb::new(300, 1.5, 4, 20, 0, 2, ScoreType::Fast, 31, 15);
+    let (kps, desc) = orb.detect_and_compute(&img).unwrap();
+    assert_eq!(kps.len(), ORB_GOLDEN_COUNT_FAST_PARAMS, "keypoint count");
+    assert_eq!(
+        keypoints_fnv(&kps),
+        ORB_GOLDEN_KEYPOINTS_FNV_FAST_PARAMS,
+        "keypoints fnv"
+    );
+    assert_eq!(
+        fnv1a32(&desc.data),
+        ORB_GOLDEN_DESCRIPTORS_FNV_FAST_PARAMS,
+        "descriptors fnv"
+    );
 }
