@@ -36,8 +36,47 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use purecv::core::Matrix;
-use purecv::features2d::{FastFeatureDetector, FastType, Orb};
+use purecv::features2d::{build_orb_pyramid, FastFeatureDetector, FastType, Orb, ScoreType};
 use std::hint::black_box;
+
+// The following `Lcg` struct and `lcg_textured` function are copied verbatim from
+// `src/features2d/tests.rs` because benches cannot see test-only helpers.
+
+struct Lcg(u64);
+impl Lcg {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 33) as u32
+    }
+    fn below(&mut self, n: u32) -> u32 {
+        self.next_u32() % n
+    }
+}
+/// Mid-gray background, 500 filled rectangles (side 4..=63, value 0..=255), then ±6 noise.
+fn lcg_textured(rows: usize, cols: usize, seed: u64) -> Matrix<u8> {
+    let mut rng = Lcg(seed);
+    let mut buf = vec![128i32; rows * cols];
+    for _ in 0..500 {
+        let w = 4 + rng.below(60) as usize;
+        let h = 4 + rng.below(60) as usize;
+        let x0 = rng.below(cols as u32) as usize;
+        let y0 = rng.below(rows as u32) as usize;
+        let v = rng.below(256) as i32;
+        for y in y0..(y0 + h).min(rows) {
+            for x in x0..(x0 + w).min(cols) {
+                buf[y * cols + x] = v;
+            }
+        }
+    }
+    let mut img = Matrix::<u8>::new(rows, cols, 1);
+    for (d, s) in img.data.iter_mut().zip(buf.iter()) {
+        *d = (s + rng.below(13) as i32 - 6).clamp(0, 255) as u8;
+    }
+    img
+}
 
 fn bench_features2d(c: &mut Criterion) {
     let size = 512;
@@ -58,12 +97,49 @@ fn bench_features2d(c: &mut Criterion) {
         b.iter(|| fast.detect(black_box(&img)).unwrap())
     });
 
-    // Benchmark ORB detect_and_compute
+    // Benchmark ORB detect_and_compute. This sinusoid yields only 67 keypoints, all in octaves
+    // 6-7, so it barely exercises the scale pyramid. Kept for continuity with prior baselines;
+    // see `bench_orb_textured` below for a workload that spreads keypoints across all octaves.
     let orb = Orb::default();
     c.bench_function("orb_detect_and_compute_512x512", |b| {
         b.iter(|| orb.detect_and_compute(black_box(&img)).unwrap())
     });
 }
 
-criterion_group!(benches, bench_features2d);
+// purecv#123/#124/#125: ORB on a textured 640x480 image, built from 500 random rectangles plus
+// noise (`lcg_textured`) so keypoints spread across pyramid octaves, unlike the sinusoid above.
+fn bench_orb_textured(c: &mut Criterion) {
+    let img = lcg_textured(480, 640, 42);
+
+    let orb = Orb::default();
+    c.bench_function("orb_detect_and_compute_640x480_textured", |b| {
+        b.iter(|| orb.detect_and_compute(black_box(&img)).unwrap())
+    });
+
+    // #125: Harris is now scored only at FAST keypoints, not over the whole level.
+    let orb_harris = Orb::default();
+    c.bench_function("orb_detect_harris_640x480", |b| {
+        b.iter(|| orb_harris.detect(black_box(&img)).unwrap())
+    });
+
+    // A lower bound: skips the Harris response pass entirely.
+    let mut orb_fast = Orb::default();
+    orb_fast.set_score_type(ScoreType::Fast);
+    c.bench_function("orb_detect_fast_640x480", |b| {
+        b.iter(|| orb_fast.detect(black_box(&img)).unwrap())
+    });
+
+    // #123/#124: detect the keypoints once outside the timed loop, so `compute` alone (including
+    // the per-level blur added by #124) is isolated from pyramid-build and detection cost.
+    let kps = orb.detect(&img).unwrap();
+    c.bench_function("orb_compute_640x480", |b| {
+        b.iter(|| orb.compute(black_box(&img), black_box(&kps)).unwrap())
+    });
+
+    c.bench_function("orb_build_pyramid_640x480", |b| {
+        b.iter(|| build_orb_pyramid(black_box(&img), 8, 1.2).unwrap())
+    });
+}
+
+criterion_group!(benches, bench_features2d, bench_orb_textured);
 criterion_main!(benches);
