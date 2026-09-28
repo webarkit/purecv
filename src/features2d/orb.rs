@@ -48,6 +48,15 @@ use rayon::prelude::*;
 #[cfg(feature = "simd")]
 use pulp::Arch;
 
+// Counts calls to `build_orb_pyramid` in tests, so the golden and behaviour tests can assert
+// `detect_and_compute` builds the scale pyramid exactly once instead of once per `detect`/
+// `compute` call. Thread-local so parallel test threads don't interfere with each other;
+// `build_orb_pyramid` always runs on the caller's thread.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static PYRAMID_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The type of keypoint scoring for ORB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScoreType {
@@ -352,6 +361,15 @@ impl Orb {
         self.check_detect_params()?;
 
         let pyramid = build_orb_pyramid(image, self.nlevels, self.scale_factor)?;
+        self.detect_in_pyramid(&pyramid)
+    }
+
+    /// Detects keypoints from an already-built scale pyramid.
+    ///
+    /// Callers are responsible for validating the image and parameters (see
+    /// [`Orb::check_detect_params`]) and for building `pyramid` with [`build_orb_pyramid`]
+    /// beforehand; this does not repeat that validation.
+    fn detect_in_pyramid(&self, pyramid: &[Matrix<u8>]) -> Result<Vec<KeyPoint>> {
         let nfeatures_per_level = self.get_features_per_level();
         let u_max = precompute_umax(self.patch_size / 2);
 
@@ -453,6 +471,19 @@ impl Orb {
         self.check_descriptor_params()?;
 
         let pyramid = build_orb_pyramid(image, self.nlevels, self.scale_factor)?;
+        self.compute_in_pyramid(&pyramid, keypoints)
+    }
+
+    /// Computes keypoint descriptors from an already-built scale pyramid.
+    ///
+    /// Callers are responsible for validating the image and parameters (see
+    /// [`Orb::check_descriptor_params`]) and for building `pyramid` with [`build_orb_pyramid`]
+    /// beforehand; this does not repeat that validation.
+    fn compute_in_pyramid(
+        &self,
+        pyramid: &[Matrix<u8>],
+        keypoints: &[KeyPoint],
+    ) -> Result<Matrix<u8>> {
         let mut descriptors = Matrix::<u8>::new(keypoints.len(), 32, 1);
 
         #[cfg(feature = "parallel")]
@@ -529,9 +560,16 @@ impl Orb {
     /// Returns [`PureCvError::InvalidInput`] under the same conditions as [`Orb::compute`]
     /// (descriptor extraction has the stricter parameter requirements of the two).
     pub fn detect_and_compute(&self, image: &Matrix<u8>) -> Result<(Vec<KeyPoint>, Matrix<u8>)> {
+        if image.channels != 1 {
+            return Err(PureCvError::InvalidInput(
+                "ORB keypoint detection requires a single-channel grayscale image".to_string(),
+            ));
+        }
         self.check_descriptor_params()?;
-        let keypoints = self.detect(image)?;
-        let descriptors = self.compute(image, &keypoints)?;
+
+        let pyramid = build_orb_pyramid(image, self.nlevels, self.scale_factor)?;
+        let keypoints = self.detect_in_pyramid(&pyramid)?;
+        let descriptors = self.compute_in_pyramid(&pyramid, &keypoints)?;
         Ok((keypoints, descriptors))
     }
 }
@@ -546,6 +584,9 @@ pub fn build_orb_pyramid(
     nlevels: usize,
     scale_factor: f32,
 ) -> Result<Vec<Matrix<u8>>> {
+    #[cfg(test)]
+    PYRAMID_BUILDS.with(|c| c.set(c.get() + 1));
+
     if image.channels != 1 {
         return Err(PureCvError::InvalidInput(
             "ORB pyramid construction requires a single-channel grayscale image".to_string(),

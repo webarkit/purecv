@@ -37,7 +37,7 @@
 use crate::core::error::PureCvError;
 use crate::core::types::Point2f;
 use crate::core::Matrix;
-use crate::features2d::orb::{compute_orientation, level_scale, precompute_umax};
+use crate::features2d::orb::{compute_orientation, level_scale, precompute_umax, PYRAMID_BUILDS};
 use crate::features2d::KeyPoint;
 use crate::features2d::{compute_orb_descriptor, Orb, ScoreType, BIT_PATTERN_31};
 
@@ -884,4 +884,96 @@ fn test_orb_detect_and_compute_golden_fast_params() {
         ORB_GOLDEN_DESCRIPTORS_FNV_FAST_PARAMS,
         "descriptors fnv"
     );
+}
+
+#[test]
+fn test_orb_detect_and_compute_builds_pyramid_once() {
+    let img = Matrix::<u8>::new(16, 16, 1);
+    PYRAMID_BUILDS.with(|c| c.set(0));
+    Orb::default().detect_and_compute(&img).unwrap();
+    assert_eq!(PYRAMID_BUILDS.with(|c| c.get()), 1);
+}
+
+// miri: two full ORB pipelines on 240x320. No `unsafe`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_detect_and_compute_equals_detect_then_compute() {
+    let img = lcg_textured(240, 320, 7);
+    let orb = Orb::default();
+    let (kps, desc) = orb.detect_and_compute(&img).unwrap();
+    let kps2 = orb.detect(&img).unwrap();
+    assert_eq!(kps, kps2);
+    assert_eq!(desc.data, orb.compute(&img, &kps2).unwrap().data);
+}
+
+#[test]
+fn test_orb_compute_rejects_out_of_range_octave() {
+    let img = Matrix::<u8>::new(16, 16, 1);
+    for octave in [-1, 8] {
+        // nlevels is 8
+        let kp = [KeyPoint::new(
+            Point2f::new(8.0, 8.0),
+            31.0,
+            0.0,
+            0.0,
+            octave,
+            -1,
+        )];
+        assert!(
+            matches!(
+                Orb::default().compute(&img, &kp),
+                Err(PureCvError::InvalidInput(_))
+            ),
+            "{octave}"
+        );
+    }
+}
+
+#[test]
+fn test_orb_compute_empty_keypoints() {
+    let img = Matrix::<u8>::new(16, 16, 1);
+    let desc = Orb::default().compute(&img, &[]).unwrap();
+    assert_eq!((desc.rows, desc.cols), (0, 32));
+    let mut orb = Orb::default();
+    orb.set_wta_k(4);
+    assert!(
+        orb.compute(&img, &[]).is_err(),
+        "parameters are validated even with no keypoints"
+    );
+}
+
+#[test]
+fn test_orb_tiny_images() {
+    let mut orb = Orb::default();
+    orb.set_nlevels(20);
+    assert!(matches!(
+        orb.detect_and_compute(&Matrix::<u8>::new(10, 10, 1)),
+        Err(PureCvError::InvalidInput(_))
+    ));
+    let tiny = lcg_textured(12, 12, 1); // valid: levels shrink to 3x3
+    let (kps, desc) = Orb::default().detect_and_compute(&tiny).unwrap();
+    assert_eq!((kps.len(), desc.rows, desc.cols), (0, 0, 32));
+    let kp = [KeyPoint::new(
+        Point2f::new(6.0, 6.0),
+        31.0,
+        10.0,
+        0.0,
+        7,
+        -1,
+    )];
+    assert_eq!(Orb::default().compute(&tiny, &kp).unwrap().rows, 1);
+}
+
+#[test]
+fn test_orb_rejects_multichannel_before_params() {
+    let img = Matrix::<u8>::new(16, 16, 3);
+    let mut orb = Orb::default();
+    orb.set_wta_k(4);
+    for r in [
+        orb.detect(&img).map(|_| ()),
+        orb.compute(&img, &[]).map(|_| ()),
+        orb.detect_and_compute(&img).map(|_| ()),
+    ] {
+        assert!(r.unwrap_err().to_string().contains("grayscale"));
+    }
 }
