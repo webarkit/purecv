@@ -38,7 +38,8 @@ use super::bit_pattern_31::BIT_PATTERN_31;
 use super::fast::{FastFeatureDetector, FastType};
 use super::keypoint::KeyPoint;
 use crate::core::error::{PureCvError, Result};
-use crate::core::types::Size;
+use crate::core::types::{BorderTypes, Size};
+use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
 use crate::imgproc::resize;
 
@@ -394,17 +395,16 @@ impl Orb {
 
             // Harris corner response scoring if requested
             if self.score_type == ScoreType::Harris {
-                let harris = crate::imgproc::corner_harris(
-                    &pyramid[level],
-                    3,
-                    3,
-                    0.04,
-                    crate::core::types::BorderTypes::Reflect101,
-                )?;
                 for kp in level_kpts.iter_mut() {
                     let rx = kp.pt.x.round() as usize;
                     let ry = kp.pt.y.round() as usize;
-                    kp.response = harris.get(ry, rx, 0).copied().unwrap_or(0.0);
+                    debug_assert!(
+                        rx < pyramid[level].cols && ry < pyramid[level].rows,
+                        "FAST keypoint ({rx}, {ry}) is outside pyramid level {level} ({}x{})",
+                        pyramid[level].cols,
+                        pyramid[level].rows
+                    );
+                    kp.response = harris_at(&pyramid[level], rx, ry);
                 }
             }
 
@@ -626,6 +626,68 @@ pub fn build_orb_pyramid(
     }
 
     Ok(pyramid)
+}
+
+/// Computes the Harris corner response at a single pixel.
+///
+/// Bit-identical to `corner_harris(img, 3, 3, 0.04, BorderTypes::Reflect101)` sampled at row
+/// `y`, column `x`, without materializing the full response map. ORB scores only a few hundred
+/// FAST keypoints per level, so evaluating the response at just those points (rather than
+/// running the box-filtered Sobel over every pixel of the level) avoids most of the work.
+///
+/// Ref: https://github.com/opencv/opencv/blob/4.10.0/modules/imgproc/src/corner.cpp
+///
+/// # Preconditions
+///
+/// `img.channels == 1`, `x < img.cols`, `y < img.rows`.
+pub(crate) fn harris_at(img: &Matrix<u8>, x: usize, y: usize) -> f32 {
+    let rows = img.rows as i32;
+    let cols = img.cols as i32;
+    let cx = x as i32;
+    let cy = y as i32;
+    let data = &img.data;
+
+    // Reflect-101 sample of the (already border-extended) source image.
+    let pixel =
+        |yy: i32, xx: i32| -> i64 { data[yy as usize * cols as usize + xx as usize] as i64 };
+
+    let mut sxx: i64 = 0;
+    let mut sxy: i64 = 0;
+    let mut syy: i64 = 0;
+
+    // 3x3 box average of the Sobel derivative products, matching `compute_structure_tensor`'s
+    // box_filter(..., Reflect101) over the Ixx/Ixy/Iyy maps.
+    for dy in -1..=1i32 {
+        for dx in -1..=1i32 {
+            let by = border_interpolate(cy + dy, rows, BorderTypes::Reflect101);
+            let bx = border_interpolate(cx + dx, cols, BorderTypes::Reflect101);
+
+            // 3x3 integer Sobel at (by, bx), with its own Reflect101 border handling.
+            let ym = border_interpolate(by - 1, rows, BorderTypes::Reflect101);
+            let yp = border_interpolate(by + 1, rows, BorderTypes::Reflect101);
+            let xm = border_interpolate(bx - 1, cols, BorderTypes::Reflect101);
+            let xp = border_interpolate(bx + 1, cols, BorderTypes::Reflect101);
+
+            let gx = (pixel(ym, xp) - pixel(ym, xm))
+                + 2 * (pixel(by, xp) - pixel(by, xm))
+                + (pixel(yp, xp) - pixel(yp, xm));
+            let gy = (pixel(yp, xm) - pixel(ym, xm))
+                + 2 * (pixel(yp, bx) - pixel(ym, bx))
+                + (pixel(yp, xp) - pixel(ym, xp));
+
+            sxx += gx * gx;
+            sxy += gx * gy;
+            syy += gy * gy;
+        }
+    }
+
+    let a = (sxx as f64 * (1.0 / 9.0)) as f32;
+    let b = (sxy as f64 * (1.0 / 9.0)) as f32;
+    let c = (syy as f64 * (1.0 / 9.0)) as f32;
+    let k = 0.04f64 as f32;
+    let det = a * c - b * b;
+    let tr = a + c;
+    det - k * tr * tr
 }
 
 /// Precomputes the row end coordinates for a circular patch of a given half size.

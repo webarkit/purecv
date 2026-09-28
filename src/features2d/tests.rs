@@ -35,9 +35,11 @@
  */
 
 use crate::core::error::PureCvError;
-use crate::core::types::Point2f;
+use crate::core::types::{BorderTypes, Point2f};
 use crate::core::Matrix;
-use crate::features2d::orb::{compute_orientation, level_scale, precompute_umax, PYRAMID_BUILDS};
+use crate::features2d::orb::{
+    compute_orientation, harris_at, level_scale, precompute_umax, PYRAMID_BUILDS,
+};
 use crate::features2d::KeyPoint;
 use crate::features2d::{compute_orb_descriptor, Orb, ScoreType, BIT_PATTERN_31};
 
@@ -677,6 +679,21 @@ fn test_compute_orientation_never_returns_360() {
     img.set(33, 33, 0, 254);
     let angle = compute_orientation(&img, 32, 32, 61, &precompute_umax(30)).unwrap();
     assert!((0.0..360.0).contains(&angle), "angle = {angle}");
+}
+
+#[test]
+fn test_harris_at_matches_corner_harris_everywhere() {
+    for (rows, cols, seed) in [(17, 23, 9u64), (9, 12, 3)] {
+        let img = lcg_textured(rows, cols, seed);
+        let full =
+            crate::imgproc::corner_harris(&img, 3, 3, 0.04, BorderTypes::Reflect101).unwrap();
+        for y in 0..rows {
+            for x in 0..cols {
+                let want = *full.get(y, x, 0).unwrap();
+                assert_eq!(harris_at(&img, x, y).to_bits(), want.to_bits(), "({x},{y})");
+            }
+        }
+    }
 }
 
 fn kp_at(x: f32, y: f32) -> KeyPoint {
