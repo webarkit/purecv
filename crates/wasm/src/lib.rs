@@ -2667,6 +2667,12 @@ pub struct ORB {
 
 #[wasm_bindgen]
 impl ORB {
+    /// Creates a new ORB instance with customizable parameters.
+    ///
+    /// Not every parameter is implemented: `first_level` must be `0`; `patch_size` must be at
+    /// least `2`, and exactly `31` if descriptors will be computed; `wta_k` must be `2` if
+    /// descriptors will be computed (`detect` does not use it, matching OpenCV). Other values
+    /// make `detect`/`compute`/`detectAndCompute` throw.
     #[wasm_bindgen(constructor)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(

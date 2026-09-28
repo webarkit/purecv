@@ -60,6 +60,22 @@ pub enum ScoreType {
 /// Oriented FAST and Rotated BRIEF (ORB) keypoint detector and descriptor extractor.
 ///
 /// Ref: https://docs.opencv.org/4.10.0/db/d95/classcv_1_1ORB.html
+///
+/// Not every OpenCV `ORB::create` parameter is implemented. Unsupported values are rejected
+/// with [`PureCvError::InvalidInput`] by `detect`, `compute` and `detect_and_compute`, rather
+/// than being silently ignored or producing wrong or undefined results:
+///
+/// | Parameter        | Status                                                                                                        |
+/// |------------------|----------------------------------------------------------------------------------------------------------------|
+/// | `nfeatures`      | Honoured.                                                                                                       |
+/// | `scale_factor`   | Honoured.                                                                                                       |
+/// | `nlevels`        | Honoured.                                                                                                       |
+/// | `edge_threshold` | Honoured.                                                                                                       |
+/// | `first_level`    | Only `0` is supported.                                                                                          |
+/// | `wta_k`          | Only `2` is supported. Applies only to descriptor extraction (`compute`/`detect_and_compute`); `detect` does not use it, matching OpenCV. |
+/// | `score_type`     | Honoured.                                                                                                       |
+/// | `patch_size`     | Must be at least `2` for detection (orientation); descriptor extraction additionally requires exactly `31`.    |
+/// | `fast_threshold` | Honoured.                                                                                                       |
 #[derive(Debug, Clone)]
 pub struct Orb {
     nfeatures: usize,
@@ -119,10 +135,18 @@ impl Orb {
     /// * `scale_factor` - Pyramid decimation ratio, greater than 1.
     /// * `nlevels` - The number of pyramid levels.
     /// * `edge_threshold` - This is size of the border where the features are not detected.
-    /// * `first_level` - The level of pyramid to put source image to.
-    /// * `wta_k` - The number of points that produce each element of the oriented BRIEF descriptor.
+    /// * `first_level` - The level of pyramid to put source image to. Only `0` is supported;
+    ///   any other value makes `detect`, `compute` and `detect_and_compute` return
+    ///   [`PureCvError::InvalidInput`].
+    /// * `wta_k` - The number of points that produce each element of the oriented BRIEF
+    ///   descriptor. Only `2` is supported: `compute` and `detect_and_compute` return
+    ///   [`PureCvError::InvalidInput`] for any other value, while `detect` does not use this
+    ///   parameter and accepts any value, matching OpenCV.
     /// * `score_type` - The algorithm used to rank the features.
-    /// * `patch_size` - Size of the patch used by the oriented BRIEF descriptor.
+    /// * `patch_size` - Size of the patch used by the oriented BRIEF descriptor. Must be at
+    ///   least `2`; descriptor extraction additionally requires exactly `31`, the size the
+    ///   compiled sampling pattern is generated for. Other values make the corresponding
+    ///   methods return [`PureCvError::InvalidInput`].
     /// * `fast_threshold` - The FAST threshold.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -195,6 +219,9 @@ impl Orb {
     }
 
     /// Sets the first level of the pyramid.
+    ///
+    /// Only `0` (the default) is supported; any other value makes `detect`, `compute` and
+    /// `detect_and_compute` return [`PureCvError::InvalidInput`].
     pub fn set_first_level(&mut self, first_level: usize) {
         self.first_level = first_level;
     }
@@ -205,6 +232,10 @@ impl Orb {
     }
 
     /// Sets WTA_K parameter.
+    ///
+    /// Only `2` (the default) is supported for descriptor extraction: `compute` and
+    /// `detect_and_compute` return [`PureCvError::InvalidInput`] for any other value.
+    /// `detect` does not use this parameter and accepts any value, matching OpenCV.
     pub fn set_wta_k(&mut self, wta_k: usize) {
         self.wta_k = wta_k;
     }
@@ -225,6 +256,11 @@ impl Orb {
     }
 
     /// Sets the patch size.
+    ///
+    /// Must be at least `2` for detection (orientation); descriptor extraction additionally
+    /// requires exactly `31` (the default), the size the compiled sampling pattern is
+    /// generated for. Other values make the corresponding methods return
+    /// [`PureCvError::InvalidInput`].
     pub fn set_patch_size(&mut self, patch_size: usize) {
         self.patch_size = patch_size;
     }
@@ -257,15 +293,63 @@ impl Orb {
         nfeatures_per_level
     }
 
+    /// Validates the parameters used by keypoint detection.
+    ///
+    /// `first_level` must be `0` and `patch_size` must be at least `2`; every other parameter
+    /// is honoured for any value. See the [`Orb`] struct docs for the full parameter table.
+    fn check_detect_params(&self) -> Result<()> {
+        if self.first_level != 0 {
+            return Err(PureCvError::InvalidInput(format!(
+                "ORB first_level = {} is not supported: only first_level = 0 is implemented",
+                self.first_level
+            )));
+        }
+        if self.patch_size < 2 {
+            return Err(PureCvError::InvalidInput(format!(
+                "ORB patch_size = {} is not supported: patch_size must be at least 2",
+                self.patch_size
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validates the parameters used by descriptor extraction, in addition to
+    /// [`Orb::check_detect_params`].
+    ///
+    /// `wta_k` must be `2` and `patch_size` must be exactly `31`. See the [`Orb`] struct docs
+    /// for the full parameter table.
+    fn check_descriptor_params(&self) -> Result<()> {
+        self.check_detect_params()?;
+        if self.wta_k != 2 {
+            return Err(PureCvError::InvalidInput(format!(
+                "ORB wta_k = {} is not supported: only WTA_K = 2 is implemented (OpenCV also accepts 3 and 4)",
+                self.wta_k
+            )));
+        }
+        if self.patch_size != 31 {
+            return Err(PureCvError::InvalidInput(format!(
+                "ORB patch_size = {} is not supported for descriptors: only patch_size = 31 is implemented",
+                self.patch_size
+            )));
+        }
+        Ok(())
+    }
+
     /// Detects keypoints in an image.
     ///
     /// * `image` - Grayscale input image (matrix).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PureCvError::InvalidInput`] if `image` is not single-channel, if
+    /// `first_level` is not `0`, or if `patch_size` is less than `2`.
     pub fn detect(&self, image: &Matrix<u8>) -> Result<Vec<KeyPoint>> {
         if image.channels != 1 {
             return Err(PureCvError::InvalidInput(
                 "ORB keypoint detection requires a single-channel grayscale image".to_string(),
             ));
         }
+        self.check_detect_params()?;
 
         let pyramid = build_orb_pyramid(image, self.nlevels, self.scale_factor)?;
         let nfeatures_per_level = self.get_features_per_level();
@@ -355,12 +439,18 @@ impl Orb {
     ///
     /// * `image` - Grayscale input image (matrix).
     /// * `keypoints` - Detected keypoints for which to compute descriptors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PureCvError::InvalidInput`] if `image` is not single-channel, if
+    /// `first_level` is not `0`, if `wta_k` is not `2`, or if `patch_size` is not `31`.
     pub fn compute(&self, image: &Matrix<u8>, keypoints: &[KeyPoint]) -> Result<Matrix<u8>> {
         if image.channels != 1 {
             return Err(PureCvError::InvalidInput(
                 "ORB descriptor extraction requires a single-channel grayscale image".to_string(),
             ));
         }
+        self.check_descriptor_params()?;
 
         let pyramid = build_orb_pyramid(image, self.nlevels, self.scale_factor)?;
         let mut descriptors = Matrix::<u8>::new(keypoints.len(), 32, 1);
@@ -433,7 +523,13 @@ impl Orb {
     /// Detects keypoints and computes their descriptors in one pass.
     ///
     /// * `image` - Grayscale input image (matrix).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PureCvError::InvalidInput`] under the same conditions as [`Orb::compute`]
+    /// (descriptor extraction has the stricter parameter requirements of the two).
     pub fn detect_and_compute(&self, image: &Matrix<u8>) -> Result<(Vec<KeyPoint>, Matrix<u8>)> {
+        self.check_descriptor_params()?;
         let keypoints = self.detect(image)?;
         let descriptors = self.compute(image, &keypoints)?;
         Ok((keypoints, descriptors))
@@ -640,16 +736,37 @@ pub fn compute_orientation(
 /// Computes the 32-byte steered BRIEF descriptor for a keypoint on a specific image.
 ///
 /// Ref: https://github.com/opencv/opencv/blob/4.10.0/modules/features2d/src/orb.cpp#L220
+///
+/// * `patch_size` - Must be exactly `31`; the compiled sampling `pattern` (e.g.
+///   [`BIT_PATTERN_31`]) is generated for a 31x31 patch.
+/// * `pattern` - The BRIEF sampling pattern: 4 `i8` coordinates (`x1, y1, x2, y2`) per bit,
+///   256 bits, so it must have at least 1024 entries.
+///
+/// # Errors
+///
+/// Returns [`PureCvError::InvalidInput`] if `image` is not single-channel, if `patch_size` is
+/// not `31`, or if `pattern` has fewer than 1024 entries.
 pub fn compute_orb_descriptor(
     image: &Matrix<u8>,
     keypoint: &KeyPoint,
-    _patch_size: usize,
+    patch_size: usize,
     pattern: &[i8],
 ) -> Result<[u8; 32]> {
     if image.channels != 1 {
         return Err(PureCvError::InvalidInput(
             "Steered BRIEF requires a single-channel grayscale image".to_string(),
         ));
+    }
+    if patch_size != 31 {
+        return Err(PureCvError::InvalidInput(format!(
+            "ORB patch_size = {patch_size} is not supported for descriptors: only patch_size = 31 is implemented"
+        )));
+    }
+    if pattern.len() < 1024 {
+        return Err(PureCvError::InvalidInput(format!(
+            "ORB descriptor sampling pattern has {} entries, but at least 1024 are required (256 bit comparisons x 4 coordinates each)",
+            pattern.len()
+        )));
     }
 
     // f64 cos/sin, rounded to f32 once, keeps this platform-independent: f32::cos/f32::sin can

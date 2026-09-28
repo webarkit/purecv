@@ -34,11 +34,12 @@
  *
  */
 
+use crate::core::error::PureCvError;
 use crate::core::types::Point2f;
 use crate::core::Matrix;
 use crate::features2d::orb::{compute_orientation, level_scale, precompute_umax};
 use crate::features2d::KeyPoint;
-use crate::features2d::{Orb, ScoreType};
+use crate::features2d::{compute_orb_descriptor, Orb, ScoreType, BIT_PATTERN_31};
 
 #[test]
 fn test_keypoint_default() {
@@ -676,6 +677,94 @@ fn test_compute_orientation_never_returns_360() {
     img.set(33, 33, 0, 254);
     let angle = compute_orientation(&img, 32, 32, 61, &precompute_umax(30)).unwrap();
     assert!((0.0..360.0).contains(&angle), "angle = {angle}");
+}
+
+fn kp_at(x: f32, y: f32) -> KeyPoint {
+    KeyPoint::new(Point2f::new(x, y), 31.0, 0.0, 0.0, 0, -1)
+}
+
+#[test]
+fn test_orb_rejects_unsupported_first_level() {
+    let img = Matrix::<u8>::new(48, 64, 1);
+    let mut orb = Orb::default();
+    orb.set_first_level(1);
+    assert!(matches!(
+        orb.detect(&img),
+        Err(PureCvError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        orb.detect_and_compute(&img),
+        Err(PureCvError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        orb.compute(&img, &[kp_at(24.0, 24.0)]),
+        Err(PureCvError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn test_orb_rejects_unsupported_wta_k_for_descriptors() {
+    let img = Matrix::<u8>::new(48, 64, 1);
+    for wta_k in [0, 1, 3, 4, 5] {
+        let mut orb = Orb::default();
+        orb.set_wta_k(wta_k);
+        assert!(
+            matches!(
+                orb.compute(&img, &[kp_at(24.0, 24.0)]),
+                Err(PureCvError::InvalidInput(_))
+            ),
+            "{wta_k}"
+        );
+        assert!(
+            matches!(
+                orb.detect_and_compute(&img),
+                Err(PureCvError::InvalidInput(_))
+            ),
+            "{wta_k}"
+        );
+    }
+}
+
+#[test]
+fn test_orb_rejects_bad_patch_size() {
+    let img = Matrix::<u8>::new(48, 64, 1);
+    for p in [0usize, 1] {
+        // OpenCV: CV_Assert(patchSize >= 2); today precompute_umax(0) underflows
+        let mut orb = Orb::default();
+        orb.set_patch_size(p);
+        assert!(
+            matches!(orb.detect(&img), Err(PureCvError::InvalidInput(_))),
+            "{p}"
+        );
+    }
+    let mut orb = Orb::default();
+    orb.set_patch_size(21);
+    assert!(matches!(
+        orb.compute(&img, &[kp_at(24.0, 24.0)]),
+        Err(PureCvError::InvalidInput(_))
+    ));
+    let kp = kp_at(24.0, 24.0);
+    assert!(matches!(
+        compute_orb_descriptor(&img, &kp, 21, &BIT_PATTERN_31),
+        Err(PureCvError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        compute_orb_descriptor(&img, &kp, 31, &BIT_PATTERN_31[..1000]),
+        Err(PureCvError::InvalidInput(_))
+    ));
+}
+
+// miri: two full `detect` runs on 120x160 (see the Miri bounds in Global Constraints). No `unsafe`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_detect_ignores_descriptor_only_params() {
+    let img = lcg_textured(120, 160, 1);
+    let mut orb = Orb::default();
+    orb.set_wta_k(4); // like OpenCV, detect accepts it
+    assert!(orb.detect(&img).is_ok());
+    orb.set_wta_k(2);
+    orb.set_patch_size(21); // orientation honours any patch_size >= 2
+    assert!(orb.detect(&img).is_ok());
 }
 
 struct Lcg(u64);
