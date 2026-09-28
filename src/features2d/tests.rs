@@ -44,7 +44,9 @@ use crate::features2d::orb::{
     compute_orientation, harris_at, level_scale, precompute_umax, PYRAMID_BUILDS,
 };
 use crate::features2d::KeyPoint;
-use crate::features2d::{compute_orb_descriptor, Orb, ScoreType, BIT_PATTERN_31};
+use crate::features2d::{
+    compute_orb_descriptor, FastFeatureDetector, FastType, Orb, ScoreType, BIT_PATTERN_31,
+};
 
 #[test]
 fn test_keypoint_default() {
@@ -1113,5 +1115,59 @@ fn test_orb_compute_blurs_the_keypoint_octave_level() {
         lk.pt.y /= s;
         let want = compute_orb_descriptor(&blurred, &lk, 31, &BIT_PATTERN_31).unwrap();
         assert_eq!(&desc.data[o * 32..o * 32 + 32], &want[..], "octave {o}");
+    }
+}
+
+// Guard against porting jsfeat's per-row FAST candidate-buffer bug (#136): jsfeat
+// writes candidates into a per-row buffer 1-based but reads it back 0-based, so
+// each row's last detectable candidate is silently dropped. purecv's FAST scans a
+// full score map and has no such buffer, so this is not a fix for purecv — it is a
+// regression guard that must keep passing if a future refactor ever introduces a
+// similar per-row buffer. `28 = cols - 4` is the right-most column `Type9_16` can
+// detect and `16 = rows - 4` is the bottom-most detectable row; expected detections
+// were cross-checked against opencv.js (same 11 points).
+#[test]
+fn test_fast_keeps_last_candidate_of_each_row() {
+    let rows = 20;
+    let cols = 32;
+    let background = 20u8;
+    let dot = 220u8;
+    let dot_coords: [(usize, usize); 11] = [
+        (3, 3),
+        (15, 3),
+        (28, 3),
+        (28, 8),
+        (3, 12),
+        (9, 12),
+        (15, 12),
+        (21, 12),
+        (28, 12),
+        (3, 16),
+        (28, 16),
+    ];
+
+    let mut data = vec![background; rows * cols];
+    for &(x, y) in &dot_coords {
+        data[y * cols + x] = dot;
+    }
+    let img = Matrix::<u8>::from_vec(rows, cols, 1, data);
+
+    let mut expected: Vec<(usize, usize)> = dot_coords.to_vec();
+    expected.sort_by_key(|&(x, y)| (y, x));
+
+    for nonmax in [true, false] {
+        let detector = FastFeatureDetector::new(20, nonmax, FastType::Type9_16);
+        let keypoints = detector.detect(&img).unwrap();
+
+        let mut detected: Vec<(usize, usize)> = keypoints
+            .iter()
+            .map(|kp| (kp.pt.x.round() as usize, kp.pt.y.round() as usize))
+            .collect();
+        detected.sort_by_key(|&(x, y)| (y, x));
+
+        assert_eq!(
+            detected, expected,
+            "nonmax={nonmax}: detected keypoints do not match the expected dot coordinates"
+        );
     }
 }
