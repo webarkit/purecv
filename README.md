@@ -348,7 +348,7 @@ cargo run --example rectification
 ## 🧪 Testing & Benchmarking
 
 ### Running Tests
-PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **359 unit tests** (plus **40 doc-tests**) covering:
+PureCV uses a comprehensive suite of unit tests to ensure correctness and parity with OpenCV. The test suite currently includes **378 unit tests** (plus **40 doc-tests**) covering:
 
 - **Core module:** Matrix factories, scalar arithmetic variants, bitwise scalar ops, min/max, comparison ops (`compare`, `in_range`), reduction (`reduce`, `count_non_zero`), polar/cartesian conversions, linear algebra (`determinant`, `invert`, `solve`), channel ops (`extract_channel`, `insert_channel`), `DynamicMatrix`, transforms, sorting, clustering, and RNG.
 - **Imgproc module:** Filters, derivatives, edge detection, color conversions (including gray-to-RGB/BGR/RGBA/BGRA), thresholding, morphology (`erode`, `dilate`), pyramids (`pyr_down`, `pyr_up`), kernel helpers (`get_gaussian_kernel`, `get_sobel_kernels`), and histograms/CLAHE (`calc_hist`, `calc_back_project`, `compare_hist`, `equalize_hist`, `Clahe`).
@@ -393,9 +393,17 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 | `canny` | 57.61 ms | **12.54 ms** | 4.6× |
 | `fast_detect` (512×512) | 2.04 ms | **499 µs** | 4.1× |
 | `orb_detect` (512×512) | 117.4 ms | **30.7 ms** | 3.9× |
+| `orb_detect_and_compute` (640×480, textured) ‡ | 36.3 ms | **20.3 ms** | 1.8× |
+| `orb_detect` — Harris scoring (640×480, textured) ‡ | 33.0 ms | **8.6 ms** | 3.8× |
 | `calc_optical_flow_pyr_lk` (512×512, 49 pts) | 27.5 ms | **-** | - |
 
 > ★ Uses non-zero sinusoidal data to exercise the `simd_deriv_3x3_row_f32` SIMD kernel. Best combined speedup in the project.
+>
+> ‡ Not a Standard-vs-Parallel+SIMD comparison: both columns use default features (`std`,
+> `parallel`, no `simd`). They measure the ORB algorithmic fixes for #123–#125 (a single
+> scale-pyramid build, and Harris scored only at FAST keypoints instead of over the whole
+> level) — before (`ef13ed8`) vs after. See [`benches/benchmark_results.md`](./benches/benchmark_results.md)
+> for the full before/after table, including the #124 per-level blur's added cost.
 >
 > Full results in [`benches/benchmark_results.md`](./benches/benchmark_results.md)
 

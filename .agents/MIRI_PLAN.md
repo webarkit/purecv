@@ -98,7 +98,13 @@ The leg that does the real work: it reaches `arithm.rs:119,267` and
 pulp is **confirmed Miri-compatible** (A1, §6). This leg was designed to start
 advisory (`experimental: true`) in case Miri's target-dependent intrinsic support
 differed on CI, and was promoted to required once it ran green on `ubuntu-latest`
-with counts identical to local Windows — 355 passed, 0 failed, 9 ignored on both.
+with counts identical to local Windows — 355 passed, 0 failed, 9 ignored on both
+(measured on `dev` @ v0.7.0; see §9). `fix/orb-123-126` added 7 more
+`#[cfg_attr(miri, ignore)]` tests (§4), bringing this leg's *current* total to 16
+ignored. `cargo test --no-default-features --features std,simd --lib` (which is
+unaffected by `cfg(miri)`, so nothing is skipped) reports 434 tests for this feature
+set at this PR's tip — derived, not re-measured under Miri for this PR: 418 passed,
+0 failed, 16 ignored.
 
 ### Aliasing model and MIRIFLAGS
 
@@ -129,13 +135,17 @@ over ignoring that test, since it keeps the RNG determinism contract under test.
 | `crates/wasm` (`purecv-wasm`) | Miri has no `wasm32-unknown-unknown` support. Excluded structurally via `-p purecv` rather than `--workspace --exclude`. |
 | `benches/` | Not built by `cargo miri test`; Criterion's sampling under interpretation would be meaninglessly slow. |
 | `parallel` feature | Rayon under Miri is slow and its thread support is limited. Accepted cost: a coverage gap (§5). |
-| 9 individual tests | Excluded **on measured evidence only** (see below), never speculatively. |
+| 16 individual tests | Excluded **on measured evidence, or a reasoned bound for the same algorithm** (see below), never speculatively. |
 
 ### Excluded tests — measured
 
-Threshold: **>30s under Miri**. Nine tests qualified. They are iteration-heavy
-algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them contain or reach
-`unsafe`** — so excluding them costs no UB coverage.
+Threshold: **>30s under Miri**. Nine tests qualified by direct measurement. They are
+iteration-heavy algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them contain or
+reach `unsafe`** — so excluding them costs no UB coverage. `fix/orb-123-126` (#123–#126,
+#156) added seven more ORB tests, each heavier than `test_orb_full_pipeline` or
+`test_orb_pyramid_dimensions` on the same detect/detect_and_compute/pyramid+blur
+operations, so they are excluded on that bound rather than an independent Miri
+measurement. Sixteen tests are excluded in total.
 
 | Test | Miri time | File |
 |------|-----------|------|
@@ -148,10 +158,19 @@ algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them contain or reach
 | `video::…::test_lk_min_eigenvals_flag` | 61.5s | `src/video/tests.rs` |
 | `video::…::test_build_pyramid_with_derivatives` | 45.3s | `src/video/tests.rs` |
 | `features2d::tests::test_orb_pyramid_dimensions` | 30.2s | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_compute_blurs_the_keypoint_octave_level` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_compute_matches_opencv_reference` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_detect_and_compute_equals_detect_then_compute` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_detect_and_compute_golden` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_detect_and_compute_golden_fast_params` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_detect_ignores_descriptor_only_params` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `features2d::tests::test_orb_ref_image_matches_generator` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
 
 **Why so few exclusions suffice.** The distribution is extremely skewed: the top 5
 tests are 82% of total runtime, while the remaining **341 tests complete in well
-under two minutes combined**. Nine annotations take the suite from 41 minutes to roughly 4.
+under two minutes combined**. Sixteen annotations (the original nine, plus seven added by
+`fix/orb-123-126` for the #123–#126/#156 ORB fixes) take the suite from 41 minutes to
+roughly 4.
 
 **Coverage check on the one borderline case.** `test_build_pyramid_with_derivatives`
 exercises the Scharr path (Sobel before #130, switched to Scharr by that fix), which

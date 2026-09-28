@@ -48,6 +48,81 @@ cargo bench --bench features2d_bench --no-default-features --features std,parall
 
 ---
 
+### ORB fixes (#123, #124, #125, #156) — before/after, 640×480 textured
+
+*Execution Date: 2026-09-28*
+
+Unlike the sections above, this is **not** a Standard/SIMD/Parallel/Parallel+SIMD sweep. It
+measures the effect of the algorithmic fixes themselves, both runs under the same default
+features (`std`, `parallel`; no `simd`, no `target-cpu=native`):
+
+- **Before**: branch `fix/orb-123-126` at `ef13ed8` (the commit the branch forked from).
+- **After**: the same branch at `a78c4a973dc8` (this PR's tip, before it merges).
+
+Both use `lcg_textured(480, 640, 42)` — 500 random filled rectangles plus ±6 noise, so
+keypoints spread across every pyramid octave instead of clustering in the coarsest two like
+the 512×512 sinusoid above. `orb_detect_and_compute_512x512` is included for continuity with
+that older benchmark; recall it yields only 67 keypoints, all in octaves 6–7.
+
+Procedure: a temporary `git worktree add --detach <dir> ef13ed8`, with the branch's
+`benches/features2d_bench.rs` copied in (it only calls API that already existed at `ef13ed8`).
+Both runs shared one `CARGO_TARGET_DIR`, with `cargo clean --release -p purecv` run before each
+build — required because Cargo's release metadata hash for the root `purecv` package does not
+vary by worktree path, so without an explicit clean a shared target directory can silently
+reuse the other worktree's binary.
+
+```sh
+# Before, from the ef13ed8 worktree
+cargo bench --bench features2d_bench -- orb_ --save-baseline pre-orb
+
+# After, from the branch worktree, same CARGO_TARGET_DIR
+cargo bench --bench features2d_bench -- orb_ --baseline pre-orb
+```
+
+| Benchmark | Before (`ef13ed8`) | After (`a78c4a9`) | Criterion change |
+| :-------- | :------------------ | :------------------ | :---------------- |
+| `orb_detect_and_compute_512x512` | 29.912 ms | **6.330 ms** | **−78.8%** (improved) |
+| `orb_detect_and_compute_640x480_textured` | 36.327 ms | **20.336 ms** | **−44.0%** (improved) |
+| `orb_detect_harris_640x480` | 32.982 ms | **8.582 ms** | **−74.0%** (improved) |
+| `orb_detect_fast_640x480` | 8.007 ms | 7.846 ms | −2.0% (within noise) |
+| `orb_compute_640x480` | 2.468 ms | 12.015 ms | **+386.9%** (regressed) |
+| `orb_build_pyramid_640x480` | 1.933 ms | 1.953 ms | +0.2% (no change) |
+
+Means are Criterion's point estimate; "Criterion change" is its own before/after percentage
+(`--baseline`), not recomputed from the two mean columns.
+
+#### Analysis
+
+- **`orb_detect_harris_640x480` (#125): −74%.** At `ef13ed8`, Harris scoring ran
+  `corner_harris` over the *entire* pyramid level, then looked up each FAST keypoint's response.
+  After #125, `harris_at` computes the response only at the FAST keypoints themselves — a few
+  hundred points instead of every pixel in up to 8 pyramid levels. This single change accounts
+  for nearly all of the full-pipeline speedup below, consistent with the investigation's finding
+  that Harris scoring was 52–70% of `detect_and_compute`'s time before the fix.
+- **`orb_detect_and_compute_640x480_textured` (#123 + #125): −44%.** Smaller than the Harris-only
+  number because `detect_and_compute` also now pays the #124 blur cost inside `compute` (see
+  below), which partially offsets the detection-side win. `orb_detect_and_compute_512x512`
+  shows a much larger −79%, since detection dominates it far more (all 67 keypoints sit in the
+  cheapest two octaves, so there's very little compute-side cost to offset the Harris win).
+- **`orb_detect_fast_640x480`: no real change**, as expected — the FAST score type never touched
+  Harris and is unaffected by #123/#124/#125. The −2% is Criterion noise.
+- **`orb_compute_640x480` (#124): +387%, i.e. ~4.9× slower.** Before #124, `compute` sampled
+  BRIEF directly from the unblurred pyramid level. After #124, every octave actually used by a
+  keypoint is smoothed (7×7 Gaussian, σ=2, `BORDER_REFLECT_101`) before sampling, matching
+  OpenCV and bringing descriptors to within mean 1.2 / max 3 bits of OpenCV 4.10 (previously
+  mean 50.6 / max 74). This is the expected, and necessary, cost of that correctness fix — it is
+  more than paid for by the Harris win in the full `detect_and_compute` pipeline above.
+- **`orb_build_pyramid_640x480`: no change**, as expected — a single call to
+  `build_orb_pyramid` isn't touched by #123 (which eliminates building the pyramid a *second*
+  time inside `detect_and_compute`, not the cost of building it once).
+
+**Machine noise.** All benchmarks reported 5–16% high-side outliers even at steady state; the
+`ef13ed8` baseline itself drifted by 12–15% between two consecutive from-clean runs of
+*identical* code (see the procedure above). Treat the percentages as directionally accurate
+rather than exact on this shared, non-isolated development machine.
+
+---
+
 ## Video — Performance Comparison Table
 
 *Execution Date: 2026-04-30 (CET)*
