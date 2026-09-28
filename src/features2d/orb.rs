@@ -38,10 +38,10 @@ use super::bit_pattern_31::BIT_PATTERN_31;
 use super::fast::{FastFeatureDetector, FastType};
 use super::keypoint::KeyPoint;
 use crate::core::error::{PureCvError, Result};
-use crate::core::types::{BorderTypes, Size};
+use crate::core::types::{BorderTypes, Size, Size2i};
 use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
-use crate::imgproc::resize;
+use crate::imgproc::{gaussian_blur, resize};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -136,6 +136,16 @@ fn pow_f64(base: f64, n: i32) -> f64 {
 /// across platforms, then rounded once to `f32`.
 pub(crate) fn level_scale(scale_factor: f32, level: i32) -> f32 {
     pow_f64(scale_factor as f64, level) as f32
+}
+
+/// Smooths a pyramid level before steered BRIEF sampling.
+///
+/// Matches OpenCV's ORB, which blurs each level it samples descriptors from with a 7x7 kernel,
+/// sigma 2, `BORDER_REFLECT_101` (ref: orb.cpp:1224-1231), before computing descriptors. Only
+/// [`Orb::compute_in_pyramid`] calls this; keypoint detection (FAST, Harris, orientation) always
+/// uses the unblurred pyramid.
+fn blur_for_descriptors(level: &Matrix<u8>) -> Result<Matrix<u8>> {
+    gaussian_blur(level, Size2i::new(7, 7), 2.0, 2.0, BorderTypes::Reflect101)
 }
 
 impl Orb {
@@ -479,11 +489,36 @@ impl Orb {
     /// Callers are responsible for validating the image and parameters (see
     /// [`Orb::check_descriptor_params`]) and for building `pyramid` with [`build_orb_pyramid`]
     /// beforehand; this does not repeat that validation.
+    ///
+    /// Like OpenCV, this blurs each pyramid level a keypoint refers to (7x7, sigma 2,
+    /// `BORDER_REFLECT_101`, see [`blur_for_descriptors`]) before sampling steered BRIEF from it;
+    /// the unblurred `pyramid` passed in is only used to pick which levels need blurring.
     fn compute_in_pyramid(
         &self,
         pyramid: &[Matrix<u8>],
         keypoints: &[KeyPoint],
     ) -> Result<Matrix<u8>> {
+        // Validate every keypoint's octave up front, before blurring any level.
+        for kp in keypoints {
+            let level = kp.octave;
+            if level < 0 || level as usize >= self.nlevels {
+                return Err(PureCvError::InvalidInput(format!(
+                    "Keypoint octave {level} is larger than ORB nlevels {}",
+                    self.nlevels
+                )));
+            }
+        }
+
+        // Blur only the levels at least one keypoint refers to, once per level. Detection
+        // (FAST/Harris/orientation) runs on the unblurred `pyramid` and never sees this.
+        let mut blurred_levels: Vec<Option<Matrix<u8>>> = vec![None; pyramid.len()];
+        for kp in keypoints {
+            let level = kp.octave as usize;
+            if blurred_levels[level].is_none() {
+                blurred_levels[level] = Some(blur_for_descriptors(&pyramid[level])?);
+            }
+        }
+
         let mut descriptors = Matrix::<u8>::new(keypoints.len(), 32, 1);
 
         #[cfg(feature = "parallel")]
@@ -495,19 +530,18 @@ impl Orb {
                 .try_for_each(|(i, row_desc)| -> Result<()> {
                     let kp = &keypoints[i];
                     let level = kp.octave;
-                    if level < 0 || level as usize >= self.nlevels {
-                        return Err(PureCvError::InvalidInput(format!(
-                            "Keypoint octave {level} is larger than ORB nlevels {}",
-                            self.nlevels
-                        )));
-                    }
                     let scale = level_scale(self.scale_factor, level);
                     let mut level_kp = kp.clone();
                     level_kp.pt.x /= scale;
                     level_kp.pt.y /= scale;
 
+                    let level_image = blurred_levels[level as usize].as_ref().ok_or_else(|| {
+                        PureCvError::InvalidInput(format!(
+                            "ORB pyramid level {level} was not blurred before descriptor extraction"
+                        ))
+                    })?;
                     let desc_bytes = compute_orb_descriptor(
-                        &pyramid[level as usize],
+                        level_image,
                         &level_kp,
                         self.patch_size,
                         &BIT_PATTERN_31,
@@ -526,19 +560,18 @@ impl Orb {
                 .try_for_each(|(i, row_desc)| -> Result<()> {
                     let kp = &keypoints[i];
                     let level = kp.octave;
-                    if level < 0 || level as usize >= self.nlevels {
-                        return Err(PureCvError::InvalidInput(format!(
-                            "Keypoint octave {level} is larger than ORB nlevels {}",
-                            self.nlevels
-                        )));
-                    }
                     let scale = level_scale(self.scale_factor, level);
                     let mut level_kp = kp.clone();
                     level_kp.pt.x /= scale;
                     level_kp.pt.y /= scale;
 
+                    let level_image = blurred_levels[level as usize].as_ref().ok_or_else(|| {
+                        PureCvError::InvalidInput(format!(
+                            "ORB pyramid level {level} was not blurred before descriptor extraction"
+                        ))
+                    })?;
                     let desc_bytes = compute_orb_descriptor(
-                        &pyramid[level as usize],
+                        level_image,
                         &level_kp,
                         self.patch_size,
                         &BIT_PATTERN_31,
@@ -839,6 +872,12 @@ pub fn compute_orientation(
 /// Computes the 32-byte steered BRIEF descriptor for a keypoint on a specific image.
 ///
 /// Ref: https://github.com/opencv/opencv/blob/4.10.0/modules/features2d/src/orb.cpp#L220
+///
+/// `image` is sampled as given; it is not blurred by this function. `Orb::compute` blurs each
+/// pyramid level it samples (7x7, sigma 2, `BORDER_REFLECT_101`) before calling this, matching
+/// OpenCV. Callers of this function directly who want OpenCV-parity descriptors must pass an
+/// already-blurred `image` (see [`gaussian_blur`](crate::imgproc::gaussian_blur) with those
+/// parameters).
 ///
 /// * `patch_size` - Must be exactly `31`; the compiled sampling `pattern` (e.g.
 ///   [`BIT_PATTERN_31`]) is generated for a 31x31 patch.

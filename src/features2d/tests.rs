@@ -34,7 +34,9 @@
  *
  */
 
-use super::orb_opencv_ref::{ORB_REF_HEIGHT, ORB_REF_IMAGE_FNV1A, ORB_REF_WIDTH};
+use super::orb_opencv_ref::{
+    ORB_REF_DESCRIPTORS, ORB_REF_HEIGHT, ORB_REF_IMAGE_FNV1A, ORB_REF_KEYPOINTS, ORB_REF_WIDTH,
+};
 use crate::core::error::PureCvError;
 use crate::core::types::{BorderTypes, Point2f};
 use crate::core::Matrix;
@@ -851,14 +853,14 @@ fn keypoints_fnv(kps: &[KeyPoint]) -> u32 {
 /// `--no-default-features --features std`, and `--features simd,parallel` configurations.
 const ORB_GOLDEN_COUNT: usize = 500;
 const ORB_GOLDEN_KEYPOINTS_FNV: u32 = 0x6d03_920c;
-const ORB_GOLDEN_DESCRIPTORS_FNV: u32 = 0x3999_19b3;
+const ORB_GOLDEN_DESCRIPTORS_FNV: u32 = 0xf88b_0f8e;
 
 /// Golden values for `Orb::new(300, 1.5, 4, 20, 0, 2, ScoreType::Fast, 31, 15)` on
 /// `lcg_textured(240, 320, 11)`. Measured on Windows and WSL Linux, in the default,
 /// `--no-default-features --features std`, and `--features simd,parallel` configurations.
 const ORB_GOLDEN_COUNT_FAST_PARAMS: usize = 300;
 const ORB_GOLDEN_KEYPOINTS_FNV_FAST_PARAMS: u32 = 0x47a5_4378;
-const ORB_GOLDEN_DESCRIPTORS_FNV_FAST_PARAMS: u32 = 0xb444_b8e6;
+const ORB_GOLDEN_DESCRIPTORS_FNV_FAST_PARAMS: u32 = 0xabcf_9ade;
 
 // miri: full ORB detect_and_compute on a 640x480 image is far heavier than
 // test_orb_full_pipeline (100x100, ~806s under interpretation). No `unsafe` on this path.
@@ -1036,4 +1038,80 @@ fn orb_ref_image() -> Matrix<u8> {
 #[test]
 fn test_orb_ref_image_matches_generator() {
     assert_eq!(fnv1a32(&orb_ref_image().data), ORB_REF_IMAGE_FNV1A);
+}
+
+/// purecv#124: `Orb::compute` must smooth the level (7x7, sigma 2, `BORDER_REFLECT_101`) before
+/// steered BRIEF, as OpenCV does. Measured: mean 50.6 / max 74 bits without the blur, mean 1.15
+/// / max 3 with it (0 with a rounding blur).
+// miri: pyramid + 7x7 blur of 192x192. No `unsafe`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_compute_matches_opencv_reference() {
+    let img = orb_ref_image();
+    let kps: Vec<KeyPoint> = ORB_REF_KEYPOINTS
+        .iter()
+        .map(|&(x, y, a)| KeyPoint::new(Point2f::new(x, y), 31.0, f32::from_bits(a), 0.0, 0, -1))
+        .collect();
+    let desc = Orb::default().compute(&img, &kps).unwrap();
+    let dist: Vec<u32> = desc
+        .data
+        .chunks_exact(32)
+        .zip(ORB_REF_DESCRIPTORS.iter())
+        .map(|(r, o)| r.iter().zip(o).map(|(a, b)| (a ^ b).count_ones()).sum())
+        .collect();
+    let mean = dist.iter().sum::<u32>() as f64 / dist.len() as f64;
+    let max = *dist.iter().max().unwrap();
+    println!("ORB vs OpenCV 4.10: mean {mean:.2} bits, max {max}");
+    // Measured: 0 bits with a rounding blur; mean 1.15 / max 3 with today's truncating
+    // gaussian_blur; mean 50.6 / max 74 without any blur.
+    assert!(
+        max <= 10 && mean <= 2.5,
+        "mean {mean:.2}, max {max}, per keypoint {dist:?}"
+    );
+}
+
+/// purecv#124: only the pyramid levels descriptors are sampled from get blurred; detection
+/// (FAST/Harris/orientation, exercised via `detect_and_compute` elsewhere) keeps using the
+/// unblurred pyramid. This checks every octave gets its own 7x7/sigma=2/Reflect101 blur.
+// miri: 8-level pyramid + 8 blurs on 240x320. No `unsafe`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_compute_blurs_the_keypoint_octave_level() {
+    use crate::core::types::Size2i;
+    use crate::features2d::build_orb_pyramid;
+    use crate::imgproc::gaussian_blur;
+
+    let img = lcg_textured(240, 320, 5);
+    let pyr = build_orb_pyramid(&img, 8, 1.2).unwrap();
+    let kps: Vec<KeyPoint> = (0..8)
+        .map(|o| {
+            let s = level_scale(1.2, o);
+            let l = &pyr[o as usize];
+            KeyPoint::new(
+                Point2f::new((l.cols / 2) as f32 * s, (l.rows / 2) as f32 * s),
+                31.0,
+                30.0,
+                0.0,
+                o,
+                -1,
+            )
+        })
+        .collect();
+    let desc = Orb::default().compute(&img, &kps).unwrap();
+    for (o, kp) in kps.iter().enumerate() {
+        let blurred = gaussian_blur(
+            &pyr[o],
+            Size2i::new(7, 7),
+            2.0,
+            2.0,
+            BorderTypes::Reflect101,
+        )
+        .unwrap();
+        let s = level_scale(1.2, o as i32);
+        let mut lk = kp.clone();
+        lk.pt.x /= s;
+        lk.pt.y /= s;
+        let want = compute_orb_descriptor(&blurred, &lk, 31, &BIT_PATTERN_31).unwrap();
+        assert_eq!(&desc.data[o * 32..o * 32 + 32], &want[..], "octave {o}");
+    }
 }
