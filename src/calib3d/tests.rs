@@ -374,6 +374,43 @@ mod calib3d_tests {
     // solve_pnp_ransac
     // -----------------------------------------------------------------------
 
+    /// 20-point grid spanning three z-planes, with three planted outliers
+    /// (indices 3, 11 and 17) and the ground-truth pose it was generated from.
+    fn make_pnp_grid_with_outliers(
+        rvec: [f64; 3],
+        tvec: [f64; 3],
+        k: &[f64; 9],
+    ) -> (Vec<Point3f>, Vec<Point2f>) {
+        use crate::calib3d::geometry::rvec_to_rmat;
+        let r = rvec_to_rmat(rvec[0], rvec[1], rvec[2]);
+        let obj: Vec<Point3f> = (0..20)
+            .map(|i| {
+                let fi = i as f32;
+                Point3f {
+                    x: (fi % 5.0) - 2.0,
+                    y: (fi / 5.0).floor() - 1.5,
+                    z: (i % 3) as f32 * 0.4,
+                }
+            })
+            .collect();
+        let mut img: Vec<Point2f> = obj
+            .iter()
+            .map(|p| {
+                let cx = r[0] * p.x as f64 + r[1] * p.y as f64 + r[2] * p.z as f64 + tvec[0];
+                let cy = r[3] * p.x as f64 + r[4] * p.y as f64 + r[5] * p.z as f64 + tvec[1];
+                let cz = r[6] * p.x as f64 + r[7] * p.y as f64 + r[8] * p.z as f64 + tvec[2];
+                Point2f {
+                    x: (k[0] * cx / cz + k[2]) as f32,
+                    y: (k[4] * cy / cz + k[5]) as f32,
+                }
+            })
+            .collect();
+        img[3] = Point2f { x: 10.0, y: 10.0 };
+        img[11] = Point2f { x: 630.0, y: 470.0 };
+        img[17] = Point2f { x: 5.0, y: 475.0 };
+        (obj, img)
+    }
+
     #[test]
     fn test_solve_pnp_ransac_clean_data() {
         let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
@@ -407,6 +444,465 @@ mod calib3d_tests {
             "tz={} expected ~6",
             tvec.data[2]
         );
+    }
+
+    #[test]
+    fn test_solve_pnp_with_extrinsic_guess() {
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let true_rv = [0.15f64, -0.1, 0.05];
+        let true_tv = [0.2f64, -0.1, 5.5];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_data(true_rv, true_tv, &k);
+
+        let mut rvec = Matrix::from_vec(
+            3,
+            1,
+            1,
+            vec![true_rv[0] + 0.05, true_rv[1] - 0.05, true_rv[2] + 0.03],
+        );
+        let mut tvec = Matrix::from_vec(
+            3,
+            1,
+            1,
+            vec![true_tv[0] + 0.2, true_tv[1] - 0.2, true_tv[2] + 0.5],
+        );
+        let ok = solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap();
+        assert!(ok);
+        for (got, want) in tvec.data.iter().zip(true_tv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "tvec {tvec:?} expected ~{true_tv:?}"
+            );
+        }
+        for (got, want) in rvec.data.iter().zip(true_rv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "rvec {rvec:?} expected ~{true_rv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_rejects_bad_shapes() {
+        use crate::core::error::PureCvError;
+
+        let cam = make_camera_matrix();
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let (obj, img) = make_pnp_data([0.1, 0.05, 0.02], [0.0, 0.0, 5.0], &k);
+
+        // A 3×3 rotation matrix passed where a rotation vector is expected.
+        let mut rvec = Matrix::from_vec(3, 3, 1, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, 5.0]);
+        let err = solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PureCvError::InvalidInput(_)), "{err:?}");
+
+        // A 2-element vector.
+        let mut rvec = Matrix::from_vec(2, 1, 1, vec![0.1, 0.05]);
+        let err = solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PureCvError::InvalidInput(_)), "{err:?}");
+
+        // A malformed tvec is rejected as well.
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.1, 0.05, 0.02]);
+        let mut tvec = Matrix::from_vec(1, 4, 1, vec![0.0, 0.0, 5.0, 0.0]);
+        let err = solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PureCvError::InvalidInput(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_allows_three_to_five_points() {
+        // With a guess DLT is skipped, so the 6-point minimum does not apply:
+        // 3 correspondences already constrain the 6-DoF refinement.
+        use crate::calib3d::geometry::rvec_to_rmat;
+
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let true_rv = [0.1f64, -0.05, 0.08];
+        let true_tv = [0.0f64, 0.0, 6.0];
+        let cam = make_camera_matrix();
+        let (all_obj, all_img) = make_pnp_data(true_rv, true_tv, &k);
+        let r_want = rvec_to_rmat(true_rv[0], true_rv[1], true_rv[2]);
+
+        for n in [3usize, 4, 5] {
+            let (obj, img) = (&all_obj[..n], &all_img[..n]);
+
+            let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.15, -0.1, 0.1]);
+            let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.2, -0.2, 6.5]);
+            let ok = solve_pnp(
+                obj,
+                img,
+                &cam,
+                None,
+                &mut rvec,
+                &mut tvec,
+                true,
+                SolvePnPMethod::Iterative,
+            )
+            .unwrap();
+            assert!(ok, "n={n}");
+            for (got, want) in tvec.data.iter().zip(true_tv.iter()) {
+                assert!(
+                    approx_eq(*got, *want, 1e-4),
+                    "n={n}: tvec {tvec:?} expected ~{true_tv:?}"
+                );
+            }
+            let r_got = rvec_to_rmat(rvec.data[0], rvec.data[1], rvec.data[2]);
+            for (got, want) in r_got.iter().zip(r_want.iter()) {
+                assert!(
+                    approx_eq(*got, *want, 1e-4),
+                    "n={n}: rmat {r_got:?} expected ~{r_want:?}"
+                );
+            }
+
+            // Without a guess the same subset must still be rejected (DLT needs 6).
+            let mut rvec = Matrix::new(1, 1, 1);
+            let mut tvec = Matrix::new(1, 1, 1);
+            assert!(
+                solve_pnp(
+                    obj,
+                    img,
+                    &cam,
+                    None,
+                    &mut rvec,
+                    &mut tvec,
+                    false,
+                    SolvePnPMethod::Iterative
+                )
+                .is_err(),
+                "n={n}: the DLT path must keep requiring 6 points"
+            );
+        }
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_below_three_points_is_rejected() {
+        use crate::core::error::PureCvError;
+
+        // Two correspondences leave the 6-DoF refinement underdetermined.
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_data([0.1, 0.05, 0.02], [0.0, 0.0, 5.0], &k);
+        let (obj, img) = (&obj[..2], &img[..2]);
+
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.1, 0.05, 0.02]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, 5.0]);
+        let err = solve_pnp(
+            obj,
+            img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PureCvError::InvalidInput(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_solve_pnp_ransac_requires_six_points_with_guess() {
+        use crate::core::error::PureCvError;
+
+        // A guess does not lower RANSAC's minimum (hypotheses need 6 points).
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_data([0.1, 0.05, 0.02], [0.0, 0.0, 5.0], &k);
+        let (obj, img) = (&obj[..5], &img[..5]);
+
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.1, 0.05, 0.02]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, 5.0]);
+        let err = solve_pnp_ransac(
+            obj,
+            img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            100,
+            2.0,
+            0.99,
+            None,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PureCvError::InvalidInput(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_accepts_1x3() {
+        // Row-vector layout must behave like column-vector layout
+        // (matches `rodrigues` and OpenCV `Size(1,3)`).
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let true_rv = [0.15f64, -0.1, 0.05];
+        let true_tv = [0.2f64, -0.1, 5.5];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_data(true_rv, true_tv, &k);
+
+        let mut rvec = Matrix::from_vec(
+            1,
+            3,
+            1,
+            vec![true_rv[0] + 0.05, true_rv[1] - 0.05, true_rv[2] + 0.03],
+        );
+        let mut tvec = Matrix::from_vec(
+            1,
+            3,
+            1,
+            vec![true_tv[0] + 0.2, true_tv[1] - 0.2, true_tv[2] + 0.5],
+        );
+        let ok = solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap();
+        assert!(ok);
+        // Outputs are normalised to 3×1.
+        assert_eq!((rvec.rows, rvec.cols), (3, 1));
+        assert_eq!((tvec.rows, tvec.cols), (3, 1));
+        for (got, want) in rvec.data.iter().zip(true_rv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "rvec {rvec:?} expected ~{true_rv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_rejects_non_finite() {
+        let cam = make_camera_matrix();
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let (obj, img) = make_pnp_data([0.1, 0.05, 0.02], [0.0, 0.0, 5.0], &k);
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![f64::NAN, 0.0, 0.0]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, 5.0]);
+        assert!(solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative
+        )
+        .is_err());
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.1, 0.05, 0.02]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.0, 0.0, f64::INFINITY]);
+        assert!(solve_pnp(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            SolvePnPMethod::Iterative
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_solve_pnp_guess_near_half_turn() {
+        // `rmat_to_rvec` switches to the near-π branch for |θ − π| < 1e-4, so
+        // cover both sides of that threshold.
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let axis_norm = (1.0f64 + 4.0 + 4.0).sqrt();
+        let cam = make_camera_matrix();
+
+        for delta in [1e-3f64, 1e-4, 1e-5, 0.0] {
+            let theta = core::f64::consts::PI - delta;
+            let true_rv = [
+                theta / axis_norm,
+                2.0 * theta / axis_norm,
+                2.0 * theta / axis_norm,
+            ];
+            let true_tv = [0.0f64, 0.0, 6.0];
+            let (obj, img) = make_pnp_data(true_rv, true_tv, &k);
+
+            let mut rvec = Matrix::from_vec(3, 1, 1, true_rv.to_vec());
+            let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.1, -0.1, 5.8]);
+            let ok = solve_pnp(
+                &obj,
+                &img,
+                &cam,
+                None,
+                &mut rvec,
+                &mut tvec,
+                true,
+                SolvePnPMethod::Iterative,
+            )
+            .unwrap();
+            assert!(ok, "delta={delta:e}");
+            for (got, want) in tvec.data.iter().zip(true_tv.iter()) {
+                assert!(
+                    approx_eq(*got, *want, 1e-4),
+                    "delta={delta:e}: tvec {tvec:?} expected ~{true_tv:?}"
+                );
+            }
+            // Compare via rotation matrices so the check is robust to
+            // equivalent angle-axis representations (θ ≈ π has two).
+            let r_got =
+                crate::calib3d::geometry::rvec_to_rmat(rvec.data[0], rvec.data[1], rvec.data[2]);
+            let r_want = crate::calib3d::geometry::rvec_to_rmat(true_rv[0], true_rv[1], true_rv[2]);
+            for (got, want) in r_got.iter().zip(r_want.iter()) {
+                assert!(
+                    approx_eq(*got, *want, 1e-4),
+                    "delta={delta:e}: rmat {r_got:?} expected ~{r_want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_solve_pnp_ransac_with_extrinsic_guess() {
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let true_rv = [0.1f64, -0.05, 0.08];
+        let true_tv = [0.0f64, 0.0, 6.0];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_grid_with_outliers(true_rv, true_tv, &k);
+
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.15, -0.1, 0.1]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![0.1, 0.1, 5.6]);
+        let mut inliers = Vec::new();
+        let ok = solve_pnp_ransac(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            100,
+            2.0,
+            0.99,
+            Some(&mut inliers),
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap();
+        assert!(ok);
+        // Planted outliers must be rejected; the remaining 17 points are inliers.
+        for &outlier in &[3, 11, 17] {
+            assert!(
+                !inliers.contains(&outlier),
+                "outlier {outlier} must not be in inliers {inliers:?}"
+            );
+        }
+        assert_eq!(inliers.len(), 17, "inliers={inliers:?}");
+        for (got, want) in tvec.data.iter().zip(true_tv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "tvec {tvec:?} expected ~{true_tv:?}"
+            );
+        }
+        for (got, want) in rvec.data.iter().zip(true_rv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "rvec {rvec:?} expected ~{true_rv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_solve_pnp_ransac_with_poor_extrinsic_guess() {
+        // A poor prior must still yield the right inlier set; the guess only
+        // seeds the final refit.
+        use crate::calib3d::geometry::rvec_to_rmat;
+
+        let k = [800.0f64, 0.0, 320.0, 0.0, 800.0, 240.0, 0.0, 0.0, 1.0];
+        let true_rv = [0.1f64, -0.05, 0.08];
+        let true_tv = [0.0f64, 0.0, 6.0];
+        let cam = make_camera_matrix();
+        let (obj, img) = make_pnp_grid_with_outliers(true_rv, true_tv, &k);
+
+        // Poor prior: several tenths of a radian off in rotation, clearly off
+        // in translation.
+        let mut rvec = Matrix::from_vec(3, 1, 1, vec![0.5, -0.35, 0.43]);
+        let mut tvec = Matrix::from_vec(3, 1, 1, vec![1.5, -1.2, 8.0]);
+        let mut inliers = Vec::new();
+        let ok = solve_pnp_ransac(
+            &obj,
+            &img,
+            &cam,
+            None,
+            &mut rvec,
+            &mut tvec,
+            true,
+            100,
+            2.0,
+            0.99,
+            Some(&mut inliers),
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap();
+        assert!(ok);
+        for &outlier in &[3, 11, 17] {
+            assert!(
+                !inliers.contains(&outlier),
+                "outlier {outlier} must not be in inliers {inliers:?}"
+            );
+        }
+        assert_eq!(inliers.len(), 17, "inliers={inliers:?}");
+
+        // The returned pose, not just the inlier set, must match the ground truth.
+        for (got, want) in tvec.data.iter().zip(true_tv.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "tvec {tvec:?} expected ~{true_tv:?}"
+            );
+        }
+        let r_got = rvec_to_rmat(rvec.data[0], rvec.data[1], rvec.data[2]);
+        let r_want = rvec_to_rmat(true_rv[0], true_rv[1], true_rv[2]);
+        for (got, want) in r_got.iter().zip(r_want.iter()) {
+            assert!(
+                approx_eq(*got, *want, 1e-4),
+                "rmat {r_got:?} expected ~{r_want:?}"
+            );
+        }
     }
 
     #[test]
