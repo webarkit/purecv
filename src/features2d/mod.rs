@@ -127,4 +127,7 @@ pub use orb::{
 };
 
 #[cfg(test)]
+mod orb_opencv_ref;
+
+#[cfg(test)]
 mod tests;

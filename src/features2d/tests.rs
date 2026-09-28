@@ -34,6 +34,7 @@
  *
  */
 
+use super::orb_opencv_ref::{ORB_REF_HEIGHT, ORB_REF_IMAGE_FNV1A, ORB_REF_WIDTH};
 use crate::core::error::PureCvError;
 use crate::core::types::{BorderTypes, Point2f};
 use crate::core::Matrix;
@@ -993,4 +994,46 @@ fn test_orb_rejects_multichannel_before_params() {
     ] {
         assert!(r.unwrap_err().to_string().contains("grayscale"));
     }
+}
+
+// ---- purecv#124: OpenCV reference descriptors (fixture: orb_opencv_ref.rs) ----
+
+/// "lowbias32" integer hash; twin of `hash32()` in scripts/opencv_ref/gen_orb_descriptors.js.
+fn orb_ref_hash32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^ (x >> 16)
+}
+
+/// Deterministic textured reference image; twin of `pixel()` in the generator script.
+fn orb_ref_image() -> Matrix<u8> {
+    let (w, h) = (ORB_REF_WIDTH as u32, ORB_REF_HEIGHT as u32);
+    let mut data = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let coarse = orb_ref_hash32(((y >> 3) * 64 + (x >> 3)) ^ 0x9e37_79b9) & 0xff;
+            let fine = orb_ref_hash32((y * w + x) ^ 0x85eb_ca6b) & 0x3f;
+            let mut v = ((coarse * 3) >> 2) + fine;
+            if (20..84).contains(&x) && (28..92).contains(&y) {
+                v = 255 - v;
+            }
+            if (100..172).contains(&x) && (56..124).contains(&y) {
+                v = (v >> 1) + 96;
+            }
+            if (48..144).contains(&x) && (132..176).contains(&y) {
+                v ^= 0x5a;
+            }
+            data.push((v & 0xff) as u8);
+        }
+    }
+    Matrix::from_vec(h as usize, w as usize, 1, data)
+}
+
+// miri: generates and hashes a 36,864-pixel image twice. No `unsafe`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_orb_ref_image_matches_generator() {
+    assert_eq!(fnv1a32(&orb_ref_image().data), ORB_REF_IMAGE_FNV1A);
 }
