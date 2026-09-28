@@ -685,7 +685,7 @@ fn kp_at(x: f32, y: f32) -> KeyPoint {
 
 #[test]
 fn test_orb_rejects_unsupported_first_level() {
-    let img = Matrix::<u8>::new(48, 64, 1);
+    let img = Matrix::<u8>::new(16, 16, 1);
     let mut orb = Orb::default();
     orb.set_first_level(1);
     assert!(matches!(
@@ -697,20 +697,20 @@ fn test_orb_rejects_unsupported_first_level() {
         Err(PureCvError::InvalidInput(_))
     ));
     assert!(matches!(
-        orb.compute(&img, &[kp_at(24.0, 24.0)]),
+        orb.compute(&img, &[kp_at(8.0, 8.0)]),
         Err(PureCvError::InvalidInput(_))
     ));
 }
 
 #[test]
 fn test_orb_rejects_unsupported_wta_k_for_descriptors() {
-    let img = Matrix::<u8>::new(48, 64, 1);
+    let img = Matrix::<u8>::new(16, 16, 1);
     for wta_k in [0, 1, 3, 4, 5] {
         let mut orb = Orb::default();
         orb.set_wta_k(wta_k);
         assert!(
             matches!(
-                orb.compute(&img, &[kp_at(24.0, 24.0)]),
+                orb.compute(&img, &[kp_at(8.0, 8.0)]),
                 Err(PureCvError::InvalidInput(_))
             ),
             "{wta_k}"
@@ -727,7 +727,7 @@ fn test_orb_rejects_unsupported_wta_k_for_descriptors() {
 
 #[test]
 fn test_orb_rejects_bad_patch_size() {
-    let img = Matrix::<u8>::new(48, 64, 1);
+    let img = Matrix::<u8>::new(16, 16, 1);
     for p in [0usize, 1] {
         // OpenCV: CV_Assert(patchSize >= 2); today precompute_umax(0) underflows
         let mut orb = Orb::default();
@@ -740,10 +740,10 @@ fn test_orb_rejects_bad_patch_size() {
     let mut orb = Orb::default();
     orb.set_patch_size(21);
     assert!(matches!(
-        orb.compute(&img, &[kp_at(24.0, 24.0)]),
+        orb.compute(&img, &[kp_at(8.0, 8.0)]),
         Err(PureCvError::InvalidInput(_))
     ));
-    let kp = kp_at(24.0, 24.0);
+    let kp = kp_at(8.0, 8.0);
     assert!(matches!(
         compute_orb_descriptor(&img, &kp, 21, &BIT_PATTERN_31),
         Err(PureCvError::InvalidInput(_))
