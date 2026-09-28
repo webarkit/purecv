@@ -304,7 +304,6 @@ impl FastFeatureDetector {
 
         #[cfg(not(feature = "parallel"))]
         let keypoints: Vec<KeyPoint> = (radius..(rows - radius))
-            .into_iter()
             .flat_map(|y| {
                 let mut row_kps = Vec::new();
                 let offset = y * cols;
@@ -313,36 +312,27 @@ impl FastFeatureDetector {
 
                 for x in radius..(cols - radius) {
                     let score = scores[offset + x];
-                    if score > 0 {
-                        if !nonmax {
-                            row_kps.push(KeyPoint::new(
-                                Point2f::new(x as f32, y as f32),
-                                7.0,
-                                -1.0,
-                                score as f32,
-                                0,
-                                -1,
-                            ));
-                        } else {
-                            if score > scores[offset + x - 1]
+                    // Either nonmax suppression is off, or this is an 8-neighborhood
+                    // strictly-greater local maximum.
+                    if score > 0
+                        && (!nonmax
+                            || (score > scores[offset + x - 1]
                                 && score > scores[offset + x + 1]
                                 && score > scores[prev_offset + x - 1]
                                 && score > scores[prev_offset + x]
                                 && score > scores[prev_offset + x + 1]
                                 && score > scores[next_offset + x - 1]
                                 && score > scores[next_offset + x]
-                                && score > scores[next_offset + x + 1]
-                            {
-                                row_kps.push(KeyPoint::new(
-                                    Point2f::new(x as f32, y as f32),
-                                    7.0,
-                                    -1.0,
-                                    score as f32,
-                                    0,
-                                    -1,
-                                ));
-                            }
-                        }
+                                && score > scores[next_offset + x + 1]))
+                    {
+                        row_kps.push(KeyPoint::new(
+                            Point2f::new(x as f32, y as f32),
+                            7.0,
+                            -1.0,
+                            score as f32,
+                            0,
+                            -1,
+                        ));
                     }
                 }
                 row_kps
