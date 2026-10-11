@@ -141,9 +141,10 @@ pub(crate) fn level_scale(scale_factor: f32, level: i32) -> f32 {
 /// Smooths a pyramid level before steered BRIEF sampling.
 ///
 /// Matches OpenCV's ORB, which blurs each level it samples descriptors from with a 7x7 kernel,
-/// sigma 2, `BORDER_REFLECT_101` (ref: orb.cpp:1224-1231), before computing descriptors. Only
-/// [`Orb::compute_in_pyramid`] calls this; keypoint detection (FAST, Harris, orientation) always
-/// uses the unblurred pyramid.
+/// sigma 2, `BORDER_REFLECT_101` (ref:
+/// [`orb.cpp` L1224-L1231](https://github.com/opencv/opencv/blob/4.10.0/modules/features2d/src/orb.cpp#L1224-L1231)),
+/// before computing descriptors. Only [`Orb::compute_in_pyramid`] calls this; keypoint detection
+/// (FAST, Harris, orientation) always uses the unblurred pyramid.
 fn blur_for_descriptors(level: &Matrix<u8>) -> Result<Matrix<u8>> {
     gaussian_blur(level, Size2i::new(7, 7), 2.0, 2.0, BorderTypes::Reflect101)
 }

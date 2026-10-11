@@ -36,7 +36,7 @@
 
 //! OpenCV-compatible structured logging API.
 //!
-//! This module mirrors [`cv::utils::logging`](https://docs.opencv.org/4.x/d5/d14/namespacecv_1_1utils_1_1logging.html)
+//! This module mirrors [`cv::utils::logging`](https://docs.opencv.org/4.10.0/da/db0/namespacecv_1_1utils_1_1logging.html)
 //! and is built on top of the [`log`](https://crates.io/crates/log) facade so
 //! the output backend stays the application's choice (e.g. `env_logger`, `fern`,
 //! `tracing`, `console_log` on WASM).

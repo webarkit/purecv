@@ -37,7 +37,7 @@
 //! Sparse optical flow example — pyramidal Lucas-Kanade on static images.
 //!
 //! This example mirrors the OpenCV tutorial at
-//! <https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html> without
+//! <https://docs.opencv.org/4.10.0/d4/dee/tutorial_optical_flow.html> without
 //! requiring a camera or video file.  Because optical flow needs *two* frames,
 //! the "next" frame is produced by translating a real loaded image by a known
 //! (SHIFT_X, SHIFT_Y) offset — the same content you would see in two

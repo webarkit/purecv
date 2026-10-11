@@ -41,8 +41,8 @@
 //! filters them with mutual cross-check, draws the matches, and saves the output.
 //!
 //! Note: This example differs from the OpenCV AKAZE matching and tracking tutorials
-//! (https://docs.opencv.org/4.13.0/db/d70/tutorial_akaze_matching.html and
-//! https://docs.opencv.org/4.13.0/dc/d16/tutorial_akaze_tracking.html) because `purecv`
+//! (https://docs.opencv.org/4.10.0/db/d70/tutorial_akaze_matching.html and
+//! https://docs.opencv.org/4.10.0/dc/d16/tutorial_akaze_tracking.html) because `purecv`
 //! implements ORB and FAST rather than AKAZE, and matches are filtered using mutual
 //! consistency (`cross_check = true`) rather than homography estimation.
 //!

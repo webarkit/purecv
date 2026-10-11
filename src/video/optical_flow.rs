@@ -75,7 +75,7 @@ use super::simd as video_simd;
 
 /// Fixed-point normalisation factor applied to the spatial gradient matrix `H`
 /// before the minimum-eigenvalue test, matching OpenCV's `FLT_SCALE`
-/// (`modules/video/src/lkpyramid.cpp:115`).
+/// ([`lkpyramid.cpp` L235](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L235)).
 ///
 /// OpenCV accumulates `H` from *unnormalised* Scharr derivatives and rescales
 /// by `2^-20` so that `min_eigen_threshold` is a small, resolution-independent
@@ -85,7 +85,8 @@ pub(crate) const FLT_SCALE: f64 = 1.0 / (1u32 << 20) as f64;
 
 /// Degeneracy threshold for the *unscaled* determinant of `H`, equivalent to
 /// OpenCV's `D < FLT_EPSILON` test on its `FLT_SCALE`-scaled determinant
-/// (`modules/video/src/lkpyramid.cpp:419,426`, see #142):
+/// ([`lkpyramid.cpp` L473](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L473),
+/// [L480](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L480), see #142):
 /// `FLT_EPSILON / FLT_SCALE^2 = 2^-23 / 2^-40 = 2^17 = 131072`.
 pub(crate) const LK_DET_EPSILON: f64 = f32::EPSILON as f64 / (FLT_SCALE * FLT_SCALE);
 
@@ -428,8 +429,9 @@ fn lk_single_level(
     // -------------------------------------------------------------------
     // Compute min eigenvalue of H on OpenCV's scale.
     // -------------------------------------------------------------------
-    // OpenCV (`modules/video/src/lkpyramid.cpp:115,415-417`) scales the raw
-    // Scharr-derived H by `FLT_SCALE`, then writes
+    // OpenCV ([`lkpyramid.cpp` L235](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L235),
+    // [L469-L471](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L469-L471))
+    // scales the raw Scharr-derived H by `FLT_SCALE`, then writes
     //     minEig = (A11 + A22 - sqrt((A11-A22)^2 + 4*A12^2)) / (2*W*H)
     // That numerator is `2*lambda_min`, not `lambda_min`, so OpenCV's
     // effective divisor on a true `lambda_min` is `W*H` -- do NOT also divide
@@ -556,7 +558,7 @@ fn lk_single_level(
 /// any function works for testing.
 ///
 /// Mirrors OpenCV's per-iteration loop, including the oscillation check
-/// (`modules/video/src/lkpyramid.cpp:610-627`, see #131): if two
+/// ([`lkpyramid.cpp` L664-L681](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L664-L681), see #131): if two
 /// consecutive Newton steps nearly cancel (`|eta_i + eta_{i-1}| < 0.01` on
 /// both axes, checked from the second iteration on), the solver undoes
 /// half of the just-applied step and stops.
@@ -591,7 +593,7 @@ pub(crate) fn lk_iterate(
         }
 
         // Oscillation fallback, mirroring OpenCV
-        // (modules/video/src/lkpyramid.cpp:620-626, see #131): if this
+        // ([`lkpyramid.cpp` L674-L680](https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L674-L680), see #131): if this
         // step nearly cancels the previous one, the solve is bouncing
         // around the optimum rather than converging onto it. Undo half
         // of the just-applied step and stop, instead of risking another
