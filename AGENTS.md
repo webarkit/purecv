@@ -25,7 +25,7 @@ src/
 └── lib.rs          # Re-exports core, imgproc, features; defines prelude
 ```
 
-- **Reference sources** live in `cpp_ref/opencv/` — consult when porting algorithms.
+- **Reference sources** live in `cpp_ref/src/opencv/` (and `cpp_ref/src/opencv_contrib/`), created by `cpp_ref/bootstrap.py` at 4.10.0 — consult when porting algorithms. **Before reading, citing or measuring OpenCV, read `cpp_ref/AGENTS.md`.**
 - **Tests** are co-located: `src/core/tests.rs`, `src/imgproc/tests.rs`.
 - **Benchmarks** use Criterion: `benches/arithm_bench.rs`, `benches/imgproc_bench.rs`.
 
@@ -79,7 +79,7 @@ cargo run --example structural_ops
 
 ## Adding a New Algorithm
 
-1. Read the C++ reference in `cpp_ref/opencv/modules/` to extract the mathematical kernel.
+1. Read the C++ reference in `cpp_ref/src/opencv/modules/` (bootstrapped, 4.10.0) to extract the mathematical kernel.
 2. Create the function in the appropriate submodule (`src/core/` or `src/imgproc/`).
 3. Use `Result<Matrix<T>, PureCvError>` as the return type.
 4. Gate parallel loops with `#[cfg(feature = "parallel")]` and provide a sequential fallback.

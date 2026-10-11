@@ -41,6 +41,19 @@ Run the following commands in the project root:
 
 If you add a new feature, make sure to include appropriate tests in `src/**/tests.rs` or as integration tests.
 
+## OpenCV Reference Version
+
+`purecv` ports OpenCV and measures parity against it, so every contributor, human or agent, must read, cite and measure the same version. This section is the single source of truth; the other documents point here.
+
+1. **The reference is OpenCV 4.10.0** (commit `71d3237a093b60a27601c20e9ee6c3e52154e8b1`). Work derived from opencv_contrib uses opencv_contrib 4.10.0 (commit `1ed3dd2c53888e3289afdb22ec4e9ebbff3dba87`).
+2. **Links are pinned.** Use `docs.opencv.org/4.10.0/...` for documentation and `github.com/opencv/opencv/blob/4.10.0/<path>#L<n>` for source (`github.com/opencv/opencv_contrib/blob/4.10.0/<path>#L<n>` for opencv_contrib). Unversioned (`4.x`) links, `master` links, links to any other version, and bare `file.cpp:NN` citations outside link text are rejected by `cargo test --test opencv_reference_links`.
+3. **Parity values come from 4.10.0.** Measure with the Python environment in `cpp_ref/.venv` (`opencv-contrib-python==4.10.0.84`) or with opencv.js 4.10.0, either the pinned package in `cpp_ref/node_modules` or a self-built one compiled from `cpp_ref/src/opencv`. Generators live in `scripts/opencv_ref/` and record the version line of `getBuildInformation()` in their output. A value from any other version must name that version in the test comment, for example `// Measured with OpenCV 5.0.0 (opencv-python 5.0.0.93), not the 4.10.0 reference`.
+4. **Reference sources come from the bootstrap.** Run `py -3 cpp_ref/bootstrap.py --bootstrap-file cpp_ref/libraries.json` (`python3 ...` on Linux/macOS). It produces `cpp_ref/src/opencv` and `cpp_ref/src/opencv_contrib` at the pinned commits, verifies them, and exits non-zero on a mismatch. Take line numbers from these trees or from the `#L` URLs, never from another checkout. Details and the bump procedure are in [`cpp_ref/README.md`](cpp_ref/README.md).
+5. **Changing the reference is its own change.** It needs its own issue on the roadmap (#128) and means re-checking every parity test and every changed default.
+6. **Why 4.10.0:** the code had already converged on it. The decision is recorded in #165, with no separate ADR (see the Decisions table in [the implementation plan](docs/superpowers/plans/2026-10-11-opencv-4.10.0-reference-and-parity-audit.md)).
+
+OpenCV is only used out of tree to produce reference numbers. It is never a build, dev or runtime dependency of the crate.
+
 ## Commit Message Conventions
 
 To maintain a clean and automated release history, this project strictly adheres to the [Conventional Commits](https://www.conventionalcommits.org/) specification.

@@ -10,7 +10,7 @@ You are an expert Rust systems engineer porting OpenCV (C++) to Pure Rust. The g
 4. **Concurrency:** Use **Rayon** (via the `parallel` feature) for all pixel-parallel tasks. Provide a sequential fallback when the feature is disabled.
 
 ## 🛠 Implementation Strategy
-- **Step 1:** Analyze the C++ source in `cpp_ref/`.
+- **Step 1:** Analyze the C++ source in `cpp_ref/src/opencv/` (bootstrapped, 4.10.0).
 - **Step 2:** Identify the mathematical kernel of the algorithm.
 - **Step 3:** Implement using Rust Generics (`Matrix<T>`) to ensure type safety for `u8`, `f32`, etc.
 - **Step 4:** Optimize using **pulp** (via the `simd` feature) for manual SIMD or rely on LLVM auto-vectorization by using `chunks_exact`. SIMD should be an optional feature.
@@ -18,6 +18,7 @@ You are an expert Rust systems engineer porting OpenCV (C++) to Pure Rust. The g
 
 ## 📝 Documentation & Style
 - All comments, docstrings, and commit messages must be in **English**.
+- OpenCV reference version: **4.10.0** — pinned links and parity values only; see `CONTRIBUTING.md#opencv-reference-version`.
 - Use `Result<T, PureCvError>` for error handling instead of `panic!`.
 - Follow the structure defined in `src/core/` and `src/imgproc/`.
 - **Module structure convention:** Each top-level module (`core/`, `imgproc/`, `features2d/`, etc.) must contain its own `tests.rs` (unit tests) and `simd.rs` (SIMD helpers specific to that module). Keep SIMD kernels co-located with the module that uses them. The core `SimdElement` trait stays in `src/core/simd.rs`; domain-specific kernels belong in their respective module's `simd.rs`.
