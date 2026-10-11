@@ -203,11 +203,44 @@ fn scan(root: &Path, dirs: &[(&str, &str)]) -> (usize, Vec<String>) {
     (files.len(), violations)
 }
 
+/// One message per pin missing from `json`, the text of `cpp_ref/libraries.json`. A library's
+/// entry runs from its `"name"` key to the next one, so each pin counts only in its own
+/// library's entry. Plain string slicing, no JSON parser: the file's format is fixed.
+fn pin_violations(json: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, commit) in [
+        ("opencv", REFERENCE_COMMIT),
+        ("opencv_contrib", REFERENCE_CONTRIB_COMMIT),
+    ] {
+        let key = format!("\"name\": \"{name}\"");
+        let starts: Vec<usize> = json.match_indices(&key).map(|(at, _)| at).collect();
+        let &[start] = starts.as_slice() else {
+            out.push(format!(
+                "expected one `{key}` entry, found {}",
+                starts.len()
+            ));
+            continue;
+        };
+        let rest = &json[start + key.len()..];
+        let entry = &rest[..rest.find("\"name\": ").unwrap_or(rest.len())];
+        for pin in [
+            format!("\"branch\": \"{REFERENCE}\""),
+            format!("\"commit\": \"{commit}\""),
+        ] {
+            if !entry.contains(&pin) {
+                out.push(format!("the `{name}` entry must contain `{pin}`"));
+            }
+        }
+    }
+    out
+}
+
 #[test]
 fn line_violations_detects_drift() {
     let cases: &[(&str, usize)] = &[
         ("https://docs.opencv.org/4.10.0/db/d95/classcv_1_1ORB.html", 0),
         ("<https://docs.opencv.org/4.10.0>", 0),
+        ("(https://docs.opencv.org/4.10.0)", 0),
         ("https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html", 1),
         ("https://docs.opencv.org/4.13.0/db/d70/tutorial_akaze_matching.html", 1),
         ("https://docs.opencv.org/4.10/d4/dee/tutorial_optical_flow.html", 1),
@@ -248,27 +281,55 @@ fn scan_counts_files_under_src() {
 }
 
 #[test]
-fn bootstrap_pins_reference_commits() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("cpp_ref")
-        .join("libraries.json");
-    let json = match fs::read_to_string(&path) {
-        Ok(json) => json,
-        // The packaged crate excludes cpp_ref/; there is nothing to check there.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => panic!("cannot read {}: {e}", path.display()),
+fn pin_violations_checks_each_library_entry() {
+    let entry = |name: &str, commit: &str| {
+        format!(
+            "  {{\n    \"name\": \"{name}\",\n    \"source\": {{\n      \"type\": \"git\",\n      \
+             \"branch\": \"{REFERENCE}\",\n      \"commit\": \"{commit}\"\n    }}\n  }}"
+        )
     };
-    for pin in [
-        format!("\"branch\": \"{REFERENCE}\""),
-        format!("\"commit\": \"{REFERENCE_COMMIT}\""),
-        format!("\"commit\": \"{REFERENCE_CONTRIB_COMMIT}\""),
-    ] {
-        assert!(
-            json.contains(&pin),
-            "{} must contain `{pin}` (see cpp_ref/README.md)",
-            path.display()
-        );
+    let file = |entries: &[String]| format!("[\n{}\n]\n", entries.join(",\n"));
+    let opencv = entry("opencv", REFERENCE_COMMIT);
+    let contrib = entry("opencv_contrib", REFERENCE_CONTRIB_COMMIT);
+
+    assert_eq!(
+        pin_violations(&file(&[opencv.clone(), contrib.clone()])),
+        Vec::<String>::new()
+    );
+    // Both commits are in the file, but each in the other library's entry.
+    let swapped = [
+        entry("opencv", REFERENCE_CONTRIB_COMMIT),
+        entry("opencv_contrib", REFERENCE_COMMIT),
+    ];
+    assert_eq!(pin_violations(&file(&swapped)).len(), 2);
+    assert_eq!(
+        pin_violations(&file(std::slice::from_ref(&opencv))).len(),
+        1
+    );
+    assert_eq!(
+        pin_violations(&file(&[opencv.clone(), opencv, contrib])).len(),
+        1
+    );
+}
+
+#[test]
+fn bootstrap_pins_reference_commits() {
+    let cpp_ref = Path::new(env!("CARGO_MANIFEST_DIR")).join("cpp_ref");
+    // The packaged crate excludes cpp_ref/; there is nothing to check there. A checkout always
+    // has cpp_ref/, so a missing libraries.json in it is a failure.
+    if !cpp_ref.is_dir() {
+        return;
     }
+    let path = cpp_ref.join("libraries.json");
+    let json =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let v = pin_violations(&json);
+    assert!(
+        v.is_empty(),
+        "{} does not pin OpenCV {REFERENCE} (see cpp_ref/README.md):\n{}",
+        path.display(),
+        v.join("\n")
+    );
 }
 
 #[test]
