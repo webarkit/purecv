@@ -59,6 +59,11 @@ python3 cpp_ref/bootstrap.py --bootstrap-file cpp_ref/libraries.json
 `-n opencv` limits the run to one library. The first run clones the full history of both
 repositories (several hundred MB).
 
+Upstream's fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots` are
+not supported: a run that passes any of them exits with code 2 while the options are parsed,
+before anything is written. Upstream's fallback replaces a checkout it cannot sync, a dirty one
+included, with a snapshot archive, without `--clean`, and so deletes untracked files.
+
 The output ends with one line per library, and the exit code is 0 only when every line is OK:
 
 ```text
@@ -215,7 +220,7 @@ byte-identical to that blob; the purecv patches follow, each hunk tagged `# pure
 | P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. It never deletes or chmods through a symlink or junction, and `--clean` on a link fails. |
 | P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; the state cache is never trusted for git entries. |
 | P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a `git` source (archive, hg, svn and source-less entries are rejected) with a 40-hex `commit`, a safe `branch`; `predicate` and `postprocess` are rejected. |
-| P6 | Bad options and unknown `-n` names exit 2; Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
+| P6 | Bad options and unknown `-n` names exit 2. The upstream fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots` are rejected with exit code 2 before any write; their code paths stay but are unreachable. Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
 
 P1 to P4 are generic and can be offered upstream.
 

@@ -728,16 +728,10 @@ def printOptions():
         print("                          to extract tar archives")
         print("  --use-unzip             Use 'unzip' command instead of Python standard library")
         print("                          to extract zip archives")
-        print("  --repo-snapshots        Create a snapshot archive of a repository when its")
-        print("                          state changes, e.g. on a fallback location")
-        print("  --fallback-url          Fallback URL that points to an existing and already")
-        print("                          bootstrapped `external` repository that may be used to")
-        print("                          retrieve otherwise unobtainable archives or")
-        print("                          repositories. The --repo-snapshots option must be")
-        print("                          active on the fallback server. Allowed URL schemes are")
-        print("                          file://, ssh://, http://, https://, ftp://.")
-        print("  --force-fallback        Force using the fallback URL instead of the original")
-        print("                          sources")
+        # purecv: P6 -- the upstream fallback options are rejected (see main)
+        print("  --repo-snapshots, --fallback-url, --force-fallback")
+        print("                          Not supported in purecv's vendored copy: rejected")
+        print("                          with exit code 2 before anything is written")
         print("  --debug-output          Enables extra debugging output")
         print("  --break-on-first-error  Terminate script once the first error is encountered")
         print("  --version               Print the script version")
@@ -821,6 +815,17 @@ def main(argv):
     if args: # purecv: P6
         printOptions()
         warning("ERROR: unexpected argument(s): " + " ".join(args))
+        return 2
+    # purecv: P6 -- upstream's fallback options are rejected here, before any write. With
+    # --fallback-url (or --force-fallback), a git library that fails, a dirty checkout for
+    # example, goes to downloadAndExtractFile, which deletes src/<name> without --clean.
+    # --repo-snapshots only feeds such a fallback server. getopt expands abbreviations to
+    # these full names. Their upstream code paths below stay, unreachable.
+    unsupported = [opt for opt, _arg in opts if opt in ("--fallback-url", "--force-fallback", "--repo-snapshots")]
+    if unsupported:
+        for opt in dict.fromkeys(unsupported):
+            warning("ERROR: " + opt + " is not supported in purecv's vendored bootstrap.py: each library comes"
+                    " only from its pinned git url, and a dirty checkout is refused, never replaced.")
         return 2
 
     opt_names = []

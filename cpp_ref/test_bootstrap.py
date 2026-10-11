@@ -501,6 +501,46 @@ class BootstrapSandboxTest(unittest.TestCase):
                 # Exactly 2: a crash later in the run (rc 1) must not pass for a usage error.
                 self.assertEqual(result.returncode, 2, _output(result))
 
+    def test_fallback_options_are_rejected(self) -> None:
+        # Upstream's fallback sends a git library that fails (a dirty checkout, say) to
+        # downloadAndExtractFile, which deletes cpp_ref/src/<name> without --clean. All three
+        # fallback options must be refused while the options are parsed, before any write.
+        options = {
+            "--fallback-url": ("--fallback-url", "http://127.0.0.1:1"),
+            "--force-fallback": ("--force-fallback",),
+            "--repo-snapshots": ("--repo-snapshots",),
+        }
+        for option, args in options.items():
+            with self.subTest(option=option):
+                self.make_sandbox()
+                self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+                untracked = os.path.join(self.managed, "precious.txt")
+                data = b"untracked and irreplaceable\n"
+                self.write(untracked, data)
+                archives = os.path.join(self.cpp_ref, "archives")
+                state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+                before = self.repo_snapshot(self.managed)
+                layout = sorted(os.listdir(self.cpp_ref))
+                self.assertNotIn("snapshots", layout)
+                self.assertEqual(os.listdir(archives), [])
+                cache = self.read(state_cache)
+
+                result = self.run_bootstrap(*args, *FROM_CPP_REF, cwd=self.cpp_ref)
+
+                self.assertEqual(self.repo_snapshot(self.managed), before, _output(result))
+                self.assertEqual(self.read(untracked), data)
+                self.assertEqual(self.head(self.managed), self.c1)
+                # Nothing written: no snapshots/ dir, nothing in archives/, the same state cache.
+                self.assertEqual(sorted(os.listdir(self.cpp_ref)), layout, _output(result))
+                self.assertEqual(os.listdir(archives), [], _output(result))
+                self.assertEqual(self.read(state_cache), cache, _output(result))
+                self.assertEqual(result.returncode, 2, _output(result))
+                self.assertIn(
+                    f"ERROR: {option} is not supported in purecv's vendored bootstrap.py",
+                    result.stdout,
+                    _output(result),
+                )
+
 
 class BootstrapModuleTest(unittest.TestCase):
     def test_tls_verification_is_not_disabled(self) -> None:
