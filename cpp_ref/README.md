@@ -80,8 +80,13 @@ A checkout is "its own" only when `cpp_ref/src/<name>` is a real directory (not 
 that real path, its `.git` is a real directory, and git reports them as the toplevel and the
 git directory.
 
+`cpp_ref/src` itself must be a real directory too, and so must `cpp_ref/archives` and
+`cpp_ref/snapshots` if they exist. If one of them is a symlink or junction, the run refuses
+before writing anything (exit code 2), with or without `--clean`. Remove the link by hand.
+
 "Clean" includes ignored files: a build inside `src/opencv` makes it dirty. `--clean` deletes
-the checkout (and everything in it) and clones it again; use it only on purpose. It never
+the checkout (and everything in it) and clones it again; use it only on purpose, and name the
+library (`--clean -n opencv`), since a bare `--clean` re-clones every library. It never
 deletes through a symlink or junction: it refuses, and you remove the link by hand.
 
 Check a checkout by hand:
@@ -97,6 +102,26 @@ Line numbers in `cpp_ref/src/opencv` equal those at the tag, so cite what you re
 **Never build or edit inside `cpp_ref/src/*`.** The next bootstrap refuses a dirty tree.
 Out-of-tree builds go to `cpp_ref/build/`, for example
 `cmake -S cpp_ref/src/opencv -B cpp_ref/build/opencv`.
+
+### Seeding `src/opencv` from a local clone
+
+A maintainer who already has an OpenCV clone (such as the legacy `cpp_ref/opencv`) can seed
+the managed checkout from it instead of downloading the history again:
+
+```sh
+git clone --no-hardlinks cpp_ref/opencv cpp_ref/src/opencv
+git -C cpp_ref/src/opencv remote set-url origin https://github.com/opencv/opencv.git
+py -3 cpp_ref/bootstrap.py --bootstrap-file cpp_ref/libraries.json   # python3 on Linux/macOS
+```
+
+1. `--no-hardlinks` is required. A plain local clone hard-links the object files, so both
+   repositories would share them, and a later `--clean`, which makes read-only files writable
+   before deleting them, would change files that `cpp_ref/opencv` still uses. Only the
+   history is copied: builds and other untracked files stay where they are.
+2. `set-url` points `origin` at GitHub, so later fetches never go to the local clone.
+3. The first run finds the checkout `drifted`. When the local clone already has the pinned
+   commit (any 4.x clone made after the 4.10.0 release does), the run checks it out detached
+   without fetching. It then clones `opencv_contrib` from the network as usual.
 
 ## Measurement environments
 
@@ -185,11 +210,11 @@ byte-identical to that blob; the purecv patches follow, each hunk tagged `# pure
 
 | # | Change |
 |---|---|
-| P1 | Without `-b`, the base directory is the bootstrap file's directory, so checkouts land in `cpp_ref/src/` from any cwd. `--base-dir` takes its value. A base directory containing `Cargo.toml` is refused. |
+| P1 | Without `-b`, the base directory is the bootstrap file's directory, so checkouts land in `cpp_ref/src/` from any cwd. `--base-dir` takes its value. A base directory containing `Cargo.toml` is refused, and so is a linked `src/`, `archives/` or `snapshots/` (before any write). |
 | P2 | TLS certificate verification is no longer disabled. |
 | P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. It never deletes or chmods through a symlink or junction, and `--clean` on a link fails. |
 | P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; the state cache is never trusted for git entries. |
-| P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a 40-hex `commit` for git entries, a safe `branch`; `predicate` and `postprocess` are rejected. |
+| P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a `git` source (archive, hg, svn and source-less entries are rejected) with a 40-hex `commit`, a safe `branch`; `predicate` and `postprocess` are rejected. |
 | P6 | Bad options and unknown `-n` names exit 2; Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
 
 P1 to P4 are generic and can be offered upstream.

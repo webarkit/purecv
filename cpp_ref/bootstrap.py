@@ -268,8 +268,9 @@ def _checkout_state(lib_dir: str, commit: str) -> str:
              repository), or not the toplevel of a working git repository
 
     "Its own git toplevel" means: lib_dir is a real directory whose real path is
-    SRC_DIR/<name>, lib_dir/.git is a real directory, and git reports lib_dir as the
-    toplevel and lib_dir/.git as the git directory.
+    <real path of BASE_DIR>/src/<name> (so a linked src/ does not count either),
+    lib_dir/.git is a real directory, and git reports lib_dir as the toplevel and
+    lib_dir/.git as the git directory.
     """
     if not os.path.lexists(lib_dir):
         return "missing"
@@ -278,7 +279,8 @@ def _checkout_state(lib_dir: str, commit: str) -> str:
     if not os.listdir(lib_dir):
         return "missing"
     name = os.path.basename(os.path.normpath(lib_dir))
-    expected = os.path.join(os.path.realpath(SRC_DIR), name)
+    # Anchored on BASE_DIR, not on SRC_DIR: realpath(SRC_DIR) would follow a linked src/.
+    expected = os.path.join(os.path.realpath(BASE_DIR), SRC_DIR_BASE, name)
     if os.path.normcase(os.path.realpath(lib_dir)) != os.path.normcase(expected):
         return "corrupt"
     git_dir = os.path.join(lib_dir, ".git")
@@ -344,8 +346,10 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
                 log("    " + path)
             if len(paths) > 20:
                 log("    ... and " + str(len(paths) - 20) + " more")
+            # Name the library: a bare --clean would delete and re-clone every library.
             raise RuntimeError("refusing to touch the dirty checkout " + lib_dir + "; move those files out, or rerun"
-                               " with --clean to delete the checkout (and them) and clone it again")
+                               " with --clean -n " + target_name + " to delete the checkout (and them) and clone it"
+                               " again")
         if state == "corrupt":
             if _is_link(lib_dir):
                 raise RuntimeError("refusing to touch " + lib_dir + ": it is a symlink or junction to a tree this"
@@ -353,9 +357,11 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
             if os.path.isfile(os.path.join(lib_dir, ".git")):
                 raise RuntimeError("refusing to touch " + lib_dir + ": its .git is a file, so it belongs to another"
                                    " repository (e.g. a `git worktree`); remove it from there with"
-                                   " `git worktree remove`, or rerun with --clean to delete this directory")
+                                   " `git worktree remove`, or rerun with --clean -n " + target_name + " to delete"
+                                   " this directory")
             raise RuntimeError("refusing to touch " + lib_dir + ": it is not a git checkout of its own (or its .git"
-                               " belongs to another repository); rerun with --clean to delete it and clone it again")
+                               " belongs to another repository); rerun with --clean -n " + target_name + " to delete"
+                               " it and clone it again")
 
         if state == "missing":
             if try_only_local_operations:
@@ -751,22 +757,24 @@ def _validate_library(library: dict) -> None:
     for key in ('predicate', 'postprocess'):
         if key in library:
             raise ValueError("library '" + name + "': the '" + key + "' key is not supported")
+    # Only pinned git sources: an archive, hg, svn or source-less entry has no commit to verify,
+    # and the source-less path deletes cpp_ref/src/<name> unconditionally.
     source = library.get('source', None)
-    if source is None:
-        return
     if not isinstance(source, dict):
-        raise ValueError("library '" + name + "': 'source' is not a JSON object")
+        raise ValueError("library '" + name + "': 'source' must be a JSON object")
+    if source.get('type', None) != "git":
+        raise ValueError("library '" + name + "': source type " + repr(source.get('type', None)) +
+                         " is not supported; use a pinned 'git' source")
     branch = source.get('branch', None)
     if branch is not None and (not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9._/-]+", branch)):
         raise ValueError("library '" + name + "': invalid branch " + repr(branch))
-    if source.get('type', None) == "git":
-        commit = source.get('commit', None)
-        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
-            raise ValueError("library '" + name + "': 'commit' must be a full 40-hex commit SHA, got " + repr(commit))
-        if source.get('revision', commit) != commit:
-            raise ValueError("library '" + name + "': 'revision' differs from 'commit'; pin with 'commit' only")
-        if not isinstance(source.get('url', None), str):
-            raise ValueError("library '" + name + "': 'url' must be a string")
+    commit = source.get('commit', None)
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("library '" + name + "': 'commit' must be a full 40-hex commit SHA, got " + repr(commit))
+    if source.get('revision', commit) != commit:
+        raise ValueError("library '" + name + "': 'revision' differs from 'commit'; pin with 'commit' only")
+    if not isinstance(source.get('url', None), str):
+        raise ValueError("library '" + name + "': 'url' must be a string")
 
 
 # purecv: P6 -- the last lines of every run: one verdict per selected library.
@@ -891,6 +899,22 @@ def main(argv):
     if os.path.exists(os.path.join(BASE_DIR, "Cargo.toml")):
         warning("ERROR: base directory " + BASE_DIR + " contains Cargo.toml, so its src/ holds Rust code;"
                 " refusing to put library checkouts there. Omit -b to use the bootstrap file's directory.")
+        return 2
+    # purecv: P1 -- src/, archives/ and snapshots/ must be real directories of BASE_DIR. Through
+    # a link, a run would move a foreign checkout and --clean would delete it: refuse before
+    # any write, with or without --clean.
+    for directory, directory_base in ((SRC_DIR, SRC_DIR_BASE), (ARCHIVE_DIR, ARCHIVE_DIR_BASE),
+                                      (SNAPSHOT_DIR, SNAPSHOT_DIR_BASE)):
+        expected = os.path.join(os.path.realpath(BASE_DIR), directory_base)
+        if _is_link(directory):
+            reason = "is a symlink or junction"
+        elif (os.path.lexists(directory)
+              and os.path.normcase(os.path.realpath(directory)) != os.path.normcase(expected)):
+            reason = "resolves to " + os.path.realpath(directory) + " instead of " + expected
+        else:
+            continue
+        warning("ERROR: " + directory + " " + reason + "; refusing to write through it. Make it a real directory"
+                " (remove a link by hand; --clean never does), then rerun.")
         return 2
 
     if platform.system() != "Windows":

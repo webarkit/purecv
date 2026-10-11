@@ -355,6 +355,8 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assert_refused(result)
         self.assertTrue(os.path.isfile(build))
         self.assertIn("out/", result.stdout + result.stderr)
+        # A bare --clean would also delete and re-clone every other library.
+        self.assertIn("--clean -n opencv", result.stdout, _output(result))
 
     def test_corrupt_nested_git_does_not_touch_outer_repo(self) -> None:
         for git_dir in (False, True):
@@ -392,6 +394,43 @@ class BootstrapSandboxTest(unittest.TestCase):
                     self.assertIn("symlink or junction", result.stdout, _output(result))
                 self.assertEqual(self.repo_snapshot(legacy), before)
                 self.assertTrue(os.path.samefile(self.managed, legacy), "the link itself must stay")
+
+    def test_linked_src_dir_is_refused_even_with_clean(self) -> None:
+        # cpp_ref/src itself is a junction (Windows) or symlink to a foreign directory that
+        # holds an `opencv` clone at C2. Two clones: a clean one, which a plain run would move
+        # to C1, and one with an untracked file, which --clean would delete. Neither mode may
+        # write anything, through the link or next to it.
+        for untracked in (False, True):
+            for extra in ((), ("--clean",)):
+                with self.subTest(untracked=untracked, args=extra):
+                    self.make_sandbox()
+                    foreign = os.path.join(self.root, "foreign")
+                    os.mkdir(foreign)
+                    clone = os.path.join(foreign, "opencv")
+                    self.git(foreign, "clone", "-q", self.upstream, clone)
+                    if untracked:
+                        self.write(os.path.join(clone, "precious.txt"), b"untracked and irreplaceable\n")
+                    src = os.path.join(self.cpp_ref, "src")
+                    self.make_dir_link(foreign, src)
+                    before = self.repo_snapshot(clone)
+                    self.assertEqual(self.head(clone), self.c2)
+                    self.assertEqual("precious.txt" in before["files"], untracked)
+
+                    result = self.run_bootstrap(*FROM_CPP_REF, *extra, cwd=self.cpp_ref)
+
+                    self.assertEqual(self.repo_snapshot(clone), before, _output(result))
+                    self.assertEqual(os.listdir(foreign), ["opencv"])
+                    self.assertTrue(os.path.samefile(src, foreign), "the link itself must stay")
+                    # Refused before any write: no archives/ dir, no state cache.
+                    self.assertEqual(
+                        sorted(os.listdir(self.cpp_ref)), ["bootstrap.py", "libraries.json", "src"]
+                    )
+                    self.assertEqual(result.returncode, 2, _output(result))
+                    self.assertIn(
+                        f"ERROR: {src} is a symlink or junction; refusing to write through it",
+                        result.stdout,
+                        _output(result),
+                    )
 
     def test_gitfile_checkout_is_refused(self) -> None:
         # cpp_ref/src/opencv is a `git worktree` of another repository: its .git is a file.
@@ -434,6 +473,10 @@ class BootstrapSandboxTest(unittest.TestCase):
             "dots-only name": lambda e: e.update(name="..."),
             "trailing-dot name": lambda e: e.update(name="opencv."),
             "hidden name": lambda e: e.update(name=".hidden"),
+            # Only pinned git sources: an archive, hg or source-less entry has nothing to verify.
+            "archive source": lambda e: e["source"].update(type="archive"),
+            "hg source": lambda e: e["source"].update(type="hg"),
+            "no source": lambda e: e.pop("source"),
             "predicate": lambda e: e.update(predicate="True"),
         }
         for label, corrupt in cases.items():
