@@ -166,11 +166,35 @@ def escapifyPath(path):
         return "\"" + path + "\""
     return path.replace("\\ ", " ")
 
+# purecv: P3, P4 -- a symlink, or a Windows junction (any name-surrogate reparse point).
+def _is_link(path: str) -> bool:
+    if os.path.islink(path):
+        return True
+    if hasattr(os.path, "isjunction") and os.path.isjunction(path): # Python 3.12+
+        return True
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if not getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    # Junctions and symlinks are name surrogates (they point elsewhere); cloud placeholders are not.
+    tag = getattr(st, "st_reparse_tag", None)
+    return tag is None or bool(tag & 0x20000000)
+
 # purecv: P3 -- shutil.rmtree that also deletes read-only files. Git for Windows writes its
-# object and pack files read-only, which made --clean die with WinError 5.
+# object and pack files read-only, which made --clean die with WinError 5. It never
+# deletes or chmods through a symlink or junction.
 def _rmtree(path: str) -> None:
+    if _is_link(path):
+        raise OSError("refusing to delete through the symlink or junction " + path +
+                      "; remove the link itself by hand")
+
     def make_writable_and_retry(func, failed_path, _exc):
-        os.chmod(failed_path, stat.S_IWRITE)
+        # rmtree reports a link it refuses to enter as a failed os.path.islink: keep refusing.
+        if func is os.path.islink or _is_link(failed_path):
+            raise OSError("refusing to delete through the symlink or junction " + failed_path)
+        os.chmod(failed_path, os.lstat(failed_path).st_mode | stat.S_IWRITE)
         func(failed_path)
 
     if sys.version_info >= (3, 12):
@@ -239,18 +263,33 @@ def _checkout_state(lib_dir: str, commit: str) -> str:
     ok       its own git toplevel, HEAD == commit, clean
     drifted  its own git toplevel, clean, HEAD != commit
     dirty    its own git toplevel, with modified, untracked or ignored files
-    corrupt  not empty, but not the toplevel of a working git repository
+    corrupt  anything else: a file, a symlink or junction, a checkout whose .git is not a
+             directory of its own (a gitfile, as in a `git worktree` of another
+             repository), or not the toplevel of a working git repository
+
+    "Its own git toplevel" means: lib_dir is a real directory whose real path is
+    SRC_DIR/<name>, lib_dir/.git is a real directory, and git reports lib_dir as the
+    toplevel and lib_dir/.git as the git directory.
     """
     if not os.path.lexists(lib_dir):
         return "missing"
-    if not os.path.isdir(lib_dir):
+    if _is_link(lib_dir) or not os.path.isdir(lib_dir):
         return "corrupt"
     if not os.listdir(lib_dir):
         return "missing"
+    name = os.path.basename(os.path.normpath(lib_dir))
+    expected = os.path.join(os.path.realpath(SRC_DIR), name)
+    if os.path.normcase(os.path.realpath(lib_dir)) != os.path.normcase(expected):
+        return "corrupt"
+    git_dir = os.path.join(lib_dir, ".git")
+    if _is_link(git_dir) or not os.path.isdir(git_dir):
+        return "corrupt"
     # git prints long, '/'-separated, symlink-resolved paths: compare files, never strings.
-    toplevel = _git(["rev-parse", "--show-toplevel"], cwd=lib_dir, check=False)
+    probe = _git(["rev-parse", "--show-toplevel", "--absolute-git-dir"], cwd=lib_dir, check=False)
+    reported = probe.stdout.splitlines() if probe.returncode == 0 else []
     try:
-        own = toplevel.returncode == 0 and os.path.samefile(toplevel.stdout.strip(), lib_dir)
+        own = (len(reported) == 2 and os.path.samefile(reported[0], lib_dir)
+               and os.path.samefile(reported[1], git_dir))
     except OSError:
         own = False
     if not own:
@@ -308,8 +347,15 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
             raise RuntimeError("refusing to touch the dirty checkout " + lib_dir + "; move those files out, or rerun"
                                " with --clean to delete the checkout (and them) and clone it again")
         if state == "corrupt":
-            raise RuntimeError("refusing to touch " + lib_dir + ": it is not empty, but it is not a git checkout of"
-                               " its own; rerun with --clean to delete it and clone it again")
+            if _is_link(lib_dir):
+                raise RuntimeError("refusing to touch " + lib_dir + ": it is a symlink or junction to a tree this"
+                                   " script does not own; remove the link itself by hand, then rerun")
+            if os.path.isfile(os.path.join(lib_dir, ".git")):
+                raise RuntimeError("refusing to touch " + lib_dir + ": its .git is a file, so it belongs to another"
+                                   " repository (e.g. a `git worktree`); remove it from there with"
+                                   " `git worktree remove`, or rerun with --clean to delete this directory")
+            raise RuntimeError("refusing to touch " + lib_dir + ": it is not a git checkout of its own (or its .git"
+                               " belongs to another repository); rerun with --clean to delete it and clone it again")
 
         if state == "missing":
             if try_only_local_operations:
@@ -698,8 +744,10 @@ def _validate_library(library: dict) -> None:
     if not isinstance(library, dict):
         raise ValueError("library entry is not a JSON object: " + repr(library))
     name = library.get('name', None)
-    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
-        raise ValueError("invalid library name " + repr(name) + "; use letters, digits, '_', '.' and '-'")
+    # No leading or trailing '.': Windows resolves "..." to the parent and "opencv." to "opencv".
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name) or name.endswith("."):
+        raise ValueError("invalid library name " + repr(name) + "; use letters, digits, '_', '.' and '-',"
+                         " starting with a letter, digit or '_' and not ending with '.'")
     for key in ('predicate', 'postprocess'):
         if key in library:
             raise ValueError("library '" + name + "': the '" + key + "' key is not supported")
@@ -740,7 +788,7 @@ def _verify(library: dict, failed: bool) -> bool:
         "missing": "missing: no checkout",
         "drifted": "drifted: HEAD is not " + commit,
         "dirty": "dirty: modified, untracked or ignored files",
-        "corrupt": "corrupt: not a git checkout of its own",
+        "corrupt": "corrupt: a link, a gitfile, or not a git checkout of its own",
     }
     log("verify " + name + " MISMATCH: " + reasons[state])
     return False
@@ -1001,9 +1049,15 @@ def main(argv):
         # create library directory, if necessary
         if opt_clean:
             log("Cleaning directory for " + name)
-            if os.path.exists(lib_dir):
+            # purecv: P3 -- --clean never deletes through a link: refuse loudly, touch nothing.
+            if _is_link(lib_dir):
+                warning("ERROR: " + lib_dir + " is a symlink or junction; --clean refuses to delete through it."
+                        " Remove the link itself by hand, then rerun.")
+                failed_libraries.append(name)
+                continue
+            if os.path.lexists(lib_dir): # purecv: P3
                 _rmtree(lib_dir) # purecv: P3
-        if not os.path.exists(lib_dir):
+        if not os.path.lexists(lib_dir): # purecv: P4 -- a dangling link is not "missing"
             os.makedirs(lib_dir)
 
         try:

@@ -74,10 +74,15 @@ What a run does with each checkout:
 | `ok` | at the pinned commit, clean | nothing |
 | `drifted` | clean, at another commit | fetch if the commit is not present, then `git checkout --detach <commit>` |
 | `dirty` | modified, untracked or ignored files | **refuses** and lists them |
-| `corrupt` | not empty, but not a git checkout of its own | **refuses** |
+| `corrupt` | not empty, but not a git checkout of its own: a symlink or junction, a checkout whose `.git` is a file (a `git worktree` of another repository), or a broken repository | **refuses** |
+
+A checkout is "its own" only when `cpp_ref/src/<name>` is a real directory (not a link) at
+that real path, its `.git` is a real directory, and git reports them as the toplevel and the
+git directory.
 
 "Clean" includes ignored files: a build inside `src/opencv` makes it dirty. `--clean` deletes
-the checkout (and everything in it) and clones it again; use it only on purpose.
+the checkout (and everything in it) and clones it again; use it only on purpose. It never
+deletes through a symlink or junction: it refuses, and you remove the link by hand.
 
 Check a checkout by hand:
 
@@ -182,9 +187,9 @@ byte-identical to that blob; the purecv patches follow, each hunk tagged `# pure
 |---|---|
 | P1 | Without `-b`, the base directory is the bootstrap file's directory, so checkouts land in `cpp_ref/src/` from any cwd. `--base-dir` takes its value. A base directory containing `Cargo.toml` is refused. |
 | P2 | TLS certificate verification is no longer disabled. |
-| P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. |
-| P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; the state cache is never trusted for git entries. |
-| P5 | Every entry is validated before any action: safe `name`, a 40-hex `commit` for git entries, a safe `branch`; `predicate` and `postprocess` are rejected. |
+| P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. It never deletes or chmods through a symlink or junction, and `--clean` on a link fails. |
+| P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; the state cache is never trusted for git entries. |
+| P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a 40-hex `commit` for git entries, a safe `branch`; `predicate` and `postprocess` are rejected. |
 | P6 | Bad options and unknown `-n` names exit 2; Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
 
 P1 to P4 are generic and can be offered upstream.

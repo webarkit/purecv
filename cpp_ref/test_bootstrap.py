@@ -71,7 +71,7 @@ def _force_rmtree(path: str) -> None:
     """Removes a sandbox, including the read-only object files Git for Windows writes."""
 
     def make_writable_and_retry(func, failed_path, _exc):
-        os.chmod(failed_path, stat.S_IWRITE)
+        os.chmod(failed_path, os.lstat(failed_path).st_mode | stat.S_IRWXU)
         func(failed_path)
 
     if sys.version_info >= (3, 12):
@@ -240,6 +240,46 @@ class BootstrapSandboxTest(unittest.TestCase):
             if filename in filenames
         ]
 
+    def make_legacy_clone(self) -> str:
+        """A clean clone of the upstream at C2 in cpp_ref/opencv, like the maintainer's own."""
+        legacy = os.path.join(self.cpp_ref, "opencv")
+        self.git(self.cpp_ref, "clone", "-q", self.upstream, legacy)
+        self.assertEqual(self.head(legacy), self.c2)
+        return legacy
+
+    @staticmethod
+    def make_dir_link(target: str, link: str) -> None:
+        """A directory junction on Windows (no privileges needed), a symlink elsewhere."""
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", link, target],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        else:
+            os.symlink(target, link, target_is_directory=True)
+
+    def repo_snapshot(self, repo: str) -> dict:
+        """Everything a refused run must leave alone in `repo`."""
+        files = {}
+        for dirpath, dirnames, filenames in os.walk(repo):
+            if ".git" in dirnames:
+                dirnames.remove(".git")
+            for filename in filenames:
+                path = os.path.join(dirpath, filename)
+                files[os.path.relpath(path, repo)] = self.read(path)
+        return {
+            "HEAD": self.head(repo),
+            "refs": self.git(repo, "for-each-ref"),
+            "worktrees": self.git(repo, "worktree", "list", "--porcelain"),
+            "status": self.git(repo, "status", "--porcelain", "--ignored"),
+            "mode": os.stat(repo).st_mode,
+            "files": files,
+        }
+
     # ---- tests -----------------------------------------------------------------------
 
     def test_run_from_repo_root_never_writes_into_rust_src(self) -> None:
@@ -334,6 +374,38 @@ class BootstrapSandboxTest(unittest.TestCase):
                 self.assertEqual(self.head(self.root), head)
                 self.assertEqual(self.read(lib_rs), b"// uncommitted edit\n")
                 self.assertTrue(os.path.isdir(os.path.join(self.managed, ".git", "objects")))
+                self.assertIn("verify opencv MISMATCH: corrupt", result.stdout, _output(result))
+
+    def test_linked_checkout_is_refused_even_with_clean(self) -> None:
+        # cpp_ref/src/opencv is a junction (Windows) or symlink to a foreign clean clone at C2.
+        legacy = self.make_legacy_clone()
+        self.make_dir_link(legacy, self.managed)
+        before = self.repo_snapshot(legacy)
+
+        for extra in ((), ("--clean",)):
+            with self.subTest(args=extra):
+                result = self.run_bootstrap(*FROM_CPP_REF, *extra, cwd=self.cpp_ref)
+
+                self.assert_refused(result)
+                self.assertIn("verify opencv MISMATCH: corrupt", result.stdout, _output(result))
+                if extra:
+                    self.assertIn("symlink or junction", result.stdout, _output(result))
+                self.assertEqual(self.repo_snapshot(legacy), before)
+                self.assertTrue(os.path.samefile(self.managed, legacy), "the link itself must stay")
+
+    def test_gitfile_checkout_is_refused(self) -> None:
+        # cpp_ref/src/opencv is a `git worktree` of another repository: its .git is a file.
+        legacy = self.make_legacy_clone()
+        os.makedirs(os.path.dirname(self.managed))
+        self.git(legacy, "worktree", "add", "-q", "--detach", self.managed, self.c2)
+        self.assertTrue(os.path.isfile(os.path.join(self.managed, ".git")))
+        before = self.repo_snapshot(legacy)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_refused(result)
+        self.assertIn("verify opencv MISMATCH: corrupt", result.stdout, _output(result))
+        self.assertEqual(self.repo_snapshot(legacy), before)
 
     def test_clean_recovers_with_readonly_pack_files(self) -> None:
         self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
@@ -358,6 +430,10 @@ class BootstrapSandboxTest(unittest.TestCase):
             ),
             "name escapes src": lambda e: e.update(name="../opencv"),
             "empty name": lambda e: e.update(name=""),
+            # Windows resolves "..." to the parent and "opencv." to "opencv".
+            "dots-only name": lambda e: e.update(name="..."),
+            "trailing-dot name": lambda e: e.update(name="opencv."),
+            "hidden name": lambda e: e.update(name=".hidden"),
             "predicate": lambda e: e.update(predicate="True"),
         }
         for label, corrupt in cases.items():
@@ -371,6 +447,7 @@ class BootstrapSandboxTest(unittest.TestCase):
                 result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
 
                 self.assert_refused(result)
+                self.assertIn("Invalid schema", result.stdout, _output(result))
                 self.assertEqual(self.find("pwned.txt"), [])
                 self.assertEqual(self.clones(), [])
 
