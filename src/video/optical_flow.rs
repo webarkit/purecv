@@ -340,7 +340,7 @@ pub(crate) fn reflect101_index(i: i32, n: i32) -> usize {
     if n <= 1 {
         return 0;
     }
-    let period = (2 * n - 2) as i64;
+    let period = 2 * i64::from(n) - 2;
     let mut v = (i as i64).rem_euclid(period);
     // v in [0, 2n-3]: fold the second half back.
     if v >= n as i64 {
@@ -352,15 +352,16 @@ pub(crate) fn reflect101_index(i: i32, n: i32) -> usize {
 /// Image-level sampling with `BORDER_REFLECT_101`, matching a winSize-padded
 /// image pyramid level.
 #[inline]
-fn bilinear_interp_reflect(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
+pub(super) fn bilinear_interp_reflect(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
     let (rows, cols) = (img.rows as i32, img.cols as i32);
     let fx = x.floor();
     let fy = y.floor();
     let (ax, ay) = (x - fx, y - fy);
+    // Float-to-integer casts saturate; keep the neighboring tap safe too.
     let x0 = reflect101_index(fx as i32, cols);
-    let x1 = reflect101_index(fx as i32 + 1, cols);
+    let x1 = reflect101_index((fx as i32).saturating_add(1), cols);
     let y0 = reflect101_index(fy as i32, rows);
-    let y1 = reflect101_index(fy as i32 + 1, rows);
+    let y1 = reflect101_index((fy as i32).saturating_add(1), rows);
     let stride = img.cols;
     let v00 = img.data[y0 * stride + x0];
     let v01 = img.data[y0 * stride + x1];
@@ -373,7 +374,7 @@ fn bilinear_interp_reflect(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
 /// level bounds), matching a winSize-padded derivative level. Overhang taps
 /// contribute nothing instead of phantom edge gradients.
 #[inline]
-fn bilinear_interp_const_zero(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
+pub(super) fn bilinear_interp_const_zero(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
     let (rows, cols) = (img.rows as i32, img.cols as i32);
     let fx = x.floor();
     let fy = y.floor();
@@ -386,10 +387,11 @@ fn bilinear_interp_const_zero(img: &Matrix<f32>, x: f32, y: f32) -> f32 {
         }
     };
     let (x0, y0) = (fx as i32, fy as i32);
+    let (x1, y1) = (x0.saturating_add(1), y0.saturating_add(1));
     let v00 = tap(x0, y0);
-    let v01 = tap(x0 + 1, y0);
-    let v10 = tap(x0, y0 + 1);
-    let v11 = tap(x0 + 1, y0 + 1);
+    let v01 = tap(x1, y0);
+    let v10 = tap(x0, y1);
+    let v11 = tap(x1, y1);
     v00 * (1.0 - ax) * (1.0 - ay) + v01 * ax * (1.0 - ay) + v10 * (1.0 - ax) * ay + v11 * ax * ay
 }
 
@@ -431,6 +433,24 @@ fn lk_single_level(
     min_eigen_threshold: f64,
     is_finest: bool,
 ) -> (f32, f32, f64, bool) {
+    // Check the template before accumulating H or gathering SIMD samples,
+    // matching OpenCV's iprevPt gate. NaN comparisons alone do not reject a
+    // coordinate, so explicitly reject non-finite points and initial flow.
+    let tx = (px - win.half_w).floor();
+    let ty = (py - win.half_h).floor();
+    if !px.is_finite()
+        || !py.is_finite()
+        || !init_u.is_finite()
+        || !init_v.is_finite()
+        || tx < -(win.width as f32)
+        || tx >= prev.cols as f32
+        || ty < -(win.height as f32)
+        || ty >= prev.rows as f32
+    {
+        // Skip refinement at coarse levels; only lose the point at level zero.
+        return (init_u, init_v, 1.0, !is_finest);
+    }
+
     // -------------------------------------------------------------------
     // Build H = Σ [[Ix², Ix·Iy],[Ix·Iy, Iy²]] over the tracking window.
     //
@@ -541,19 +561,6 @@ fn lk_single_level(
         max_y: next.rows as f64,
         is_finest,
     };
-    // Template window top-left check, mirroring OpenCV's `iprevPt =
-    // floor(prevPt - halfWin)` gate: a template that starts off-image skips
-    // this level without grinding 30 Newton iterations on reflected samples
-    // (lost only at the finest level).
-    let tx = (px - win.half_w).floor();
-    let ty = (py - win.half_h).floor();
-    if tx < -(win.width as f32)
-        || tx >= next.cols as f32
-        || ty < -(win.height as f32)
-        || ty >= next.rows as f32
-    {
-        return (init_u, init_v, 1.0, !is_finest);
-    }
 
     #[cfg(feature = "simd")]
     {
@@ -699,7 +706,13 @@ pub(crate) fn lk_iterate(
             // right/bottom and wrongly admits them on the left/top.
             let nx = (b.px + u - b.half_w).floor();
             let ny = (b.py + v - b.half_h).floor();
-            if nx < b.min_x || nx >= b.max_x || ny < b.min_y || ny >= b.max_y {
+            if !nx.is_finite()
+                || !ny.is_finite()
+                || nx < b.min_x
+                || nx >= b.max_x
+                || ny < b.min_y
+                || ny >= b.max_y
+            {
                 tracked = !b.is_finest;
                 break;
             }
@@ -780,8 +793,11 @@ fn compute_tracking_error(
 /// * `next_img`            — Next single-channel 8-bit grayscale frame.  Must
 ///   be the same size as `prev_img`.
 /// * `prev_pts`            — Feature points to track, in `prev_img` coordinates.
+///   Non-finite coordinates and template windows outside the padded image
+///   bounds are marked lost (`status = 0`).
 /// * `initial_next_pts`    — Optional initial guess for `nextPts`.  Passed
 ///   together with [`OPTFLOW_USE_INITIAL_FLOW`]; ignored otherwise.
+///   Non-finite initial estimates are marked lost.
 /// * `win_size`            — Size of the search window at each pyramid level;
 ///   both sides must be at least 3. As in OpenCV, the window holds exactly
 ///   `width x height` samples centred on the point, at offsets

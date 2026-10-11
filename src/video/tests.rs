@@ -40,9 +40,9 @@ mod video_tests {
     use crate::core::Matrix;
     use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
-        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, lk_iterate, reflect101_index,
-        LkBounds, FLT_SCALE, LK_DET_EPSILON, OPTFLOW_LK_GET_MIN_EIGENVALS,
-        OPTFLOW_USE_INITIAL_FLOW,
+        bilinear_interp_const_zero, bilinear_interp_reflect, build_optical_flow_pyramid,
+        calc_optical_flow_pyramid_lk, lk_iterate, reflect101_index, LkBounds, FLT_SCALE,
+        LK_DET_EPSILON, OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 
     // ------------------------------------------------------------------
@@ -1339,6 +1339,144 @@ mod video_tests {
                 errs.len(),
                 pts.len()
             );
+        }
+    }
+
+    /// Extreme caller coordinates must be marked lost before any window samples
+    /// are read, including the SIMD path that gathers intensities eagerly.
+    #[test]
+    fn test_lk_extreme_template_coordinates_are_lost() {
+        let image = quadratic_bowl();
+        let mut points = vec![Point2f::new(16.0, 16.0)];
+        for coordinate in [
+            3e9,
+            -3e9,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            points.push(Point2f::new(coordinate, 16.0));
+            points.push(Point2f::new(16.0, coordinate));
+        }
+        for max_level in [0, 2] {
+            for flags in [0, OPTFLOW_LK_GET_MIN_EIGENVALS] {
+                let (out, status, errors) = calc_optical_flow_pyramid_lk(
+                    &image,
+                    &image,
+                    &points,
+                    None,
+                    Size2i::new(5, 5),
+                    max_level,
+                    TermCriteria::new(TermType::Count, 4, 0.0),
+                    flags,
+                    1e-4,
+                )
+                .unwrap();
+                assert_eq!(status[0], 1);
+                assert_eq!(out[0], points[0]);
+                assert!(status[1..].iter().all(|&s| s == 0));
+                assert!(errors[1..].iter().all(|&e| e == f32::MAX));
+            }
+        }
+    }
+
+    /// An invalid initial estimate must not reach sampling or report success.
+    #[test]
+    fn test_lk_extreme_initial_flow_coordinates_are_lost() {
+        let image = quadratic_bowl();
+        let mut guesses = vec![Point2f::new(16.0, 16.0)];
+        for coordinate in [
+            3e9,
+            -3e9,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            guesses.push(Point2f::new(coordinate, 16.0));
+            guesses.push(Point2f::new(16.0, coordinate));
+        }
+        let points = vec![Point2f::new(16.0, 16.0); guesses.len()];
+        for max_level in [0, 2] {
+            for error_flag in [0, OPTFLOW_LK_GET_MIN_EIGENVALS] {
+                let (out, status, errors) = calc_optical_flow_pyramid_lk(
+                    &image,
+                    &image,
+                    &points,
+                    Some(&guesses),
+                    Size2i::new(5, 5),
+                    max_level,
+                    TermCriteria::new(TermType::Count, 4, 0.0),
+                    OPTFLOW_USE_INITIAL_FLOW | error_flag,
+                    1e-4,
+                )
+                .unwrap();
+                assert_eq!(status[0], 1);
+                assert_eq!(out, points);
+                assert!(status[1..].iter().all(|&s| s == 0));
+                assert!(errors[1..].iter().all(|&e| e == f32::MAX));
+            }
+        }
+    }
+
+    /// Keep the samplers overflow-safe independently of the caller's bounds gate.
+    #[test]
+    fn test_lk_extreme_sampler_coordinates_do_not_overflow() {
+        let image = Matrix::from_vec(2, 2, 1, vec![10.0, 20.0, 30.0, 40.0]);
+        for coordinate in [3e9, -3e9, f32::MAX, f32::MIN] {
+            for (x, y) in [(coordinate, 0.5), (0.5, coordinate)] {
+                assert_eq!(bilinear_interp_const_zero(&image, x, y), 0.0);
+                let reflected = bilinear_interp_reflect(&image, x, y);
+                assert!((10.0..=40.0).contains(&reflected));
+            }
+        }
+        // The reflection period itself must be computed in widened arithmetic.
+        assert_eq!(reflect101_index(i32::MAX, i32::MAX), i32::MAX as usize - 2);
+        assert_eq!(
+            reflect101_index(i32::MAX - 1, i32::MAX),
+            i32::MAX as usize - 1
+        );
+    }
+
+    /// Non-finite estimates must not enter the mismatch sampling callback.
+    #[test]
+    fn test_lk_extreme_search_estimates_skip_sampling() {
+        for coordinate in [3e9, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            for (u, v) in [(coordinate, 0.0), (0.0, coordinate)] {
+                for is_finest in [false, true] {
+                    let mut sampled = false;
+                    let (_, _, tracked) = lk_iterate(
+                        1.0,
+                        0.0,
+                        1.0,
+                        1.0,
+                        u,
+                        v,
+                        2,
+                        0.0,
+                        Some(LkBounds {
+                            px: 16.0,
+                            py: 16.0,
+                            half_w: 2.0,
+                            half_h: 2.0,
+                            min_x: -5.0,
+                            max_x: 32.0,
+                            min_y: -5.0,
+                            max_y: 32.0,
+                            is_finest,
+                        }),
+                        |_, _| {
+                            sampled = true;
+                            (0.0, 0.0)
+                        },
+                    );
+                    assert!(!sampled);
+                    assert_eq!(tracked, !is_finest);
+                }
+            }
         }
     }
 }
