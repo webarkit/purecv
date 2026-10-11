@@ -15,8 +15,17 @@ Thumbs.db
 # Antigravity
 .antigravity/logs/
 
-# C code
-cpp_ref/opencv
+# OpenCV reference sources and measurement tools: only these files are tracked (see cpp_ref/README.md, #165)
+cpp_ref/*
+!cpp_ref/bootstrap.py
+!cpp_ref/test_bootstrap.py
+!cpp_ref/libraries.json
+!cpp_ref/requirements.txt
+!cpp_ref/package.json
+!cpp_ref/package-lock.json
+!cpp_ref/README.md
+!cpp_ref/AGENTS.md
+!cpp_ref/CLAUDE.md
 
 # AI
 .agents/*
