@@ -18,10 +18,18 @@
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# purecv: P6 -- provenance. Vendored from https://github.com/webarkit/WebARKitLib-rs,
+# benchmarks/bootstrap.py at commit a099326efc2edcf5b1ebcdb69e6d3d9adfe4bbfc
+# (blob b22bd1d8d1fdb1095a37f3b9ea9c374e68f6b03a), patched for purecv, see `# purecv:` markers.
+# Patches P1-P6 are listed in cpp_ref/README.md.
 
+from __future__ import annotations # purecv: P4 (type hints of the purecv helpers)
 from __future__ import print_function
 import platform
 import os
+import re # purecv: P5
+import stat # purecv: P3
 import sys
 import io
 import shutil
@@ -36,7 +44,7 @@ import urllib
 import ssl
 import ctypes
 
-ssl._create_default_https_context = ssl._create_unverified_context
+# purecv: P2 -- the global `ssl._create_unverified_context` override is removed; TLS is verified.
 
 try:
     from urllib.request import urlparse
@@ -68,7 +76,7 @@ except:
     print("> pip install pyliblzma")
     lzma_available = False
 
-BOOTSTRAP_VERSION = "1.0.7 (2025)"
+BOOTSTRAP_VERSION = "1.0.7 (2025) purecv-1" # purecv: P6
 
 class Colors:
     GREEN = '\033[92m'
@@ -158,6 +166,103 @@ def escapifyPath(path):
         return "\"" + path + "\""
     return path.replace("\\ ", " ")
 
+# purecv: P3 -- shutil.rmtree that also deletes read-only files. Git for Windows writes its
+# object and pack files read-only, which made --clean die with WinError 5.
+def _rmtree(path: str) -> None:
+    def make_writable_and_retry(func, failed_path, _exc):
+        os.chmod(failed_path, stat.S_IWRITE)
+        func(failed_path)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=make_writable_and_retry)
+    else:
+        shutil.rmtree(path, onerror=make_writable_and_retry)
+
+# purecv: P4 -- git without a shell, isolated from any enclosing repository.
+_GIT_EXECUTABLE = None
+_GIT_LOCAL_ENV_VARS = []
+
+def _git(args: list[str], cwd: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    """Runs git with an argument list and no shell, so paths with spaces and hostile values
+    stay single arguments.
+
+    The environment drops every variable `git rev-parse --local-env-vars` names (GIT_DIR,
+    GIT_WORK_TREE, GIT_INDEX_FILE, ...) and sets GIT_CEILING_DIRECTORIES to SRC_DIR, so a
+    command for one library can never act on an enclosing repository such as purecv.
+
+    Probes (check=False) run quietly and return their output; failing is their answer.
+    Actions (check=True) show git's own progress and errors, and raise on failure.
+    """
+    global _GIT_EXECUTABLE, _GIT_LOCAL_ENV_VARS
+    if _GIT_EXECUTABLE is None:
+        git = shutil.which("git")
+        if git is None:
+            raise RuntimeError("git not found on PATH")
+        _GIT_LOCAL_ENV_VARS = subprocess.run([git, "rev-parse", "--local-env-vars"], stdout=subprocess.PIPE,
+                                             universal_newlines=True, check=True).stdout.split()
+        _GIT_EXECUTABLE = git
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCAL_ENV_VARS}
+    env["GIT_CEILING_DIRECTORIES"] = os.path.realpath(SRC_DIR)
+    command = [_GIT_EXECUTABLE]
+    if platform.system() == "Windows":
+        command += ["-c", "core.longpaths=true"]
+    command += args
+    dlog(">>> " + " ".join(command))
+    sys.stdout.flush() # keep our log lines ahead of git's own output
+    capture = None if check else subprocess.PIPE
+    return subprocess.run(command, cwd=cwd, env=env, shell=False, check=check, stdout=capture, stderr=capture,
+                          encoding="utf-8", errors="replace")
+
+def _status_paths(lib_dir: str) -> list[str] | None:
+    """Modified, untracked and ignored paths in lib_dir, or None when git cannot tell."""
+    result = _git(["status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=normal"], cwd=lib_dir,
+                  check=False)
+    if result.returncode != 0:
+        return None
+    fields = result.stdout.split("\0")
+    paths = []
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if not entry:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC": # a rename or copy: its source path follows as a field of its own
+            i += 1
+    return paths
+
+def _checkout_state(lib_dir: str, commit: str) -> str:
+    """Classifies lib_dir against its pinned commit:
+
+    missing  absent, or an empty directory
+    ok       its own git toplevel, HEAD == commit, clean
+    drifted  its own git toplevel, clean, HEAD != commit
+    dirty    its own git toplevel, with modified, untracked or ignored files
+    corrupt  not empty, but not the toplevel of a working git repository
+    """
+    if not os.path.lexists(lib_dir):
+        return "missing"
+    if not os.path.isdir(lib_dir):
+        return "corrupt"
+    if not os.listdir(lib_dir):
+        return "missing"
+    # git prints long, '/'-separated, symlink-resolved paths: compare files, never strings.
+    toplevel = _git(["rev-parse", "--show-toplevel"], cwd=lib_dir, check=False)
+    try:
+        own = toplevel.returncode == 0 and os.path.samefile(toplevel.stdout.strip(), lib_dir)
+    except OSError:
+        own = False
+    if not own:
+        return "corrupt"
+    paths = _status_paths(lib_dir)
+    if paths is None:
+        return "corrupt"
+    if paths:
+        return "dirty"
+    head = _git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=lib_dir, check=False)
+    return "ok" if head.returncode == 0 and head.stdout.strip() == commit else "drifted"
+
 def cloneRepository(type, url, target_name, revision, try_only_local_operations = False, recursive = True, branch = None):
     target_dir = escapifyPath(os.path.join(SRC_DIR, target_name))
     target_dir_exists = os.path.exists(target_dir)
@@ -171,7 +276,7 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
                 raise RuntimeError("Repository for " + target_name + " not found; cannot execute local operations only")
             if target_dir_exists:
                 dlog("Removing directory " + target_dir + " before cloning")
-                shutil.rmtree(target_dir)
+                _rmtree(target_dir) # purecv: P3
             dieIfNonZero(executeCommand(TOOL_COMMAND_HG + " clone " + url + " " + target_dir))
         elif not try_only_local_operations:
             log("Repository " + target_dir + " already exists; pulling instead of cloning")
@@ -183,36 +288,55 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
         dieIfNonZero(executeCommand(TOOL_COMMAND_HG + " purge -R " + target_dir + " --config extensions.purge="))
 
     elif type == "git":
-        repo_exists = os.path.exists(os.path.join(target_dir, ".git"))
+        # purecv: P4 -- act on the checkout's state (see _checkout_state) instead of running
+        # `reset --hard` and `clean -fxd` on whatever happens to be there.
+        lib_dir = os.path.join(SRC_DIR, target_name)
+        if revision is None:
+            raise ValueError("git library '" + target_name + "' has no pinned commit")
+        state = _checkout_state(lib_dir, revision)
 
-        if not repo_exists:
+        if state == "ok":
+            log(target_name + " is at " + revision + " and clean; nothing to do")
+            return
+        if state == "dirty":
+            paths = _status_paths(lib_dir) or []
+            warning("ERROR: " + lib_dir + " has modified, untracked or ignored files:")
+            for path in paths[:20]:
+                log("    " + path)
+            if len(paths) > 20:
+                log("    ... and " + str(len(paths) - 20) + " more")
+            raise RuntimeError("refusing to touch the dirty checkout " + lib_dir + "; move those files out, or rerun"
+                               " with --clean to delete the checkout (and them) and clone it again")
+        if state == "corrupt":
+            raise RuntimeError("refusing to touch " + lib_dir + ": it is not empty, but it is not a git checkout of"
+                               " its own; rerun with --clean to delete it and clone it again")
+
+        if state == "missing":
             if try_only_local_operations:
                 raise RuntimeError("Repository for " + target_name + " not found; cannot execute local operations only")
-            if target_dir_exists:
-                dlog("Removing directory " + target_dir + " before cloning")
-                shutil.rmtree(target_dir)
-            branch_arg = " --branch " + branch if branch else ""
+            clone = ["clone"]
             if recursive:
-                dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " clone --recursive" + branch_arg + " " + url + " " + target_dir))
-            else:
-                dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " clone" + branch_arg + " " + url + " " + target_dir))
-        elif not try_only_local_operations:
-            log("Repository " + target_dir + " already exists; fetching instead of cloning")
-            if recursive:
-                dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " -C " + target_dir + " fetch --recurse-submodules"))
-            else:
-                dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " -C " + target_dir + " fetch"))
+                clone.append("--recursive")
+            if branch:
+                clone += ["--branch", branch]
+            _git(clone + ["--", url, lib_dir])
+        else:
+            log(target_name + " is " + state + "; moving it to " + revision)
 
-        if revision is None:
-            revision = "HEAD"
-        dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " -C " + target_dir + " reset --hard " + revision))
-        dieIfNonZero(executeCommand(TOOL_COMMAND_GIT + " -C " + target_dir + " clean -fxd"))
+        # `cat-file -e` exits 128 when the commit is absent, so it is a probe (check=False).
+        if _git(["cat-file", "-e", revision + "^{commit}"], cwd=lib_dir, check=False).returncode != 0:
+            if try_only_local_operations:
+                raise RuntimeError("Commit " + revision + " of " + target_name + " not found; cannot execute local operations only")
+            _git(["fetch", "--", url, branch or revision], cwd=lib_dir)
+        _git(["checkout", "--detach", revision], cwd=lib_dir)
+        if recursive:
+            _git(["submodule", "update", "--init", "--recursive"], cwd=lib_dir)
 
     elif type == "svn":
         if not try_only_local_operations: # we can't do much without a server connection when dealing with SVN
             if target_dir_exists:
                 dlog("Removing directory " + target_dir + " before cloning")
-                shutil.rmtree(target_dir)
+                _rmtree(target_dir) # purecv: P3
             dieIfNonZero(executeCommand(TOOL_COMMAND_SVN + " checkout " + url + " " + target_dir))
 
         if revision is not None and revision != "":
@@ -244,7 +368,7 @@ def decompressTarXZFile(src_filename, dst_filename):
 
 def extractFile(filename, target_dir):
     if os.path.exists(target_dir):
-        shutil.rmtree(target_dir)
+        _rmtree(target_dir) # purecv: P3
 
     log("Extracting file " + filename)
     stem, extension = os.path.splitext(os.path.basename(filename))
@@ -568,20 +692,80 @@ def printOptions():
         print("--------------------------------------------------------------------------------")
 
 
+# purecv: P5 -- every entry is checked before anything is downloaded, cloned or deleted.
+def _validate_library(library: dict) -> None:
+    """Raises ValueError unless `library` is a safe, pinned entry."""
+    if not isinstance(library, dict):
+        raise ValueError("library entry is not a JSON object: " + repr(library))
+    name = library.get('name', None)
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
+        raise ValueError("invalid library name " + repr(name) + "; use letters, digits, '_', '.' and '-'")
+    for key in ('predicate', 'postprocess'):
+        if key in library:
+            raise ValueError("library '" + name + "': the '" + key + "' key is not supported")
+    source = library.get('source', None)
+    if source is None:
+        return
+    if not isinstance(source, dict):
+        raise ValueError("library '" + name + "': 'source' is not a JSON object")
+    branch = source.get('branch', None)
+    if branch is not None and (not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9._/-]+", branch)):
+        raise ValueError("library '" + name + "': invalid branch " + repr(branch))
+    if source.get('type', None) == "git":
+        commit = source.get('commit', None)
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise ValueError("library '" + name + "': 'commit' must be a full 40-hex commit SHA, got " + repr(commit))
+        if source.get('revision', commit) != commit:
+            raise ValueError("library '" + name + "': 'revision' differs from 'commit'; pin with 'commit' only")
+        if not isinstance(source.get('url', None), str):
+            raise ValueError("library '" + name + "': 'url' must be a string")
+
+
+# purecv: P6 -- the last lines of every run: one verdict per selected library.
+def _verify(library: dict, failed: bool) -> bool:
+    name = library['name']
+    source = library.get('source', None) or {}
+    if source.get('type', None) != "git":
+        if failed:
+            log("verify " + name + " MISMATCH: bootstrap failed")
+            return False
+        log("verify " + name + " OK (" + str(source.get('type', None)) + " source, no commit to check)")
+        return True
+    commit = source['commit']
+    state = _checkout_state(os.path.join(SRC_DIR, name), commit)
+    if state == "ok":
+        log("verify " + name + " @ " + commit + " OK")
+        return True
+    reasons = {
+        "missing": "missing: no checkout",
+        "drifted": "drifted: HEAD is not " + commit,
+        "dirty": "dirty: modified, untracked or ignored files",
+        "corrupt": "corrupt: not a git checkout of its own",
+    }
+    log("verify " + name + " MISMATCH: " + reasons[state])
+    return False
+
+
 def main(argv):
     global BASE_DIR, SRC_DIR, ARCHIVE_DIR, DEBUG_OUTPUT, FALLBACK_URL, USE_TAR, USE_UNZIP
+    global SNAPSHOT_DIR # purecv: P1
     global TOOL_COMMAND_PYTHON, TOOL_COMMAND_GIT, TOOL_COMMAND_HG, TOOL_COMMAND_SVN, TOOL_COMMAND_PATCH, TOOL_COMMAND_TAR, TOOL_COMMAND_UNZIP
 
     try:
         opts, args = getopt.getopt(
             argv,
             "ln:N:cCb:h",
-            ["list", "name=", "name-file=", "skip=", "clean", "clean-all", "base-dir", "bootstrap-file=",
+            ["list", "name=", "name-file=", "skip=", "clean", "clean-all", "base-dir=", "bootstrap-file=", # purecv: P1 (base-dir takes a value)
              "local-bootstrap-file=", "use-tar", "use-unzip", "repo-snapshots", "fallback-url=",
              "force-fallback", "debug-output", "help", "break-on-first-error", "version"])
-    except getopt.GetoptError:
+    except getopt.GetoptError as e: # purecv: P6 -- a usage error is not a success
         printOptions()
-        return 0
+        warning("ERROR: " + str(e))
+        return 2
+    if args: # purecv: P6
+        printOptions()
+        warning("ERROR: unexpected argument(s): " + " ".join(args))
+        return 2
 
     opt_names = []
     name_files = []
@@ -648,6 +832,18 @@ def main(argv):
             break_on_first_error = True
         if opt in ("--debug-output",):
             DEBUG_OUTPUT = True
+
+    # purecv: P1 -- without -b, every directory lives next to the bootstrap file, whatever
+    # the cwd, so a run from the purecv root cannot clone into the crate's src/.
+    if not base_dir_path:
+        BASE_DIR = os.path.dirname(os.path.abspath(bootstrap_filename))
+    SRC_DIR = os.path.join(BASE_DIR, SRC_DIR_BASE)
+    ARCHIVE_DIR = os.path.join(BASE_DIR, ARCHIVE_DIR_BASE)
+    SNAPSHOT_DIR = os.path.join(BASE_DIR, SNAPSHOT_DIR_BASE)
+    if os.path.exists(os.path.join(BASE_DIR, "Cargo.toml")):
+        warning("ERROR: base directory " + BASE_DIR + " contains Cargo.toml, so its src/ holds Rust code;"
+                " refusing to put library checkouts there. Omit -b to use the bootstrap file's directory.")
+        return 2
 
     if platform.system() != "Windows":
         # Unfortunately some IDEs do not have a proper PATH environment variable set,
@@ -725,6 +921,20 @@ def main(argv):
             if not found_canonical_library:
                 data.append(local_library)
 
+    # purecv: P5 -- validate every entry before any action
+    for library in data:
+        try:
+            _validate_library(library)
+        except ValueError as e:
+            warning("ERROR: Invalid schema: " + str(e))
+            return -1
+
+    # purecv: P6 -- an unknown -n name is a usage error, not an empty success
+    unknown_names = [n for n in opt_names if n not in [library['name'] for library in data]]
+    if unknown_names:
+        warning("ERROR: unknown library name(s): " + ", ".join(unknown_names))
+        return 2
+
     if list_libraries:
         listLibraries(data)
         return 0
@@ -744,6 +954,7 @@ def main(argv):
         os.mkdir(ARCHIVE_DIR)
 
     failed_libraries = []
+    selected_libraries = [] # purecv: P6
 
     for library in data:
         name = library.get('name', None)
@@ -763,6 +974,8 @@ def main(argv):
                 log("Predicate is not True for '" + name + "'; skipping library")
                 continue
 
+        selected_libraries.append(library) # purecv: P6
+
         lib_dir = os.path.join(SRC_DIR, name)
         lib_dir = lib_dir.replace(os.path.sep, '/')
 
@@ -771,7 +984,7 @@ def main(argv):
 
         # compare against cached state
         cached_state_ok = False
-        if not opt_clean:
+        if not opt_clean and (source or {}).get('type', None) != "git": # purecv: P4 -- never trust the cache for git
             for slibrary in sdata:
                 sname = slibrary.get('name', None)
                 if sname is not None and sname == name and slibrary == library and os.path.exists(lib_dir):
@@ -789,7 +1002,7 @@ def main(argv):
         if opt_clean:
             log("Cleaning directory for " + name)
             if os.path.exists(lib_dir):
-                shutil.rmtree(lib_dir)
+                _rmtree(lib_dir) # purecv: P3
         if not os.path.exists(lib_dir):
             os.makedirs(lib_dir)
 
@@ -826,7 +1039,7 @@ def main(argv):
                             downloadFile(fallback_src_url, ARCHIVE_DIR, name, sha1, force_download = True)
                             shutil.copyfile( os.path.join(ARCHIVE_DIR, filename_rel), os.path.join(lib_dir, filename_rel) )
                         else:
-                            shutil.rmtree(lib_dir)
+                            _rmtree(lib_dir) # purecv: P3
                             raise
                 elif src_type == "archive":
                     sha1 = source.get('sha1', None)
@@ -871,7 +1084,7 @@ def main(argv):
                             dlog("Snapshot will be saved as " + archive_filename)
                             createArchiveFromDirectory(repo_dir, archive_filename, revision is None)
 
-                    except:
+                    except Exception: # purecv: P6 -- Ctrl-C must not trigger the fallback
                         if FALLBACK_URL:
                             if not force_fallback:
                                 log("WARNING: Cloning of repository " + src_url + " failed; trying fallback")
@@ -890,7 +1103,7 @@ def main(argv):
                             raise
             else:
                 # set up clean directory for potential patch application
-                shutil.rmtree(lib_dir)
+                _rmtree(lib_dir) # purecv: P3
                 os.mkdir(lib_dir)
 
             # post-processing
@@ -923,8 +1136,8 @@ def main(argv):
                 exit(-1)
             traceback.print_exc()
             failed_libraries.append(name)
-        except:
-            warning("ERROR: Failure to bootstrap library '" + name + "' (reason: " + str(sys.exc_info()[0]) + ")")
+        except Exception as e: # purecv: P6 -- catch errors, not Ctrl-C, so Ctrl-C aborts the run
+            warning("ERROR: Failure to bootstrap library '" + name + "' (" + type(e).__name__ + ": " + str(e) + ")")
             if break_on_first_error:
                 exit(-1)
             traceback.print_exc()
@@ -935,14 +1148,15 @@ def main(argv):
         warning("FAILURE to bootstrap the following libraries:")
         warning(', '.join(failed_libraries))
         warning("***************************************")
-        return -1
+    else: # purecv: P6 -- no early return: the verify pass below always runs
+        log("Finished")
 
-    log("Finished")
+        # touch the state cache file
+        os.utime(state_filename, None);
 
-    # touch the state cache file
-    os.utime(state_filename, None);
-
-    return 0
+    # purecv: P6 -- verify every selected library; these lines end the output
+    verified = [_verify(library, library['name'] in failed_libraries) for library in selected_libraries]
+    return 0 if all(verified) and not failed_libraries else 1
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

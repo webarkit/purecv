@@ -1,0 +1,22 @@
+[
+  {
+    "name": "opencv",
+    "source": {
+      "type": "git",
+      "url": "https://github.com/opencv/opencv.git",
+      "branch": "4.10.0",
+      "commit": "71d3237a093b60a27601c20e9ee6c3e52154e8b1",
+      "recursive": false
+    }
+  },
+  {
+    "name": "opencv_contrib",
+    "source": {
+      "type": "git",
+      "url": "https://github.com/opencv/opencv_contrib.git",
+      "branch": "4.10.0",
+      "commit": "1ed3dd2c53888e3289afdb22ec4e9ebbff3dba87",
+      "recursive": false
+    }
+  }
+]

@@ -77,6 +77,26 @@ jobs:
     - name: Build no_std smoke-test consumer
       run: cargo build --manifest-path crates/no-std-smoke/Cargo.toml --target thumbv7em-none-eabihf
 
+  bootstrap-tests:
+    name: cpp_ref bootstrap tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python }}
+
+    - name: Run bootstrap.py tests
+      run: python -m unittest discover -s cpp_ref -p "test_*.py" -v
+
   wasm-build:
     name: WASM Dual Build
     runs-on: ubuntu-latest
