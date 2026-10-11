@@ -74,8 +74,9 @@ jobs:
     # slow and its thread support is limited; the resulting coverage gap on
     # src/core/arithm.rs (99, 248) is documented in .agents/MIRI_PLAN.md §5.
     # `--lib` skips doc-tests: two ORB examples in src/features2d/mod.rs alone
-    # cost 767s under interpretation while duplicating unit-test coverage. There
-    # is no tests/ directory, so --lib is the whole suite. Doc-tests remain fully
+    # cost 767s under interpretation while duplicating unit-test coverage.
+    # `--lib` also skips tests/ (opencv_reference_links.rs scans the filesystem,
+    # which Miri isolation rejects; it runs in ci.yml). Doc-tests remain fully
     # exercised by `cargo test` in ci.yml.
     - name: Run Miri
       run: cargo miri test -p purecv --lib --no-default-features --features ${{ matrix.features }}
