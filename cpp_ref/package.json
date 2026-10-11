@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "name": "purecv-opencv-ref",
+  "devDependencies": {
+    "@techstark/opencv-js": "4.10.0-release.1"
+  }
+}

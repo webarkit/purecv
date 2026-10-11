@@ -1,0 +1,9 @@
+# OpenCV 4.10.0 measurement environment for purecv parity work (#165); see cpp_ref/README.md.
+# Install into cpp_ref/.venv only (Python 3.11 or newer; numpy 2.4.6 requires it).
+#
+# Never also install opencv-python (or opencv-python-headless): every OpenCV wheel provides
+# the same cv2 module, and the last one installed silently replaces the others.
+# opencv-contrib-python 4.10.0.84 is built from opencv and opencv_contrib at exactly the
+# commits pinned in cpp_ref/libraries.json.
+opencv-contrib-python==4.10.0.84
+numpy==2.4.6

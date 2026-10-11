@@ -10,6 +10,8 @@ repository = "https://github.com/webarkit/purecv"
 readme = "README.md"
 keywords = ["computer-vision", "image-processing", "opencv", "wasm", "simd"]
 categories = ["computer-vision", "science", "wasm"]
+# OpenCV reference tooling and checkouts (#165); never part of the published crate.
+exclude = ["cpp_ref/"]
 
 [lib]
 path = "src/lib.rs"

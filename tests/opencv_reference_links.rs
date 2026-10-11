@@ -40,6 +40,12 @@ use std::path::{Path, PathBuf};
 /// The OpenCV release every reference in the source tree and the docs must name.
 const REFERENCE: &str = "4.10.0";
 
+/// The commit the `REFERENCE` tag of opencv/opencv peels to.
+const REFERENCE_COMMIT: &str = "71d3237a093b60a27601c20e9ee6c3e52154e8b1";
+
+/// The commit the `REFERENCE` tag of opencv/opencv_contrib peels to.
+const REFERENCE_CONTRIB_COMMIT: &str = "1ed3dd2c53888e3289afdb22ec4e9ebbff3dba87";
+
 /// Directories to scan, relative to `CARGO_MANIFEST_DIR`, with the file extension to read.
 const SCANNED: &[(&str, &str)] = &[
     ("src", "rs"),
@@ -239,6 +245,30 @@ fn scan_skips_missing_roots() {
 fn scan_counts_files_under_src() {
     let (files, _) = scan(Path::new(env!("CARGO_MANIFEST_DIR")), &[("src", "rs")]);
     assert!(files > 0, "guard scanned no files: wrong root?");
+}
+
+#[test]
+fn bootstrap_pins_reference_commits() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("cpp_ref")
+        .join("libraries.json");
+    let json = match fs::read_to_string(&path) {
+        Ok(json) => json,
+        // The packaged crate excludes cpp_ref/; there is nothing to check there.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => panic!("cannot read {}: {e}", path.display()),
+    };
+    for pin in [
+        format!("\"branch\": \"{REFERENCE}\""),
+        format!("\"commit\": \"{REFERENCE_COMMIT}\""),
+        format!("\"commit\": \"{REFERENCE_CONTRIB_COMMIT}\""),
+    ] {
+        assert!(
+            json.contains(&pin),
+            "{} must contain `{pin}` (see cpp_ref/README.md)",
+            path.display()
+        );
+    }
 }
 
 #[test]
