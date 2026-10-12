@@ -59,10 +59,16 @@ python3 cpp_ref/bootstrap.py --bootstrap-file cpp_ref/libraries.json
 `-n opencv` limits the run to one library. The first run clones the full history of both
 repositories (several hundred MB).
 
-Upstream's fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots` are
-not supported: a run that passes any of them exits with code 2 while the options are parsed,
-before anything is written. Upstream's fallback replaces a checkout it cannot sync, a dirty one
-included, with a snapshot archive, without `--clean`, and so deletes untracked files.
+Upstream's fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots`, and
+its archive options `--use-tar` and `--use-unzip`, are not supported: a run that passes any of
+them exits with code 2 while the options are parsed, before anything is written. Upstream's
+fallback replaces a checkout it cannot sync, a dirty one included, with a snapshot archive,
+without `--clean`, and so deletes untracked files. The archive options only choose how an
+archive is extracted, and every library here is a pinned git checkout, so nothing is ever
+extracted; they are refused rather than silently ignored.
+
+`--bootstrap-file` and `-b`/`--base-dir` work in either order: without `--bootstrap-file`,
+the bootstrap file defaults to `<base dir>/bootstrap.json`.
 
 The output ends with one line per library, and the exit code is 0 only when every line is OK:
 
@@ -78,7 +84,7 @@ What a run does with each checkout:
 | `missing` | absent or empty | `git clone --branch 4.10.0`, then `git checkout --detach <commit>` |
 | `ok` | at the pinned commit, clean | nothing |
 | `drifted` | clean, at another commit | fetch if the commit is not present, then `git checkout --detach <commit>` |
-| `dirty` | modified, untracked or ignored files | **refuses** and lists them |
+| `dirty` | modified, untracked or ignored files, or index flags or a sparse checkout that hide edits from `git status` | **refuses** and lists them |
 | `corrupt` | not empty, but not a git checkout of its own: a symlink or junction, a checkout whose `.git` is a file (a `git worktree` of another repository), or a broken repository | **refuses** |
 
 A checkout is "its own" only when `cpp_ref/src/<name>` is a real directory (not a link) at
@@ -88,6 +94,18 @@ git directory.
 `cpp_ref/src` itself must be a real directory too, and so must `cpp_ref/archives` and
 `cpp_ref/snapshots` if they exist. If one of them is a symlink or junction, the run refuses
 before writing anything (exit code 2), with or without `--clean`. Remove the link by hand.
+
+A clean `git status` proves nothing while git is told not to look. So a checkout is also
+`dirty` when an index entry is marked assume-unchanged or skip-worktree
+(`git update-index --assume-unchanged` / `--skip-worktree`, shown by `git ls-files -v` as a
+lowercase tag or `S`), or when sparse checkout is on (`core.sparseCheckout` is true, or
+`.git/info/sparse-checkout` exists). The refusal names the flag; rerun with
+`--clean -n <name>` to clone the library again.
+
+The state cache `cpp_ref/.libraries.json` must be a regular file. If it is a symlink or
+junction, the run refuses before reading it or writing anything (exit code 2); remove the link
+by hand, and the next run rebuilds the cache. The cache is written to a new file that then
+replaces it, so if the old cache was a hard link, the file it shared keeps its bytes.
 
 "Clean" includes ignored files: a build inside `src/opencv` makes it dirty. `--clean` deletes
 the checkout (and everything in it) and clones it again; use it only on purpose, and name the
@@ -210,17 +228,19 @@ All in one PR on the roadmap (#128):
 `bootstrap.py` is WebARKitLib-rs's `benchmarks/bootstrap.py` at commit
 `a099326efc2edcf5b1ebcdb69e6d3d9adfe4bbfc` (blob `b22bd1d8d1fdb1095a37f3b9ea9c374e68f6b03a`),
 itself corporateshark/bootstrapping 1.0.7 (MIT) plus a `commit` alias and a `branch` key.
-It keeps that CLI and the `libraries.json` schema. The first commit that adds it here is
-byte-identical to that blob; the purecv patches follow, each hunk tagged `# purecv: Pn`:
+It keeps that CLI and the `libraries.json` schema, but P5 and P6 narrow both: P5 accepts only
+pinned `git` entries (no `predicate` or `postprocess`), and P6 rejects the fallback and archive
+options. The first commit that adds it here is byte-identical to that blob; the purecv patches
+follow, each hunk tagged `# purecv: Pn`:
 
 | # | Change |
 |---|---|
 | P1 | Without `-b`, the base directory is the bootstrap file's directory, so checkouts land in `cpp_ref/src/` from any cwd. `--base-dir` takes its value. A base directory containing `Cargo.toml` is refused, and so is a linked `src/`, `archives/` or `snapshots/` (before any write). |
 | P2 | TLS certificate verification is no longer disabled. |
 | P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. It never deletes or chmods through a symlink or junction, and `--clean` on a link fails. |
-| P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; the state cache is never trusted for git entries. |
+| P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; assume-unchanged or skip-worktree entries and sparse checkouts make it `dirty`; the state cache is never trusted for git entries. |
 | P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a `git` source (archive, hg, svn and source-less entries are rejected) with a 40-hex `commit`, a safe `branch`; `predicate` and `postprocess` are rejected. |
-| P6 | Bad options and unknown `-n` names exit 2. The upstream fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots` are rejected with exit code 2 before any write; their code paths stay but are unreachable. Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
+| P6 | Bad options and unknown `-n` names exit 2. The upstream fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots`, and the archive options `--use-tar` and `--use-unzip`, are rejected with exit code 2 before any write; their code paths stay but are unreachable. A later `-b` no longer replaces an explicit `--bootstrap-file`. A linked state cache is refused with exit code 2 before it is read, and the cache is written atomically (new file, then rename). Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
 
 P1 to P4 are generic and can be offered upstream.
 

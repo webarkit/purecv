@@ -299,6 +299,24 @@ class BootstrapSandboxTest(unittest.TestCase):
                 self.assert_refused(result)
                 self.assertEqual(os.listdir(os.path.join(self.root, "src")), ["lib.rs"])
 
+    def test_bootstrap_file_and_base_dir_in_either_order(self) -> None:
+        # -b used to reset the bootstrap file to <base dir>/bootstrap.json, even after an
+        # explicit --bootstrap-file, so one order of the same two options cloned nothing.
+        for bootstrap_file_first in (True, False):
+            with self.subTest(bootstrap_file_first=bootstrap_file_first):
+                self.make_sandbox()
+                bootstrap_file = ("--bootstrap-file", os.path.join(self.cpp_ref, "libraries.json"))
+                base_dir = ("-b", self.cpp_ref)
+                args = bootstrap_file + base_dir if bootstrap_file_first else base_dir + bootstrap_file
+
+                result = self.run_bootstrap(*args, cwd=self.root)
+
+                self.assert_ok(result)
+                self.assertEqual(self.head(self.managed), self.c1)
+                self.assertIn(f"verify opencv @ {self.c1} OK", result.stdout, _output(result))
+                self.assertNotIn("bootstrap.json", result.stdout, _output(result))
+                self.assertEqual(os.listdir(os.path.join(self.root, "src")), ["lib.rs"])
+
     def test_existing_unmanaged_checkout_is_untouched(self) -> None:
         # The maintainer's hand-made checkout, with a build and IDE settings in it.
         legacy = os.path.join(self.cpp_ref, "opencv")
@@ -357,6 +375,72 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assertIn("out/", result.stdout + result.stderr)
         # A bare --clean would also delete and re-clone every other library.
         self.assertIn("--clean -n opencv", result.stdout, _output(result))
+
+    def assert_hidden_edits_refused(self, result: subprocess.CompletedProcess, flag: str, before: dict) -> None:
+        """A rerun over a checkout whose edits `git status` cannot see: refused, nothing touched."""
+        self.assertEqual(self.repo_snapshot(self.managed), before, _output(result))
+        self.assert_refused(result)
+        self.assertIn(flag, result.stdout, _output(result))
+        self.assertIn("--clean -n opencv", result.stdout, _output(result))
+        verify = [line for line in result.stdout.splitlines() if line.startswith("--- verify opencv")]
+        self.assertEqual(len(verify), 1, _output(result))
+        self.assertIn("MISMATCH: dirty", verify[0], _output(result))
+        self.assertIn(flag, verify[0], _output(result))
+
+    def test_assume_unchanged_edit_is_refused(self) -> None:
+        # assume-unchanged tells git not to look at the file, so `git status` hides the edit.
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        readme = os.path.join(self.managed, "README.txt")
+        self.git(self.managed, "update-index", "--assume-unchanged", "README.txt")
+        self.write(readme, b"edited reference code\n")
+        self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+        before = self.repo_snapshot(self.managed)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_hidden_edits_refused(result, "assume-unchanged", before)
+        self.assertEqual(self.read(readme), b"edited reference code\n")
+        self.assertEqual(self.git(self.managed, "ls-files", "-v", "README.txt"), "h README.txt")
+
+    def test_skip_worktree_edit_is_refused(self) -> None:
+        # skip-worktree makes git treat the file as matching the index, so `git status` hides it.
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        readme = os.path.join(self.managed, "README.txt")
+        self.git(self.managed, "update-index", "--skip-worktree", "README.txt")
+        self.write(readme, b"edited reference code\n")
+        self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+        before = self.repo_snapshot(self.managed)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_hidden_edits_refused(result, "skip-worktree", before)
+        self.assertEqual(self.read(readme), b"edited reference code\n")
+        self.assertEqual(self.git(self.managed, "ls-files", "-v", "README.txt"), "S README.txt")
+
+    def test_sparse_checkout_is_refused(self) -> None:
+        # A sparse checkout leaves files out of the worktree and out of `git status`. Either
+        # sign of one is refused: the config switch, or a sparse-checkout file left behind.
+        for switch in ("core.sparseCheckout", "info/sparse-checkout"):
+            with self.subTest(switch=switch):
+                self.make_sandbox()
+                self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+                sparse_file = os.path.join(self.managed, ".git", "info", "sparse-checkout")
+                if switch == "core.sparseCheckout":
+                    self.git(self.managed, "config", "core.sparseCheckout", "true")
+                else:
+                    self.write(sparse_file, "/*\n")
+                self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+                before = self.repo_snapshot(self.managed)
+
+                result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+                self.assert_hidden_edits_refused(result, "sparse checkout", before)
+                self.assertIn(switch, result.stdout, _output(result))
+                self.assertEqual(self.read(os.path.join(self.managed, "README.txt")), b"C1\n")
+                if switch == "core.sparseCheckout":
+                    self.assertEqual(self.git(self.managed, "config", "core.sparseCheckout"), "true")
+                else:
+                    self.assertEqual(self.read(sparse_file), b"/*\n")
 
     def test_corrupt_nested_git_does_not_touch_outer_repo(self) -> None:
         for git_dir in (False, True):
@@ -501,6 +585,38 @@ class BootstrapSandboxTest(unittest.TestCase):
                 # Exactly 2: a crash later in the run (rc 1) must not pass for a usage error.
                 self.assertEqual(result.returncode, 2, _output(result))
 
+    def assert_rejected_before_any_write(self, option: str, args: tuple[str, ...]) -> None:
+        """In a fresh sandbox with a dirty managed checkout, a run with `args` exits 2 naming
+        `option`, and writes nothing."""
+        self.make_sandbox()
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        untracked = os.path.join(self.managed, "precious.txt")
+        data = b"untracked and irreplaceable\n"
+        self.write(untracked, data)
+        archives = os.path.join(self.cpp_ref, "archives")
+        state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+        before = self.repo_snapshot(self.managed)
+        layout = sorted(os.listdir(self.cpp_ref))
+        self.assertNotIn("snapshots", layout)
+        self.assertEqual(os.listdir(archives), [])
+        cache = self.read(state_cache)
+
+        result = self.run_bootstrap(*args, *FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assertEqual(self.repo_snapshot(self.managed), before, _output(result))
+        self.assertEqual(self.read(untracked), data)
+        self.assertEqual(self.head(self.managed), self.c1)
+        # Nothing written: no snapshots/ dir, nothing in archives/, the same state cache.
+        self.assertEqual(sorted(os.listdir(self.cpp_ref)), layout, _output(result))
+        self.assertEqual(os.listdir(archives), [], _output(result))
+        self.assertEqual(self.read(state_cache), cache, _output(result))
+        self.assertEqual(result.returncode, 2, _output(result))
+        self.assertIn(
+            f"ERROR: {option} is not supported in purecv's vendored bootstrap.py",
+            result.stdout,
+            _output(result),
+        )
+
     def test_fallback_options_are_rejected(self) -> None:
         # Upstream's fallback sends a git library that fails (a dirty checkout, say) to
         # downloadAndExtractFile, which deletes cpp_ref/src/<name> without --clean. All three
@@ -512,34 +628,68 @@ class BootstrapSandboxTest(unittest.TestCase):
         }
         for option, args in options.items():
             with self.subTest(option=option):
-                self.make_sandbox()
-                self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
-                untracked = os.path.join(self.managed, "precious.txt")
-                data = b"untracked and irreplaceable\n"
-                self.write(untracked, data)
-                archives = os.path.join(self.cpp_ref, "archives")
-                state_cache = os.path.join(self.cpp_ref, ".libraries.json")
-                before = self.repo_snapshot(self.managed)
-                layout = sorted(os.listdir(self.cpp_ref))
-                self.assertNotIn("snapshots", layout)
-                self.assertEqual(os.listdir(archives), [])
-                cache = self.read(state_cache)
+                self.assert_rejected_before_any_write(option, args)
 
-                result = self.run_bootstrap(*args, *FROM_CPP_REF, cwd=self.cpp_ref)
+    def test_archive_options_are_rejected(self) -> None:
+        # Only pinned git sources pass validation, so no archive is ever extracted and
+        # --use-tar and --use-unzip would be silently ignored: refuse them instead.
+        for option in ("--use-tar", "--use-unzip"):
+            with self.subTest(option=option):
+                self.assert_rejected_before_any_write(option, (option,))
 
-                self.assertEqual(self.repo_snapshot(self.managed), before, _output(result))
-                self.assertEqual(self.read(untracked), data)
-                self.assertEqual(self.head(self.managed), self.c1)
-                # Nothing written: no snapshots/ dir, nothing in archives/, the same state cache.
-                self.assertEqual(sorted(os.listdir(self.cpp_ref)), layout, _output(result))
-                self.assertEqual(os.listdir(archives), [], _output(result))
-                self.assertEqual(self.read(state_cache), cache, _output(result))
-                self.assertEqual(result.returncode, 2, _output(result))
-                self.assertIn(
-                    f"ERROR: {option} is not supported in purecv's vendored bootstrap.py",
-                    result.stdout,
-                    _output(result),
-                )
+        result = self.run_bootstrap("--help", cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        lines = result.stdout.splitlines()
+        for option in ("--use-tar", "--use-unzip"):
+            with self.subTest(help=option):
+                listed = [i for i, line in enumerate(lines) if option in line]
+                self.assertEqual(len(listed), 1, result.stdout)
+                self.assertIn("Not supported", " ".join(lines[listed[0] : listed[0] + 2]), result.stdout)
+
+    def test_linked_state_cache_is_refused(self) -> None:
+        # cpp_ref/.libraries.json is a symlink to an unrelated JSON array: reading it as state
+        # and writing the cache back would overwrite that file.
+        external = os.path.join(self.root, "external.json")
+        data = b'[{"name": "unrelated", "keep": "these bytes"}]\n'
+        self.write(external, data)
+        state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+        try:
+            os.symlink(external, state_cache)
+        except (OSError, NotImplementedError) as e:  # Windows without the symlink privilege
+            self.skipTest(f"cannot create a symlink here: {e}")
+        layout = sorted(os.listdir(self.cpp_ref))
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assertEqual(self.read(external), data, _output(result))
+        self.assertTrue(os.path.islink(state_cache), "the link itself must stay")
+        # Refused before any write: no src/, no archives/.
+        self.assertEqual(sorted(os.listdir(self.cpp_ref)), layout, _output(result))
+        self.assertEqual(result.returncode, 2, _output(result))
+        self.assertIn(f"ERROR: {state_cache} is a symlink or junction", result.stdout, _output(result))
+
+    def test_hard_linked_state_cache_is_never_written_through(self) -> None:
+        # A hard link cannot be told apart from a plain file, so the cache is written to a new
+        # file that replaces the old name: the other name keeps its bytes.
+        external = os.path.join(self.root, "external.json")
+        data = b'[{"name": "unrelated", "keep": "these bytes"}]\n'
+        self.write(external, data)
+        state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+        os.link(external, state_cache)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assertIn(f"verify opencv @ {self.c1} OK", result.stdout, _output(result))
+        self.assertEqual(self.read(external), data)
+        self.assertFalse(os.path.samefile(external, state_cache))
+        self.assertIn(self.entry(), json.loads(self.read(state_cache)))
+        # No temporary file left behind.
+        self.assertEqual(
+            sorted(os.listdir(self.cpp_ref)),
+            [".libraries.json", "archives", "bootstrap.py", "libraries.json", "src"],
+        )
 
 
 class BootstrapModuleTest(unittest.TestCase):

@@ -34,6 +34,7 @@ import sys
 import io
 import shutil
 import subprocess
+import tempfile # purecv: P6
 import zipfile
 import tarfile
 import hashlib
@@ -256,13 +257,56 @@ def _status_paths(lib_dir: str) -> list[str] | None:
             i += 1
     return paths
 
+# purecv: P4 -- `git status` cannot see an edit to an index entry marked assume-unchanged (git
+# never looks at the file) or skip-worktree (git treats the file as matching the index), nor a
+# file a sparse checkout leaves out. A clean status proves nothing while any of them is set.
+def _hidden_edit_flags(lib_dir: str) -> list[tuple[str, str]] | None:
+    """(flag, detail) pairs for everything in lib_dir that can hide an edit from `git status`,
+    or None when git cannot tell.
+
+    Call it only on a checkout of its own (see _checkout_state): its git directory is then
+    lib_dir/.git, where the sparse-checkout file is looked for.
+    """
+    flags = []
+    listed = _git(["ls-files", "-v", "-z"], cwd=lib_dir, check=False)
+    if listed.returncode != 0:
+        return None
+    for entry in listed.stdout.split("\0"):
+        if not entry:
+            continue
+        # "<tag> <path>": a lowercase tag marks assume-unchanged, S (s with it) skip-worktree.
+        tag, path = entry[0], entry[2:]
+        if tag.islower():
+            flags.append(("assume-unchanged", path))
+        if tag in ("S", "s"):
+            flags.append(("skip-worktree", path))
+    sparse = _git(["config", "--bool", "core.sparseCheckout"], cwd=lib_dir, check=False)
+    if sparse.returncode not in (0, 1): # 1: not set
+        return None
+    if sparse.returncode == 0 and sparse.stdout.strip() == "true":
+        flags.append(("sparse checkout", "core.sparseCheckout is true"))
+    if os.path.lexists(os.path.join(lib_dir, ".git", "info", "sparse-checkout")):
+        flags.append(("sparse checkout", ".git/info/sparse-checkout exists"))
+    return flags
+
+def _flag_names(flags: list[tuple[str, str]]) -> str: # purecv: P4
+    return ", ".join(dict.fromkeys(flag for flag, _detail in flags))
+
+def _log_first(lines: list[str], limit: int = 20) -> None: # purecv: P4
+    for line in lines[:limit]:
+        log("    " + line)
+    if len(lines) > limit:
+        log("    ... and " + str(len(lines) - limit) + " more")
+
 def _checkout_state(lib_dir: str, commit: str) -> str:
     """Classifies lib_dir against its pinned commit:
 
     missing  absent, or an empty directory
     ok       its own git toplevel, HEAD == commit, clean
     drifted  its own git toplevel, clean, HEAD != commit
-    dirty    its own git toplevel, with modified, untracked or ignored files
+    dirty    its own git toplevel, with modified, untracked or ignored files, or with
+             assume-unchanged or skip-worktree index entries or a sparse checkout, which
+             hide edits from `git status`
     corrupt  anything else: a file, a symlink or junction, a checkout whose .git is not a
              directory of its own (a gitfile, as in a `git worktree` of another
              repository), or not the toplevel of a working git repository
@@ -297,9 +341,10 @@ def _checkout_state(lib_dir: str, commit: str) -> str:
     if not own:
         return "corrupt"
     paths = _status_paths(lib_dir)
-    if paths is None:
+    hidden = _hidden_edit_flags(lib_dir) # purecv: P4 -- edits `git status` cannot see
+    if paths is None or hidden is None:
         return "corrupt"
-    if paths:
+    if paths or hidden:
         return "dirty"
     head = _git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=lib_dir, check=False)
     return "ok" if head.returncode == 0 and head.stdout.strip() == commit else "drifted"
@@ -341,12 +386,18 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
             return
         if state == "dirty":
             paths = _status_paths(lib_dir) or []
-            warning("ERROR: " + lib_dir + " has modified, untracked or ignored files:")
-            for path in paths[:20]:
-                log("    " + path)
-            if len(paths) > 20:
-                log("    ... and " + str(len(paths) - 20) + " more")
+            hidden = _hidden_edit_flags(lib_dir) or [] # purecv: P4
+            if paths:
+                warning("ERROR: " + lib_dir + " has modified, untracked or ignored files:")
+                _log_first(paths)
+            if hidden: # purecv: P4
+                warning("ERROR: " + lib_dir + " has index flags or a sparse checkout that hide edits from git status:")
+                _log_first([flag + ": " + detail for flag, detail in hidden])
             # Name the library: a bare --clean would delete and re-clone every library.
+            if not paths: # purecv: P4 -- only hidden edits: there is nothing to move out
+                raise RuntimeError("refusing to trust the checkout " + lib_dir + ": git status cannot see every"
+                                   " edit there (" + _flag_names(hidden) + "); rerun with --clean -n " +
+                                   target_name + " to delete the checkout and clone it again")
             raise RuntimeError("refusing to touch the dirty checkout " + lib_dir + "; move those files out, or rerun"
                                " with --clean -n " + target_name + " to delete the checkout (and them) and clone it"
                                " again")
@@ -686,8 +737,21 @@ def readJSONData(filename):
 
 
 def writeJSONData(data, filename):
-    with open(filename, 'w') as outfile:
-        json.dump(data, outfile)
+    # purecv: P6 -- write a new file next to the state cache, then os.replace() it. The rename
+    # swaps the directory entry, so the file behind a hard link (or a link planted after main
+    # checked) is never written, and a crash never leaves a truncated cache.
+    fd, temp_filename = tempfile.mkstemp(prefix=os.path.basename(filename) + ".", suffix=".tmp",
+                                         dir=os.path.dirname(os.path.abspath(filename)))
+    try:
+        with os.fdopen(fd, 'w') as outfile:
+            json.dump(data, outfile)
+        os.replace(temp_filename, filename)
+    except BaseException:
+        try:
+            os.remove(temp_filename)
+        except OSError:
+            pass
+        raise
 
 
 def listLibraries(data):
@@ -724,12 +788,8 @@ def printOptions():
         print("                          data (e.g. for a particular project). The data in this")
         print("                          file will have higher precedence than the data from")
         print("                          the canonical bootstrap file.")
-        print("  --use-tar               Use 'tar' command instead of Python standard library")
-        print("                          to extract tar archives")
-        print("  --use-unzip             Use 'unzip' command instead of Python standard library")
-        print("                          to extract zip archives")
-        # purecv: P6 -- the upstream fallback options are rejected (see main)
-        print("  --repo-snapshots, --fallback-url, --force-fallback")
+        # purecv: P6 -- the upstream fallback and archive options are rejected (see main)
+        print("  --use-tar, --use-unzip, --repo-snapshots, --fallback-url, --force-fallback")
         print("                          Not supported in purecv's vendored copy: rejected")
         print("                          with exit code 2 before anything is written")
         print("  --debug-output          Enables extra debugging output")
@@ -782,7 +842,8 @@ def _verify(library: dict, failed: bool) -> bool:
         log("verify " + name + " OK (" + str(source.get('type', None)) + " source, no commit to check)")
         return True
     commit = source['commit']
-    state = _checkout_state(os.path.join(SRC_DIR, name), commit)
+    lib_dir = os.path.join(SRC_DIR, name) # purecv: P4 -- reused below to name hidden edits
+    state = _checkout_state(lib_dir, commit)
     if state == "ok":
         log("verify " + name + " @ " + commit + " OK")
         return True
@@ -792,7 +853,13 @@ def _verify(library: dict, failed: bool) -> bool:
         "dirty": "dirty: modified, untracked or ignored files",
         "corrupt": "corrupt: a link, a gitfile, or not a git checkout of its own",
     }
-    log("verify " + name + " MISMATCH: " + reasons[state])
+    reason = reasons[state]
+    hidden = _hidden_edit_flags(lib_dir) if state == "dirty" else None # purecv: P4
+    if hidden:
+        reason = "dirty: git status cannot see every edit (" + _flag_names(hidden) + ")"
+        if _status_paths(lib_dir):
+            reason += ", and modified, untracked or ignored files"
+    log("verify " + name + " MISMATCH: " + reason)
     return False
 
 
@@ -816,16 +883,28 @@ def main(argv):
         printOptions()
         warning("ERROR: unexpected argument(s): " + " ".join(args))
         return 2
-    # purecv: P6 -- upstream's fallback options are rejected here, before any write. With
-    # --fallback-url (or --force-fallback), a git library that fails, a dirty checkout for
+    # purecv: P6 -- upstream's fallback and archive options are rejected here, before any write.
+    # With --fallback-url (or --force-fallback), a git library that fails, a dirty checkout for
     # example, goes to downloadAndExtractFile, which deletes src/<name> without --clean.
-    # --repo-snapshots only feeds such a fallback server. getopt expands abbreviations to
-    # these full names. Their upstream code paths below stay, unreachable.
-    unsupported = [opt for opt, _arg in opts if opt in ("--fallback-url", "--force-fallback", "--repo-snapshots")]
+    # --repo-snapshots only feeds such a fallback server. --use-tar and --use-unzip only choose
+    # how an archive is extracted, and P5 admits pinned git sources only, so they would be
+    # silently ignored. getopt expands abbreviations to these full names. Their upstream code
+    # paths below stay, unreachable.
+    fallback_reason = ("each library comes only from its pinned git url, and a dirty checkout is refused, never"
+                       " replaced.")
+    archive_reason = "each library comes only from its pinned git url, so no archive is ever extracted."
+    unsupported_options = {
+        "--fallback-url": fallback_reason,
+        "--force-fallback": fallback_reason,
+        "--repo-snapshots": fallback_reason,
+        "--use-tar": archive_reason,
+        "--use-unzip": archive_reason,
+    }
+    unsupported = [opt for opt, _arg in opts if opt in unsupported_options]
     if unsupported:
         for opt in dict.fromkeys(unsupported):
-            warning("ERROR: " + opt + " is not supported in purecv's vendored bootstrap.py: each library comes"
-                    " only from its pinned git url, and a dirty checkout is refused, never replaced.")
+            warning("ERROR: " + opt + " is not supported in purecv's vendored bootstrap.py: " +
+                    unsupported_options[opt])
         return 2
 
     opt_names = []
@@ -837,6 +916,7 @@ def main(argv):
 
     default_bootstrap_filename = "bootstrap.json"
     bootstrap_filename = os.path.abspath(os.path.join(BASE_DIR, default_bootstrap_filename))
+    bootstrap_file_given = False # purecv: P6
     local_bootstrap_filename = ""
     create_repo_snapshots = False
     force_fallback = False
@@ -869,10 +949,12 @@ def main(argv):
             BASE_DIR = base_dir_path
             SRC_DIR = os.path.join(BASE_DIR, SRC_DIR_BASE)
             ARCHIVE_DIR = os.path.join(BASE_DIR, ARCHIVE_DIR_BASE)
-            bootstrap_filename = os.path.join(BASE_DIR, default_bootstrap_filename)
+            # purecv: P6 -- no default bootstrap file here: it would replace an explicit
+            # --bootstrap-file given before -b. The default is derived after the loop.
             log("Using " + arg + " as base directory")
         if opt in ("--bootstrap-file",):
             bootstrap_filename = os.path.abspath(arg)
+            bootstrap_file_given = True # purecv: P6
             log("Using main bootstrap file " + bootstrap_filename)
         if opt in ("--local-bootstrap-file",):
             local_bootstrap_filename = os.path.abspath(arg)
@@ -893,6 +975,11 @@ def main(argv):
             break_on_first_error = True
         if opt in ("--debug-output",):
             DEBUG_OUTPUT = True
+
+    # purecv: P6 -- without --bootstrap-file, the default follows the final base directory,
+    # whatever the order of the options.
+    if not bootstrap_file_given:
+        bootstrap_filename = os.path.abspath(os.path.join(BASE_DIR, default_bootstrap_filename))
 
     # purecv: P1 -- without -b, every directory lives next to the bootstrap file, whatever
     # the cwd, so a run from the purecv root cannot clone into the crate's src/.
@@ -959,6 +1046,13 @@ def main(argv):
 
     dlog("bootstrap_filename = " + bootstrap_filename)
     dlog("state_filename     = " + state_filename)
+
+    # purecv: P6 -- through a symlink or junction, the state cache would read an unrelated file
+    # as state and then overwrite it. Refuse before reading it, and before any write.
+    if _is_link(state_filename):
+        warning("ERROR: " + state_filename + " is a symlink or junction; refusing to read or write the bootstrap"
+                " state cache through it. Remove the link by hand (the cache is rebuilt), then rerun.")
+        return 2
 
     # read canonical libraries data
     data = readJSONData(bootstrap_filename)
