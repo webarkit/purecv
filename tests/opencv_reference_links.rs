@@ -60,8 +60,14 @@ const VERSIONED_URLS: &[&str] = &[
     "docs.opencv.org/",
     "github.com/opencv/opencv/blob/",
     "github.com/opencv/opencv/tree/",
+    "github.com/opencv/opencv/raw/",
+    "github.com/opencv/opencv/blame/",
     "github.com/opencv/opencv_contrib/blob/",
     "github.com/opencv/opencv_contrib/tree/",
+    "github.com/opencv/opencv_contrib/raw/",
+    "github.com/opencv/opencv_contrib/blame/",
+    "raw.githubusercontent.com/opencv/opencv/",
+    "raw.githubusercontent.com/opencv/opencv_contrib/",
 ];
 
 /// Source-file suffixes that, followed by a digit, form a bare `file.cpp:NN` citation.
@@ -203,32 +209,233 @@ fn scan(root: &Path, dirs: &[(&str, &str)]) -> (usize, Vec<String>) {
     (files.len(), violations)
 }
 
-/// One message per pin missing from `json`, the text of `cpp_ref/libraries.json`. A library's
-/// entry runs from its `"name"` key to the next one, so each pin counts only in its own
-/// library's entry. Plain string slicing, no JSON parser: the file's format is fixed.
+/// A parsed JSON value. Objects keep every member in order, repeated keys included.
+#[derive(Debug)]
+enum Json {
+    Str(String),
+    Arr(Vec<Json>),
+    Obj(Vec<(String, Json)>),
+    /// A number, `true`, `false` or `null`; `pin_violations` never needs its text.
+    Other,
+}
+
+/// A small recursive-descent JSON parser, so the guard needs no crate dependency. Any JSON
+/// that Python's `json` module accepts parses to the same values, except that a `\u` escape
+/// naming a surrogate is an error. It does not reject every input that Python rejects.
+struct Parser<'a> {
+    text: &'a str,
+    at: usize,
+}
+
+impl Parser<'_> {
+    fn skip_ws(&mut self) {
+        let rest = &self.text[self.at..];
+        self.at += rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.text.as_bytes().get(self.at).copied()
+    }
+
+    fn expect(&mut self, b: u8) -> Result<(), String> {
+        self.skip_ws();
+        if self.peek() != Some(b) {
+            return Err(format!("expected `{}` at byte {}", char::from(b), self.at));
+        }
+        self.at += 1;
+        Ok(())
+    }
+
+    fn value(&mut self) -> Result<Json, String> {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'"') => self.string().map(Json::Str),
+            Some(b'[') => {
+                self.at += 1;
+                self.items(b']', Self::value).map(Json::Arr)
+            }
+            Some(b'{') => {
+                self.at += 1;
+                self.items(b'}', |p| {
+                    p.skip_ws();
+                    let key = p.string()?;
+                    p.expect(b':')?;
+                    Ok((key, p.value()?))
+                })
+                .map(Json::Obj)
+            }
+            Some(b) if b == b'-' || b.is_ascii_alphanumeric() => {
+                self.at += self.text[self.at..]
+                    .bytes()
+                    .take_while(|&b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+                    .count();
+                Ok(Json::Other)
+            }
+            _ => Err(format!("expected a value at byte {}", self.at)),
+        }
+    }
+
+    /// The comma-separated items after an opening bracket, through the closing `close`.
+    fn items<T>(
+        &mut self,
+        close: u8,
+        mut item: impl FnMut(&mut Self) -> Result<T, String>,
+    ) -> Result<Vec<T>, String> {
+        let mut out = Vec::new();
+        self.skip_ws();
+        if self.peek() == Some(close) {
+            self.at += 1;
+            return Ok(out);
+        }
+        loop {
+            out.push(item(self)?);
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => self.at += 1,
+                Some(b) if b == close => {
+                    self.at += 1;
+                    return Ok(out);
+                }
+                _ => {
+                    return Err(format!(
+                        "expected `,` or `{}` at byte {}",
+                        char::from(close),
+                        self.at
+                    ))
+                }
+            }
+        }
+    }
+
+    /// The string at the current `"`, with its escapes decoded.
+    fn string(&mut self) -> Result<String, String> {
+        if self.peek() != Some(b'"') {
+            return Err(format!("expected a string at byte {}", self.at));
+        }
+        self.at += 1;
+        let mut out = String::new();
+        let mut chars = self.text[self.at..].char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '"' => {
+                    self.at += i + 1;
+                    return Ok(out);
+                }
+                '\\' => {
+                    let (_, e) = chars.next().ok_or("unterminated escape")?;
+                    out.push(match e {
+                        '"' | '\\' | '/' => e,
+                        'b' => '\u{8}',
+                        'f' => '\u{c}',
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        'u' => {
+                            let hex: String = chars.by_ref().take(4).map(|(_, h)| h).collect();
+                            u32::from_str_radix(&hex, 16)
+                                .ok()
+                                .and_then(char::from_u32)
+                                .ok_or_else(|| format!("unsupported escape `\\u{hex}`"))?
+                        }
+                        _ => return Err(format!("invalid escape `\\{e}`")),
+                    });
+                }
+                _ => out.push(c),
+            }
+        }
+        Err("unterminated string".to_owned())
+    }
+}
+
+fn parse_json(text: &str) -> Result<Json, String> {
+    let mut parser = Parser { text, at: 0 };
+    let value = parser.value()?;
+    parser.skip_ws();
+    if parser.at != text.len() {
+        return Err(format!("unexpected data at byte {}", parser.at));
+    }
+    Ok(value)
+}
+
+/// The value of the one member of `object` named `key`, or how many members have that name.
+fn only<'a>(object: &'a [(String, Json)], key: &str) -> Result<&'a Json, usize> {
+    let found: Vec<&Json> = object
+        .iter()
+        .filter(|(k, _)| k == key)
+        .map(|(_, v)| v)
+        .collect();
+    match found.as_slice() {
+        [value] => Ok(value),
+        _ => Err(found.len()),
+    }
+}
+
+/// One message per pin that `json`, the text of `cpp_ref/libraries.json`, does not hold. Each
+/// library needs exactly one entry, with exactly one `name` and one `source` object, and in
+/// that object exactly one `branch` (`REFERENCE`) and one `commit` (the library's constant).
+/// Those are the fields the bootstrap reads; the same strings anywhere else do not count.
+/// Exactly one, because Python's `json` keeps the last of repeated keys.
 fn pin_violations(json: &str) -> Vec<String> {
+    let entries = match parse_json(json) {
+        Ok(Json::Arr(entries)) => entries,
+        Ok(_) => return vec!["expected a top-level array of library entries".to_owned()],
+        Err(e) => return vec![format!("not valid JSON: {e}")],
+    };
     let mut out = Vec::new();
     for (name, commit) in [
         ("opencv", REFERENCE_COMMIT),
         ("opencv_contrib", REFERENCE_CONTRIB_COMMIT),
     ] {
-        let key = format!("\"name\": \"{name}\"");
-        let starts: Vec<usize> = json.match_indices(&key).map(|(at, _)| at).collect();
-        let &[start] = starts.as_slice() else {
+        let named: Vec<&[(String, Json)]> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Json::Obj(members)
+                    if members
+                        .iter()
+                        .any(|(k, v)| k == "name" && matches!(v, Json::Str(s) if s == name)) =>
+                {
+                    Some(members.as_slice())
+                }
+                _ => None,
+            })
+            .collect();
+        let &[entry] = named.as_slice() else {
             out.push(format!(
-                "expected one `{key}` entry, found {}",
-                starts.len()
+                "expected one `\"name\": \"{name}\"` entry, found {}",
+                named.len()
             ));
             continue;
         };
-        let rest = &json[start + key.len()..];
-        let entry = &rest[..rest.find("\"name\": ").unwrap_or(rest.len())];
-        for pin in [
-            format!("\"branch\": \"{REFERENCE}\""),
-            format!("\"commit\": \"{commit}\""),
-        ] {
-            if !entry.contains(&pin) {
-                out.push(format!("the `{name}` entry must contain `{pin}`"));
+        if let Err(n) = only(entry, "name") {
+            out.push(format!(
+                "the `{name}` entry has {n} `name` keys, expected 1"
+            ));
+            continue;
+        }
+        let source = match only(entry, "source") {
+            Ok(Json::Obj(source)) => source,
+            Ok(other) => {
+                out.push(format!(
+                    "the `{name}` entry's `source` must be an object, found {other:?}"
+                ));
+                continue;
+            }
+            Err(n) => {
+                out.push(format!(
+                    "the `{name}` entry has {n} `source` keys, expected 1"
+                ));
+                continue;
+            }
+        };
+        for (key, pin) in [("branch", REFERENCE), ("commit", commit)] {
+            match only(source, key) {
+                Ok(Json::Str(value)) if value == pin => {}
+                Ok(other) => out.push(format!(
+                    "the `{name}` entry's `source.{key}` is {other:?}, expected \"{pin}\""
+                )),
+                Err(n) => out.push(format!(
+                    "the `{name}` entry's `source` has {n} `{key}` keys, expected 1"
+                )),
             }
         }
     }
@@ -255,6 +462,18 @@ fn line_violations_detects_drift() {
         ("see lkpyramid.cpp for details", 0),
         ("num-traits `src/cast.rs:288`", 0),
         ("docs.opencv.org/4.x/a and docs.opencv.org/master/b", 2),
+        ("https://github.com/opencv/opencv/raw/4.10.0/modules/core/src/matrix.cpp", 0),
+        ("https://github.com/opencv/opencv/raw/master/modules/core/src/matrix.cpp", 1),
+        ("https://github.com/opencv/opencv/blame/4.10.0/modules/video/src/lkpyramid.cpp#L115", 0),
+        ("https://github.com/opencv/opencv/blame/4.x/modules/video/src/lkpyramid.cpp#L115", 1),
+        ("https://github.com/opencv/opencv_contrib/raw/4.10.0/modules/xfeatures2d/src/sift.cpp", 0),
+        ("https://github.com/opencv/opencv_contrib/raw/master/modules/xfeatures2d/src/sift.cpp", 1),
+        ("https://github.com/opencv/opencv_contrib/blame/4.10.0/modules/xfeatures2d/src/sift.cpp", 0),
+        ("https://github.com/opencv/opencv_contrib/blame/4.x/modules/xfeatures2d/src/sift.cpp", 1),
+        ("https://raw.githubusercontent.com/opencv/opencv/4.10.0/modules/imgproc/src/color.cpp", 0),
+        ("https://raw.githubusercontent.com/opencv/opencv/4.x/modules/imgproc/src/color.cpp", 1),
+        ("https://raw.githubusercontent.com/opencv/opencv_contrib/4.10.0/modules/xfeatures2d/src/sift.cpp", 0),
+        ("https://raw.githubusercontent.com/opencv/opencv_contrib/master/modules/xfeatures2d/src/sift.cpp", 1),
     ];
     for (line, expected) in cases {
         assert_eq!(line_violations(line).len(), *expected, "line: {line}");
@@ -310,6 +529,70 @@ fn pin_violations_checks_each_library_entry() {
         pin_violations(&file(&[opencv.clone(), opencv, contrib])).len(),
         1
     );
+}
+
+#[test]
+fn pin_violations_reads_the_source_object() {
+    // The layout of the committed cpp_ref/libraries.json, which
+    // `bootstrap_pins_reference_commits` checks as it is.
+    let source = |repo: &str, branch: &str, commit: &str| {
+        format!(
+            "{{\n      \"type\": \"git\",\n      \"url\": \"https://github.com/opencv/{repo}.git\",\n      \
+             \"branch\": \"{branch}\",\n      \"commit\": \"{commit}\",\n      \"recursive\": false\n    }}"
+        )
+    };
+    let contrib = format!(
+        "  {{\n    \"name\": \"opencv_contrib\",\n    \"source\": {}\n  }}",
+        source("opencv_contrib", REFERENCE, REFERENCE_CONTRIB_COMMIT)
+    );
+    // `members` follow the opencv entry's `name`.
+    let file = |members: &str| {
+        format!("[\n  {{\n    \"name\": \"opencv\",\n    {members}\n  }},\n{contrib}\n]\n")
+    };
+    let drift = "0000000000000000000000000000000000000000";
+
+    let pinned = format!(
+        "\"source\": {}",
+        source("opencv", REFERENCE, REFERENCE_COMMIT)
+    );
+    assert_eq!(pin_violations(&file(&pinned)), Vec::<String>::new());
+
+    // Drifted `source` pins, with the expected strings in members outside `source`.
+    let decoys = format!(
+        "\"branch\": \"{REFERENCE}\",\n    \"commit\": \"{REFERENCE_COMMIT}\",\n    \
+         \"source\": {},\n    \
+         \"expected\": {{ \"branch\": \"{REFERENCE}\", \"commit\": \"{REFERENCE_COMMIT}\" }}",
+        source("opencv", "4.x", drift)
+    );
+    assert_eq!(pin_violations(&file(&decoys)).len(), 2, "{decoys}");
+
+    let unversioned = format!("\"source\": {}", source("opencv", "4.x", REFERENCE_COMMIT));
+    assert_eq!(pin_violations(&file(&unversioned)).len(), 1);
+
+    // Python's json keeps the last of repeated keys, so each key must occur exactly once.
+    // In the second case the key `bra\u006ech` decodes to a second `branch`.
+    for repeated in [
+        format!(
+            "\"source\": {{ \"branch\": \"{REFERENCE}\", \"commit\": \"{REFERENCE_COMMIT}\", \
+             \"branch\": \"4.x\" }}"
+        ),
+        format!(
+            "\"source\": {{ \"branch\": \"{REFERENCE}\", \"commit\": \"{REFERENCE_COMMIT}\", \
+             \"bra\\u006ech\": \"4.x\" }}"
+        ),
+        format!(
+            "{pinned},\n    \"source\": {}",
+            source("opencv", "4.x", drift)
+        ),
+    ] {
+        assert_eq!(pin_violations(&file(&repeated)).len(), 1, "{repeated}");
+    }
+
+    let missing = format!("\"source\": {{ \"branch\": \"{REFERENCE}\" }}");
+    assert_eq!(pin_violations(&file(&missing)).len(), 1);
+    let not_an_object = format!("\"source\": \"{REFERENCE_COMMIT}\"");
+    assert_eq!(pin_violations(&file(&not_an_object)).len(), 1);
+    assert!(!pin_violations(&file(&pinned)[1..]).is_empty());
 }
 
 #[test]
