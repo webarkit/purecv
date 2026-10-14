@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-10-14
+
+### ⚙️ Miscellaneous Tasks
+
+- Align declared license with LICENSE (LGPL-3.0-or-later) (#168)
+
+### 🐛 Bug Fixes
+
+- *(features2d)* [**breaking**] ORB fixes — pyramid once, Harris at keypoints, blur before BRIEF, reject ignored params (#162)
+- *(video)* Match OpenCV border handling in LK window sampling (#164)
+
+### 📚 Documentation
+
+- Declare OpenCV 4.10.0 as the parity reference (#169)
+
 ## [0.9.0] - 2026-09-27
 
 ### ⚙️ Miscellaneous Tasks
