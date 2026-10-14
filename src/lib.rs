@@ -89,7 +89,8 @@ pub mod prelude {
         cvt_color, remap, warp_perspective, ColorConversionCode, InterpolationFlags,
     };
     pub use crate::video::optical_flow::{
-        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OpticalFlowPyramid,
+        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk,
+        calc_optical_flow_pyramid_lk_with_pyramids, OpticalFlowPyramid,
         OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 }

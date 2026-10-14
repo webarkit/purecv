@@ -40,8 +40,9 @@ mod video_tests {
     use crate::core::Matrix;
     use crate::imgproc::derivatives::scharr;
     use crate::video::optical_flow::{
-        bilinear_interp_const_zero, bilinear_interp_reflect, build_optical_flow_pyramid,
-        calc_optical_flow_pyramid_lk, lk_iterate, reflect101_index, LkBounds, FLT_SCALE,
+        build_optical_flow_pyramid, calc_optical_flow_pyramid_lk,
+        calc_optical_flow_pyramid_lk_with_pyramids, lk_derivatives, lk_iterate,
+        normalize_lk_criteria, reflect101_index, LkBounds, LkPatch, OpticalFlowPyramid, FLT_SCALE,
         LK_DET_EPSILON, OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
     };
 
@@ -1210,7 +1211,7 @@ mod video_tests {
     }
 
     /// Out-of-image bounds follow the window top-left corner, like OpenCV's
-    /// `inextPt = floor(nextPt - halfWin)`: with a 21px window (half 10.5)
+    /// `inextPt = floor(nextPt - halfWin)`: with a 22px window (half 10.5)
     /// on a 64px level, a search centre at x=70 has its corner at 59.5 and
     /// stays tracked, while a centre at x=-15 has its corner at -25.5 and is
     /// lost. Checking the centre instead is off by half a window in both
@@ -1218,24 +1219,22 @@ mod video_tests {
     /// left/top ones).
     #[test]
     fn test_lk_bounds_use_window_corner_not_centre() {
-        let run = |px: f64, is_finest: bool| {
+        let run = |px: f32, is_finest: bool| {
             let (_, _, tracked) = lk_iterate(
                 1.0,
                 0.0,
                 1.0,
                 1.0,
-                0.0,
-                0.0,
+                px,
+                32.0,
                 10,
                 1e-9,
                 Some(LkBounds {
-                    px,
-                    py: 32.0,
                     half_w: 10.5,
                     half_h: 10.5,
-                    min_x: -21.0,
+                    min_x: -22.0,
                     max_x: 64.0,
-                    min_y: -21.0,
+                    min_y: -22.0,
                     max_y: 64.0,
                     is_finest,
                 }),
@@ -1243,7 +1242,7 @@ mod video_tests {
             );
             tracked
         };
-        // Corner 59.5 inside [-21, 64): tracked at the finest level.
+        // Corner 59.5 inside [-22, 64): tracked at the finest level.
         assert!(run(70.0, true));
         // Corner -25.5 outside: lost at the finest level...
         assert!(!run(-15.0, true));
@@ -1428,8 +1427,12 @@ mod video_tests {
         let image = Matrix::from_vec(2, 2, 1, vec![10.0, 20.0, 30.0, 40.0]);
         for coordinate in [3e9, -3e9, f32::MAX, f32::MIN] {
             for (x, y) in [(coordinate, 0.5), (0.5, coordinate)] {
-                assert_eq!(bilinear_interp_const_zero(&image, x, y), 0.0);
-                let reflected = bilinear_interp_reflect(&image, x, y);
+                assert_eq!(
+                    LkPatch::new(x, y).sample(&image, 0, 0, BorderTypes::Constant, 9) / 32.0,
+                    0.0
+                );
+                let reflected =
+                    LkPatch::new(x, y).sample(&image, 0, 0, BorderTypes::Reflect101, 9) / 32.0;
                 assert!((10.0..=40.0).contains(&reflected));
             }
         }
@@ -1444,7 +1447,7 @@ mod video_tests {
     /// Non-finite estimates must not enter the mismatch sampling callback.
     #[test]
     fn test_lk_extreme_search_estimates_skip_sampling() {
-        for coordinate in [3e9, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        for coordinate in [3e9, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
             for (u, v) in [(coordinate, 0.0), (0.0, coordinate)] {
                 for is_finest in [false, true] {
                     let mut sampled = false;
@@ -1458,8 +1461,6 @@ mod video_tests {
                         2,
                         0.0,
                         Some(LkBounds {
-                            px: 16.0,
-                            py: 16.0,
                             half_w: 2.0,
                             half_h: 2.0,
                             min_x: -5.0,
@@ -1476,6 +1477,1270 @@ mod video_tests {
                     assert!(!sampled);
                     assert_eq!(tracked, !is_finest);
                 }
+            }
+        }
+    }
+
+    /// Build with the same window as the tracking call, so raw and prebuilt
+    /// paths share OpenCV's level cutoff. `deriv_border` is `Constant`,
+    /// matching the raw-image path's derivative padding.
+    fn reusable_pyramid(
+        image: &Matrix<u8>,
+        win: Size2i,
+        derivatives: bool,
+        depth: usize,
+    ) -> OpticalFlowPyramid {
+        build_optical_flow_pyramid(
+            image,
+            win,
+            depth,
+            derivatives,
+            BorderTypes::Reflect101,
+            BorderTypes::Constant,
+        )
+        .unwrap()
+    }
+
+    fn reusable_texture(rows: usize, cols: usize, shift: usize) -> Matrix<u8> {
+        Matrix::from_vec(
+            rows,
+            cols,
+            1,
+            (0..rows * cols)
+                .map(|i| {
+                    let y = i / cols;
+                    let x = (i % cols).saturating_sub(shift);
+                    ((x * 17 + y * 13 + x * y * 3) % 251) as u8
+                })
+                .collect(),
+        )
+    }
+
+    type FlowResult = (Vec<Point2f>, Vec<u8>, Vec<f32>);
+
+    fn assert_same_flow(a: &FlowResult, b: &FlowResult) {
+        assert_eq!(a.1, b.1);
+        assert_eq!(a.0.len(), b.0.len());
+        assert_eq!(a.2.len(), b.2.len());
+        for i in 0..a.0.len() {
+            assert!(
+                (a.0[i].x - b.0[i].x).abs() <= 1e-5,
+                "point {i}: {a:?} vs {b:?}"
+            );
+            assert!((a.0[i].y - b.0[i].y).abs() <= 1e-5);
+            if a.1[i] != 0 {
+                assert!((a.2[i] - b.2[i]).abs() <= 1e-5 * a.2[i].abs().max(1.0));
+            }
+        }
+    }
+
+    // Many combinations of pyramid construction and tracking; too slow under Miri.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_prebuilt_matches_raw_borders_small_images_and_flags() {
+        let criteria = TermCriteria::new(TermType::Both, 20, 0.03);
+        for (rows, cols) in [(1, 1), (1, 7), (3, 2), (7, 5), (33, 49)] {
+            let prev = reusable_texture(rows, cols, 0);
+            let next = reusable_texture(rows, cols, 1);
+            let points = [
+                Point2f::new(cols as f32 / 2.0, rows as f32 / 2.0),
+                Point2f::new(-0.25, 0.5),
+                Point2f::new(cols as f32 - 0.25, rows as f32 - 0.5),
+                Point2f::new(-20.0, -20.0),
+            ];
+            let guesses: Vec<_> = points
+                .iter()
+                .map(|p| Point2f::new(p.x + 1.0, p.y))
+                .collect();
+            for derivatives in [false, true] {
+                for win in [Size2i::new(5, 5), Size2i::new(6, 4)] {
+                    let prev_pyr = reusable_pyramid(&prev, win, derivatives, 7);
+                    let next_pyr = reusable_pyramid(&next, win, !derivatives, 7);
+                    for flags in [
+                        0,
+                        OPTFLOW_USE_INITIAL_FLOW,
+                        OPTFLOW_LK_GET_MIN_EIGENVALS,
+                        OPTFLOW_USE_INITIAL_FLOW | OPTFLOW_LK_GET_MIN_EIGENVALS,
+                    ] {
+                        let raw = calc_optical_flow_pyramid_lk(
+                            &prev,
+                            &next,
+                            &points,
+                            Some(&guesses),
+                            win,
+                            7,
+                            criteria,
+                            flags,
+                            1e-4,
+                        )
+                        .unwrap();
+                        let cached = calc_optical_flow_pyramid_lk_with_pyramids(
+                            &prev_pyr,
+                            &next_pyr,
+                            &points,
+                            Some(&guesses),
+                            win,
+                            7,
+                            criteria,
+                            flags,
+                            1e-4,
+                        )
+                        .unwrap();
+                        assert_same_flow(&raw, &cached);
+                    }
+                }
+            }
+        }
+    }
+
+    // Miri: Repeated raw/prebuilt tracking rebuilds pyramids across depth combinations.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_prebuilt_caps_levels_and_preserves_builder_cutoff() {
+        let image = reusable_texture(25, 33, 0);
+        let points = [Point2f::new(16.0, 12.0)];
+        let criteria = TermCriteria::new(TermType::Count, 2, 0.0);
+        // OpenCV's cutoff keeps level L+1 only while it is strictly larger than
+        // the window: 25x33 with a 9x9 window keeps exactly two levels.
+        let shallow = build_optical_flow_pyramid(
+            &image,
+            Size2i::new(9, 9),
+            20,
+            true,
+            BorderTypes::Reflect101,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+        assert_eq!(shallow.levels.len(), 2);
+        let deep = reusable_pyramid(&image, Size2i::new(3, 3), false, 20);
+        assert!(deep.levels.len() > shallow.levels.len());
+        let cap = shallow.levels.len() as i32 - 1;
+        for (prev, next) in [(&shallow, &deep), (&deep, &shallow)] {
+            for requested in [-1, 0, 1, i32::MAX] {
+                let effective = requested.clamp(0, cap);
+                let raw = calc_optical_flow_pyramid_lk(
+                    &image,
+                    &image,
+                    &points,
+                    None,
+                    Size2i::new(5, 5),
+                    effective,
+                    criteria,
+                    0,
+                    1e-4,
+                )
+                .unwrap();
+                let cached = calc_optical_flow_pyramid_lk_with_pyramids(
+                    prev,
+                    next,
+                    &points,
+                    None,
+                    Size2i::new(5, 5),
+                    requested,
+                    criteria,
+                    0,
+                    1e-4,
+                )
+                .unwrap();
+                assert_same_flow(&raw, &cached);
+            }
+        }
+    }
+
+    #[test]
+    fn test_lk_prebuilt_reuses_derivatives_and_does_not_mutate_shared_buffers() {
+        use alloc::borrow::Cow;
+        let image = reusable_texture(17, 19, 0);
+        let pyramid = reusable_pyramid(&image, Size2i::new(5, 5), true, 2);
+        let snapshot = pyramid.clone();
+        let pointers: Vec<_> = pyramid
+            .levels
+            .iter()
+            .chain(&pyramid.dx)
+            .chain(&pyramid.dy)
+            .map(|m| m.data.as_ptr())
+            .collect();
+        let (dx, dy) = lk_derivatives(&pyramid, 2).unwrap();
+        assert!(matches!(dx, Cow::Borrowed(_)));
+        assert!(matches!(dy, Cow::Borrowed(_)));
+        assert_eq!(dx.as_ptr(), pyramid.dx.as_ptr());
+        assert_eq!(dy.as_ptr(), pyramid.dy.as_ptr());
+        let points = [Point2f::new(9.0, 8.0), Point2f::new(0.5, 0.5)];
+        let track = |prev: &OpticalFlowPyramid, next: &OpticalFlowPyramid| {
+            calc_optical_flow_pyramid_lk_with_pyramids(
+                prev,
+                next,
+                &points,
+                None,
+                Size2i::new(5, 5),
+                2,
+                TermCriteria::new(TermType::Count, 2, 0.0),
+                OPTFLOW_LK_GET_MIN_EIGENVALS,
+                1e-4,
+            )
+            .unwrap()
+        };
+        let expected = track(&pyramid, &pyramid);
+        assert_eq!(expected.1, vec![1, 1]);
+        for _ in 0..3 {
+            assert_same_flow(&expected, &track(&pyramid, &pyramid));
+        }
+        assert_eq!(pyramid.levels, snapshot.levels);
+        assert_eq!(pyramid.dx, snapshot.dx);
+        assert_eq!(pyramid.dy, snapshot.dy);
+        assert_eq!(
+            pointers,
+            pyramid
+                .levels
+                .iter()
+                .chain(&pyramid.dx)
+                .chain(&pyramid.dy)
+                .map(|m| m.data.as_ptr())
+                .collect::<Vec<_>>()
+        );
+
+        // An observable derivative override proves the tracker does not recompute
+        // supplied Scharr data. Next-image derivatives must not affect the solve.
+        let mut zero_derivatives = pyramid.clone();
+        for matrix in zero_derivatives
+            .dx
+            .iter_mut()
+            .chain(&mut zero_derivatives.dy)
+        {
+            matrix.data.fill(0.0);
+        }
+        assert_eq!(track(&zero_derivatives, &pyramid).1, vec![0, 0]);
+        assert_same_flow(&expected, &track(&pyramid, &zero_derivatives));
+
+        let mut no_derivatives = pyramid.clone();
+        no_derivatives.dx.clear();
+        no_derivatives.dy.clear();
+        let (dx, dy) = lk_derivatives(&no_derivatives, 1).unwrap();
+        assert!(matches!(dx, Cow::Owned(_)));
+        assert!(matches!(dy, Cow::Owned(_)));
+        assert_eq!(dx.len(), 1);
+        assert_eq!(dx[0], pyramid.dx[0]);
+        assert_eq!(dy[0], pyramid.dy[0]);
+        assert_same_flow(&expected, &track(&no_derivatives, &pyramid));
+        assert!(no_derivatives.dx.is_empty() && no_derivatives.dy.is_empty());
+    }
+
+    #[test]
+    fn test_lk_prebuilt_uses_supplied_coarse_levels_and_custom_borders() {
+        let image = reusable_texture(17, 19, 0);
+        let mut pyramid = build_optical_flow_pyramid(
+            &image,
+            Size2i::new(5, 5),
+            1,
+            true,
+            BorderTypes::Replicate,
+            BorderTypes::Constant,
+        )
+        .unwrap();
+        // calcScharrDeriv always uses reflect-101 edges, independent of the
+        // `deriv_border` argument (which only pads the stored derivatives).
+        assert_eq!(
+            pyramid.dx[0],
+            scharr::<f32>(&pyramid.levels[0], 1, 0, 1.0, 0.0, BorderTypes::Reflect101,).unwrap()
+        );
+        let mut next = pyramid.clone();
+        // A caller-supplied coarse level must be used rather than regenerated
+        // from level zero. One iteration exposes its effect on the final estimate.
+        let point = Point2f::new(8.0, 8.0);
+        let criteria = TermCriteria::new(TermType::Count, 1, 0.0);
+        let track = |prev: &OpticalFlowPyramid, next: &OpticalFlowPyramid| {
+            calc_optical_flow_pyramid_lk_with_pyramids(
+                prev,
+                next,
+                &[point],
+                None,
+                Size2i::new(5, 5),
+                1,
+                criteria,
+                0,
+                0.0,
+            )
+            .unwrap()
+        };
+        let identity = track(&pyramid, &next);
+        assert_eq!(identity.1, vec![1]);
+        // Shift the coarse-level target while keeping level zero untouched.
+        let coarse = &mut next.levels[1];
+        for row in coarse.data.chunks_exact_mut(coarse.cols) {
+            row.rotate_right(1);
+        }
+        let changed = track(&pyramid, &next);
+        assert_eq!(changed.1, vec![1]);
+        assert!((changed.0[0].x - identity.0[0].x).abs() > 0.01);
+        // Supplied border choices also work on repeated calls without mutation.
+        let before = pyramid.dx.clone();
+        assert_same_flow(&changed, &track(&pyramid, &next));
+        assert_eq!(before, pyramid.dx);
+        pyramid.dx.clear();
+        pyramid.dy.clear();
+        assert!(track(&pyramid, &next).0[0].x.is_finite());
+    }
+
+    #[test]
+    fn test_lk_prebuilt_uses_stored_image_and_derivative_borders() {
+        // A window overhanging the bottom-right corner exercises the border
+        // extension of both image samples (pyr_border) and supplied derivative
+        // samples (deriv_border).
+        let prev = reusable_texture(9, 9, 0);
+        let next = reusable_texture(9, 9, 1);
+        let points = [Point2f::new(8.0, 8.0)];
+        let criteria = TermCriteria::new(TermType::Count, 5, 0.0);
+        let build = |image: &Matrix<u8>, pyr_border, deriv_border| {
+            build_optical_flow_pyramid(image, Size2i::new(5, 5), 0, true, pyr_border, deriv_border)
+                .unwrap()
+        };
+        let track = |prev_pyr: &OpticalFlowPyramid, next_pyr: &OpticalFlowPyramid| {
+            calc_optical_flow_pyramid_lk_with_pyramids(
+                prev_pyr,
+                next_pyr,
+                &points,
+                None,
+                Size2i::new(5, 5),
+                0,
+                criteria,
+                0,
+                1e-4,
+            )
+            .unwrap()
+            .0[0]
+        };
+        let track_borders = |pyr_border, deriv_border| {
+            track(
+                &build(&prev, pyr_border, deriv_border),
+                &build(&next, pyr_border, deriv_border),
+            )
+        };
+        let base = track_borders(BorderTypes::Reflect101, BorderTypes::Constant);
+        // `deriv_border` must reach the derivative sampler, not the Scharr
+        // convolution (which is always Reflect101).
+        let reflected_deriv = track_borders(BorderTypes::Reflect101, BorderTypes::Reflect101);
+        assert_ne!(base, reflected_deriv);
+        // `pyr_border` must reach the image sampler.
+        let replicated_image = track_borders(BorderTypes::Replicate, BorderTypes::Constant);
+        assert_ne!(base, replicated_image);
+    }
+
+    #[test]
+    fn test_lk_prebuilt_rejects_malformed_pyramids() {
+        let valid = reusable_pyramid(&reusable_texture(19, 21, 0), Size2i::new(3, 3), true, 2);
+        let mut invalid = Vec::new();
+        let mut add = |change: fn(&mut OpticalFlowPyramid)| {
+            let mut p = valid.clone();
+            change(&mut p);
+            invalid.push(p);
+        };
+        add(|p| p.levels.clear());
+        add(|p| {
+            p.dx.pop();
+        });
+        add(|p| p.dy.clear());
+        add(|p| p.dx.push(p.dx[0].clone()));
+        add(|p| p.levels[0] = Matrix::new(0, 11, 1));
+        add(|p| p.levels[0].channels = 2);
+        add(|p| {
+            p.levels[0].data.pop();
+        });
+        add(|p| p.levels[0].rows = usize::MAX);
+        add(|p| p.levels[1] = Matrix::new(4, 6, 1)); // Must be 5x6.
+        add(|p| p.dx[0] = Matrix::new(11, 9, 1)); // Same area, wrong shape.
+        add(|p| p.dy[0].channels = 2);
+        add(|p| {
+            p.dy[2].data.pop();
+        }); // Invalid even if level is unused.
+        let check = |prev: &OpticalFlowPyramid, next: &OpticalFlowPyramid| {
+            calc_optical_flow_pyramid_lk_with_pyramids(
+                prev,
+                next,
+                &[],
+                None,
+                Size2i::new(3, 3),
+                0,
+                TermCriteria::new(TermType::Count, 1, 0.0),
+                0,
+                1e-4,
+            )
+        };
+        for pyramid in invalid {
+            assert!(check(&pyramid, &valid).is_err());
+            assert!(check(&valid, &pyramid).is_err());
+        }
+        let other = reusable_pyramid(&reusable_texture(11, 9, 0), Size2i::new(3, 3), false, 0);
+        assert!(check(&valid, &other).is_err());
+        let mut repeated =
+            reusable_pyramid(&reusable_texture(1, 1, 0), Size2i::new(3, 3), false, 0);
+        repeated.levels.push(repeated.levels[0].clone());
+        assert!(check(&repeated, &repeated).is_err());
+        assert_eq!(check(&valid, &valid).unwrap(), (vec![], vec![], vec![]));
+    }
+
+    #[test]
+    fn test_lk_prebuilt_validates_tracking_arguments() {
+        let pyramid = reusable_pyramid(&reusable_texture(5, 5, 0), Size2i::new(3, 3), true, 0);
+        let points = [Point2f::new(2.0, 2.0)];
+        let run = |win, initial, flags| {
+            calc_optical_flow_pyramid_lk_with_pyramids(
+                &pyramid,
+                &pyramid,
+                &points,
+                initial,
+                win,
+                0,
+                TermCriteria::new(TermType::Count, 1, 0.0),
+                flags,
+                1e-4,
+            )
+        };
+        assert!(run(Size2i::new(2, 3), None, 0).is_err());
+        assert!(run(Size2i::new(3, -1), None, 0).is_err());
+        assert!(run(Size2i::new(3, 3), Some(&[]), OPTFLOW_USE_INITIAL_FLOW).is_err());
+        assert!(run(Size2i::new(3, 3), Some(&[]), 0).is_ok());
+        assert_same_flow(
+            &run(Size2i::new(3, 3), None, 0).unwrap(),
+            &run(Size2i::new(3, 3), None, OPTFLOW_USE_INITIAL_FLOW).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_build_pyramid_rejects_invalid_buffers_and_bounds_depth() {
+        let image = reusable_texture(3, 3, 0);
+        let build = |image, win, depth| {
+            build_optical_flow_pyramid(
+                image,
+                win,
+                depth,
+                false,
+                BorderTypes::Reflect101,
+                BorderTypes::Reflect101,
+            )
+        };
+        assert!(build(&image, Size2i::new(2, 3), 0).is_err()); // winSize must be > 2
+        assert!(build(&image, Size2i::new(3, -1), 0).is_err());
+        let empty = Matrix::new(0, 0, 1);
+        assert!(build(&empty, Size2i::new(3, 3), 0).is_err());
+        let mut malformed = image.clone();
+        malformed.data.pop();
+        assert!(build(&malformed, Size2i::new(3, 3), 0).is_err());
+        // OpenCV's cutoff caps the depth even for usize::MAX: 9x9 -> 5x5 and
+        // ceil(5 / 2) = 3 is not strictly larger than the 3x3 window.
+        let bigger = reusable_texture(9, 9, 0);
+        let pyramid = build(&bigger, Size2i::new(3, 3), usize::MAX).unwrap();
+        assert_eq!(pyramid.levels.len(), 2);
+    }
+
+    // Independent OpenCV 4.10.0 references measured with cpp_ref/.venv:
+    // opencv-contrib-python 4.10.0.84, IPP/OpenCL disabled, one CPU thread;
+    // getBuildInformation(): "Version control: 4.10.0-dirty".
+    // Every case uses reusable_texture(9, 9, 0), whose integer formula is
+    // (17*x + 13*y + 3*x*y) % 251, and minEigThreshold=1e-4.
+    // Python cannot pass vector<Mat> to calcOpticalFlowPyrLK. For asymmetric
+    // borders, copyMakeBorder pads each image by 8 using its own border, then
+    // raw LK runs at maxLevel=0 with points/guesses translated by (+8,+8).
+    // Count=0 isolates MAE (the gradient values do not affect it). Count=1
+    // uses a template wholly inside the original image, so its Scharr values
+    // equal the unpadded template's. All final target windows fit the original
+    // allowed padding. Thus these fixtures do not depend on extra gradients
+    // or the enlarged search bounds of the explicitly padded reference images.
+
+    // Miri: Twelve border/derivative combinations repeatedly build and sample pyramids.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_opencv_asymmetric_borders_mae() {
+        let image = reusable_texture(9, 9, 0);
+        let win = Size2i::new(5, 5);
+        let points = [
+            Point2f::new(0.0, 0.0),
+            Point2f::new(8.0, 8.0),
+            Point2f::new(0.25, 0.5),
+        ];
+        for (other, expected) in [
+            (BorderTypes::Constant, [28.44, 53.56, 24.47]),
+            (BorderTypes::Replicate, [21.24, 43.56, 16.55]),
+            (BorderTypes::Wrap, [66.4, 30.32, 62.66]),
+        ] {
+            for (prev_border, next_border) in [
+                (BorderTypes::Reflect101, other),
+                (other, BorderTypes::Reflect101),
+            ] {
+                for derivatives in [false, true] {
+                    let build = |border| {
+                        build_optical_flow_pyramid(
+                            &image,
+                            win,
+                            0,
+                            derivatives,
+                            border,
+                            BorderTypes::Constant,
+                        )
+                        .unwrap()
+                    };
+                    let result = calc_optical_flow_pyramid_lk_with_pyramids(
+                        &build(prev_border),
+                        &build(next_border),
+                        &points,
+                        None,
+                        win,
+                        0,
+                        TermCriteria::new(TermType::Count, 0, 0.0),
+                        0,
+                        1e-4,
+                    )
+                    .unwrap();
+                    assert_eq!(result.1, vec![1; 3]);
+                    assert_eq!(result.0, points);
+                    for (actual, reference) in result.2.iter().zip(expected) {
+                        // Integer/quarter-pixel samples are exact on OpenCV's
+                        // x32 intensity scale; only f32 summation can differ.
+                        assert!(
+                            (actual - reference).abs() < 1e-5,
+                            "{prev_border:?} -> {next_border:?}: {actual} vs {reference}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Miri: Multiple border fixtures exercise full preprocessing and numerical LK steps.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_opencv_asymmetric_borders_step() {
+        // One Newton step with an interior template and fractional target
+        // guesses exercises the scalar/SIMD mismatch samplers, not just MAE.
+        let image = reusable_texture(9, 9, 0);
+        let win = Size2i::new(5, 5);
+        let points = [Point2f::new(4.0, 4.0); 2];
+        let guesses = [Point2f::new(0.25, 0.5), Point2f::new(8.25, 8.5)];
+        for (prev_border, next_border, expected) in [
+            (
+                BorderTypes::Reflect101,
+                BorderTypes::Constant,
+                [
+                    (-0.23009062, 2.2676878, 127.98125),
+                    (7.2506332, 9.703224, 117.44375),
+                ],
+            ),
+            (
+                BorderTypes::Reflect101,
+                BorderTypes::Replicate,
+                [
+                    (-0.27146053, 2.1477776, 116.19375),
+                    (8.652649, 8.673058, 38.36875),
+                ],
+            ),
+            (
+                BorderTypes::Reflect101,
+                BorderTypes::Wrap,
+                [
+                    (-0.9690957, 1.3171539, 64.1325),
+                    (8.073093, 8.093981, 39.5125),
+                ],
+            ),
+            (
+                BorderTypes::Constant,
+                BorderTypes::Reflect101,
+                [
+                    (-0.43229485, 1.9961214, 98.3675),
+                    (7.739274, 9.0620575, 63.10625),
+                ],
+            ),
+        ] {
+            let build = |border| {
+                build_optical_flow_pyramid(&image, win, 0, true, border, BorderTypes::Constant)
+                    .unwrap()
+            };
+            let result = calc_optical_flow_pyramid_lk_with_pyramids(
+                &build(prev_border),
+                &build(next_border),
+                &points,
+                Some(&guesses),
+                win,
+                0,
+                TermCriteria::new(TermType::Count, 1, 0.0),
+                OPTFLOW_USE_INITIAL_FLOW,
+                1e-4,
+            )
+            .unwrap();
+            assert_eq!(result.1, vec![1; 2]);
+            for (i, (x, y, error)) in expected.into_iter().enumerate() {
+                assert!(
+                    (result.0[i].x - x).abs() < 1e-4 && (result.0[i].y - y).abs() < 1e-4,
+                    "{prev_border:?} -> {next_border:?}: {:?} vs ({x}, {y})",
+                    result.0[i]
+                );
+                // Both implementations now use quantized samples. The Python
+                // reference shifts coordinates by its explicitly padded ROI.
+                assert!(
+                    (result.2[i] - error).abs() < 1e-5,
+                    "{} vs {error}",
+                    result.2[i]
+                );
+            }
+        }
+    }
+
+    // Miri: Ten border combinations rebuild image and Scharr pyramids for numeric comparisons.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_build_pyramid_opencv_padding_does_not_change_pixels() {
+        // cv2.buildOpticalFlowPyramid(image, (3,3), 8, withDerivatives=True,
+        //     pyrBorder=border, derivBorder=deriv_border) returns these same
+        // level-1 pixels and Scharr components for every border below.
+        // The generic pyrDown path always uses Reflect101; pyrBorder only
+        // pads the resulting level:
+        // https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L786-L791
+        let image = reusable_texture(9, 9, 0);
+        let pixels = [
+            24, 48, 87, 125, 149, 43, 72, 118, 159, 179, 74, 110, 159, 139, 101, 104, 147, 154, 77,
+            83, 123, 166, 136, 86, 124,
+        ];
+        let dx = [
+            0, 1080, 1292, 986, 0, 0, 1194, 1188, 622, 0, 0, 1225, 341, -610, 0, 0, 794, -853,
+            -920, 0, 0, 430, -1220, -546, 0,
+        ];
+        let dy = [
+            0, 0, 0, 0, 0, 872, 986, 948, 212, -396, 1060, 1041, 339, -1000, -1452, 826, 638, -221,
+            -530, -88, 0, 0, 0, 0, 0,
+        ];
+        for border in [
+            BorderTypes::Constant,
+            BorderTypes::Replicate,
+            BorderTypes::Reflect,
+            BorderTypes::Reflect101,
+            BorderTypes::Wrap,
+        ] {
+            for deriv_border in [BorderTypes::Constant, BorderTypes::Reflect101] {
+                let p = build_optical_flow_pyramid(
+                    &image,
+                    Size2i::new(3, 3),
+                    8,
+                    true,
+                    border,
+                    deriv_border,
+                )
+                .unwrap();
+                assert_eq!(p.levels.len(), 2);
+                assert_eq!((p.levels[1].rows, p.levels[1].cols), (5, 5));
+                assert_eq!(p.pyr_border, border);
+                assert_eq!(p.deriv_border, deriv_border);
+                for (matrix, reference) in [(&p.levels[1], pixels), (&p.dx[1], dx), (&p.dy[1], dy)]
+                {
+                    assert_eq!(
+                        matrix.data,
+                        reference.map(|v| v as f32),
+                        "{border:?} / {deriv_border:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lk_opencv_final_bounds() {
+        // Raw cv2.calcOpticalFlowPyrLK, no explicit padding: preserve the
+        // original image bounds. The final MAE gate is flag-dependent:
+        // https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L683-L698
+        let image = reusable_texture(9, 9, 0);
+        let win = Size2i::new(5, 5);
+        let point = Point2f::new(4.0, 4.0);
+        let pyramid = reusable_pyramid(&image, win, true, 0);
+        for (guess, count, mae_status) in [
+            (Point2f::new(100.0, 4.0), 0, 0),
+            (Point2f::new(4.0, 100.0), 0, 0),
+            (Point2f::new(-3.0, 4.0), 0, 1),
+            (Point2f::new(-3.01, 4.0), 0, 0),
+            (Point2f::new(10.99, 4.0), 0, 1),
+            (Point2f::new(11.0, 4.0), 0, 0),
+            // The initial window is valid; the ONLY iteration leaves it.
+            // cv2 nextPt=(-3.8660216,-2.6718235), status=0 for MAE, 1 for eigenvalues.
+            (Point2f::new(-3.0, -3.0), 1, 0),
+        ] {
+            for eigenvalues in [false, true] {
+                let flags = OPTFLOW_USE_INITIAL_FLOW
+                    | if eigenvalues {
+                        OPTFLOW_LK_GET_MIN_EIGENVALS
+                    } else {
+                        0
+                    };
+                let criteria = TermCriteria::new(TermType::Count, count, 0.0);
+                let raw = calc_optical_flow_pyramid_lk(
+                    &image,
+                    &image,
+                    &[point],
+                    Some(&[guess]),
+                    win,
+                    0,
+                    criteria,
+                    flags,
+                    1e-4,
+                )
+                .unwrap();
+                let cached = calc_optical_flow_pyramid_lk_with_pyramids(
+                    &pyramid,
+                    &pyramid,
+                    &[point],
+                    Some(&[guess]),
+                    win,
+                    0,
+                    criteria,
+                    flags,
+                    1e-4,
+                )
+                .unwrap();
+                let status = if eigenvalues { 1 } else { mae_status };
+                for result in [&raw, &cached] {
+                    assert_eq!(
+                        result.1,
+                        vec![status],
+                        "{guess:?}, count={count}, eigenvalues={eigenvalues}"
+                    );
+                    if eigenvalues {
+                        assert!((result.2[0] - 0.11571938).abs() < 1e-7);
+                        if count == 1 {
+                            assert!((result.0[0].x + 3.8660216).abs() < 1e-5);
+                            assert!((result.0[0].y + 2.6718235).abs() < 1e-5);
+                        } else {
+                            assert!((result.0[0].x - guess.x).abs() < 1e-6);
+                            assert!((result.0[0].y - guess.y).abs() < 1e-6);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// COUNT/EPS normalization is observable even before patch sampling.
+    #[test]
+    fn test_lk_opencv_criteria_limits() {
+        for (kind, count, epsilon, expected_count, expected_epsilon) in [
+            (TermType::Count, -7, 999.0, 0, 0.0001),
+            (TermType::Count, 101, -2.0, 100, 0.0001),
+            (TermType::Eps, -7, -2.0, 30, 0.0),
+            (TermType::Eps, 999, 11.0, 30, 100.0),
+            (TermType::Both, 0, 0.5, 0, 0.25),
+            (TermType::Both, 100, 10.0, 100, 100.0),
+        ] {
+            assert_eq!(
+                normalize_lk_criteria(TermCriteria::new(kind, count, epsilon)),
+                (expected_count, expected_epsilon)
+            );
+        }
+        assert!(
+            normalize_lk_criteria(TermCriteria::new(TermType::Both, 2, f64::NAN))
+                .1
+                .is_nan()
+        );
+    }
+
+    /// A step exactly on the threshold must stop before another sample is read.
+    /// Zero epsilon must also stop on a zero step (not wait for oscillation).
+    #[test]
+    fn test_lk_opencv_inclusive_convergence() {
+        // 0.1f32 squared in f64 is below the third threshold; a f32
+        // dot product rounds above it. OpenCV explicitly uses Point2f::ddot.
+        for (step, epsilon) in [(1.0, 1.0), (0.0, 0.0), (0.1, 0.0100000005)] {
+            let mut calls = 0;
+            let (x, y, tracked) =
+                lk_iterate(1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 4, epsilon, None, |_, _| {
+                    calls += 1;
+                    if calls == 1 {
+                        (step, 0.0)
+                    } else {
+                        (100.0, 100.0)
+                    }
+                });
+            assert_eq!(calls, 1);
+            assert_eq!((x, y, tracked), (step, 0.0, true));
+        }
+    }
+
+    /// cvRound weights use ties-to-even, while CV_DESCALE rounds half upward
+    /// even for negative gradients; substituting float::round changes both.
+    #[test]
+    fn test_lk_opencv_fixed_point_halfway_samples() {
+        let image = Matrix::from_vec(2, 2, 1, vec![0.0, 255.0, 0.0, 255.0]);
+        // 0.5/16384 rounds down to an even weight; 1.5/16384 rounds up.
+        assert_eq!(
+            LkPatch::new(0.5 / 16384.0, 0.0).sample(&image, 0, 0, BorderTypes::Constant, 9),
+            0.0
+        );
+        assert_eq!(
+            LkPatch::new(1.5 / 16384.0, 0.0).sample(&image, 0, 0, BorderTypes::Constant, 9),
+            1.0
+        );
+        let gradient = Matrix::from_vec(2, 2, 1, vec![-1.0, 0.0, -2.0, -1.0]);
+        assert_eq!(
+            LkPatch::new(0.5, 0.0).sample(&gradient, 0, 0, BorderTypes::Constant, 14),
+            0.0
+        );
+        assert_eq!(
+            LkPatch::new(0.5, 1.0).sample(&gradient, 0, 0, BorderTypes::Constant, 14),
+            -1.0
+        );
+    }
+
+    #[test]
+    fn test_lk_prebuilt_rejects_non_opencv_numeric_values() {
+        let image = reusable_texture(9, 9, 0);
+        let win = Size2i::new(5, 5);
+        let good = reusable_pyramid(&image, win, true, 0);
+        for value in [-1.0, 256.0, 0.5, f32::NAN, f32::INFINITY] {
+            let mut bad = good.clone();
+            bad.levels[0].data[0] = value;
+            assert!(calc_optical_flow_pyramid_lk_with_pyramids(
+                &bad,
+                &good,
+                &[Point2f::new(4.0, 4.0)],
+                None,
+                win,
+                0,
+                TermCriteria::new(TermType::Count, 0, 0.0),
+                0,
+                1e-4
+            )
+            .is_err());
+        }
+        for value in [-32769.0, 32768.0, -0.5, f32::NAN, f32::INFINITY] {
+            for x_component in [false, true] {
+                let mut bad = good.clone();
+                if x_component {
+                    bad.dx[0].data[0] = value;
+                } else {
+                    bad.dy[0].data[0] = value;
+                }
+                assert!(calc_optical_flow_pyramid_lk_with_pyramids(
+                    &bad,
+                    &good,
+                    &[Point2f::new(4.0, 4.0)],
+                    None,
+                    win,
+                    0,
+                    TermCriteria::new(TermType::Count, 0, 0.0),
+                    0,
+                    1e-4
+                )
+                .is_err());
+            }
+        }
+    }
+
+    // Reference for the following public-API cases: unmodified OpenCV 4.10.0
+    // (71d3237a093b60a27601c20e9ee6c3e52154e8b1), built out of tree with
+    // CV_DISABLE_OPTIMIZATION=ON, CV_ENABLE_INTRINSICS=OFF, WITH_IPP=OFF,
+    // WITH_OPENCL=OFF and -ffp-contract=off. No reference runtime is needed.
+    // The ordinary float CPU path is the oracle, rather than a platform SIMD
+    // reduction. Calls use minEigThreshold=1e-4; the 33x49 texture is
+    // (17*x + 13*y + 3*x*y) % 251, shifted right by one with replicated x=0.
+    // Source: https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L183-L722
+    // and https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L1364-L1372
+    // Miri: Many termination fixtures run raw, image-only, and derivative-pyramid LK paths.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_opencv_termination_reference() {
+        let prev = reusable_texture(33, 49, 0);
+        let next = reusable_texture(33, 49, 1);
+        let win = Size2i::new(5, 5);
+        // Count-only default epsilon, negative/zero epsilon, negative count,
+        // 100-count cap, epsilon-only default count, and epsilon upper cap.
+        for (kind, count, epsilon, px, py, x, y, mae) in [
+            (
+                TermType::Count,
+                30,
+                99.0,
+                2.25,
+                2.5,
+                3.7242084,
+                1.9445041,
+                2.255,
+            ),
+            (
+                TermType::Both,
+                30,
+                0.0,
+                2.25,
+                2.5,
+                3.7224483,
+                1.9461701,
+                2.2525,
+            ),
+            (
+                TermType::Both,
+                30,
+                -0.5,
+                2.25,
+                2.5,
+                3.7224483,
+                1.9461701,
+                2.2525,
+            ),
+            (TermType::Count, -3, 0.0, 2.25, 2.5, 2.25, 2.5, 20.825),
+            (TermType::Count, 0, 0.0, 2.25, 2.5, 2.25, 2.5, 20.825),
+            (
+                TermType::Eps,
+                1,
+                0.03,
+                2.25,
+                2.5,
+                3.3465457,
+                2.3815918,
+                0.53125,
+            ),
+            (
+                TermType::Both,
+                30,
+                0.03,
+                2.25,
+                2.5,
+                3.3465457,
+                2.3815918,
+                0.53125,
+            ),
+            (
+                TermType::Both,
+                30,
+                1e+01,
+                2.25,
+                2.5,
+                3.3451042,
+                2.4076617,
+                0.60875,
+            ),
+            (
+                TermType::Both,
+                30,
+                2e+01,
+                2.25,
+                2.5,
+                3.3451042,
+                2.4076617,
+                0.60875,
+            ),
+            (
+                TermType::Count,
+                100,
+                0.0,
+                8.125,
+                14.375,
+                9.3683815,
+                13.540901,
+                24.81125,
+            ),
+            (
+                TermType::Count,
+                120,
+                0.0,
+                8.125,
+                14.375,
+                9.3683815,
+                13.540901,
+                24.81125,
+            ),
+            (
+                TermType::Eps,
+                1,
+                0.03,
+                8.125,
+                14.375,
+                9.188091,
+                14.111875,
+                10.82375,
+            ),
+            (
+                TermType::Both,
+                30,
+                0.03,
+                8.125,
+                14.375,
+                9.188091,
+                14.111875,
+                10.82375,
+            ),
+        ] {
+            let criteria = TermCriteria::new(kind, count, epsilon);
+            let point = [Point2f::new(px, py)];
+            let raw =
+                calc_optical_flow_pyramid_lk(&prev, &next, &point, None, win, 0, criteria, 0, 1e-4)
+                    .unwrap();
+            for actual in [
+                raw,
+                calc_optical_flow_pyramid_lk_with_pyramids(
+                    &reusable_pyramid(&prev, win, false, 0),
+                    &reusable_pyramid(&next, win, false, 0),
+                    &point,
+                    None,
+                    win,
+                    0,
+                    criteria,
+                    0,
+                    1e-4,
+                )
+                .unwrap(),
+                calc_optical_flow_pyramid_lk_with_pyramids(
+                    &reusable_pyramid(&prev, win, true, 0),
+                    &reusable_pyramid(&next, win, true, 0),
+                    &point,
+                    None,
+                    win,
+                    0,
+                    criteria,
+                    0,
+                    1e-4,
+                )
+                .unwrap(),
+            ] {
+                assert_eq!(actual.1, vec![1]);
+                assert!(
+                    (actual.0[0].x - x).abs() <= 2e-6 && (actual.0[0].y - y).abs() <= 2e-6,
+                    "{kind:?}/{count}/{epsilon}: {:?} vs ({x},{y})",
+                    actual.0[0]
+                );
+                assert!(
+                    (actual.2[0] - mae).abs() <= 2e-6,
+                    "{} vs {mae}",
+                    actual.2[0]
+                );
+            }
+        }
+    }
+
+    // Miri: Window, depth, iteration, and error-mode combinations repeat numerical tracking.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_opencv_quantized_patch_reference() {
+        let prev = reusable_texture(33, 49, 0);
+        let next = reusable_texture(33, 49, 1);
+        // Odd and even rectangular windows, multiple levels, image borders
+        // different on each input, and reflected supplied derivatives. These
+        // prebuilt cases were measured with the actual C++ vector<Mat> API.
+        for (
+            width,
+            height,
+            depth,
+            px,
+            py,
+            gx,
+            gy,
+            prev_border,
+            next_border,
+            deriv_border,
+            derivatives,
+            expected,
+        ) in [
+            (
+                5,
+                5,
+                0,
+                8.12345,
+                14.54321,
+                9.875,
+                13.15,
+                BorderTypes::Reflect101,
+                BorderTypes::Reflect101,
+                BorderTypes::Constant,
+                true,
+                [
+                    (9.875, 13.15, 1, 23.77125, 0.12518662),
+                    (9.413567, 14.61436, 1, 23.125, 0.12518662),
+                    (9.217219, 14.373382, 1, 5.695, 0.12518662),
+                ],
+            ),
+            (
+                4,
+                6,
+                3,
+                20.3333,
+                15.6667,
+                21.9876,
+                14.321,
+                BorderTypes::Reflect101,
+                BorderTypes::Reflect101,
+                BorderTypes::Constant,
+                true,
+                [
+                    (21.9876, 14.321, 1, 44.802082, 0.19799614),
+                    (21.664814, 14.663207, 1, 57.795574, 0.19799614),
+                    (21.341873, 15.637011, 1, 2.6276042, 0.19799614),
+                ],
+            ),
+            (
+                5,
+                5,
+                2,
+                0.33333,
+                0.66667,
+                1.4,
+                -0.4,
+                BorderTypes::Constant,
+                BorderTypes::Replicate,
+                BorderTypes::Reflect101,
+                true,
+                [
+                    (1.4, -0.4, 1, 10.805, 0.014548969),
+                    (-0.5400667, -6.8689327, 0, 0.0, 0.0),
+                    (0.71386445, 0.39554727, 1, 11.175, 0.014548969),
+                ],
+            ),
+            (
+                5,
+                5,
+                2,
+                46.2,
+                30.8,
+                47.3,
+                30.1,
+                BorderTypes::Wrap,
+                BorderTypes::Constant,
+                BorderTypes::Constant,
+                false,
+                [
+                    (47.3, 30.1, 1, 64.03375, 0.1413692),
+                    (51.066822, 121.09149, 0, 0.0, 0.0),
+                    (51.066822, 121.09149, 0, 0.0, 0.0),
+                ],
+            ),
+        ] {
+            let win = Size2i::new(width, height);
+            let a = build_optical_flow_pyramid(
+                &prev,
+                win,
+                depth as usize,
+                derivatives,
+                prev_border,
+                deriv_border,
+            )
+            .unwrap();
+            let b = build_optical_flow_pyramid(
+                &next,
+                win,
+                depth as usize,
+                derivatives,
+                next_border,
+                deriv_border,
+            )
+            .unwrap();
+            let points = [Point2f::new(px, py)];
+            let guesses = [Point2f::new(gx, gy)];
+            for (count, (x, y, status, mae, eigen)) in [0, 1, 20].into_iter().zip(expected) {
+                for (error_flag, error) in [(0, mae), (OPTFLOW_LK_GET_MIN_EIGENVALS, eigen)] {
+                    let flags = OPTFLOW_USE_INITIAL_FLOW | error_flag;
+                    let criteria = TermCriteria::new(TermType::Both, count, 0.03);
+                    let actual = calc_optical_flow_pyramid_lk_with_pyramids(
+                        &a,
+                        &b,
+                        &points,
+                        Some(&guesses),
+                        win,
+                        depth,
+                        criteria,
+                        flags,
+                        1e-4,
+                    )
+                    .unwrap();
+                    assert_eq!(actual.1, vec![status]);
+                    if status == 1 {
+                        assert!(
+                            (actual.0[0].x - x).abs() <= 2e-6 && (actual.0[0].y - y).abs() <= 2e-6,
+                            "{width}x{height}/{count}/{flags}: {:?} vs ({x},{y})",
+                            actual.0[0]
+                        );
+                        assert!(
+                            (actual.2[0] - error).abs() <= 2e-6,
+                            "{} vs {error}",
+                            actual.2[0]
+                        );
+                    }
+                    if prev_border == BorderTypes::Reflect101
+                        && next_border == BorderTypes::Reflect101
+                        && deriv_border == BorderTypes::Constant
+                    {
+                        let raw = calc_optical_flow_pyramid_lk(
+                            &prev,
+                            &next,
+                            &points,
+                            Some(&guesses),
+                            win,
+                            depth,
+                            criteria,
+                            flags,
+                            1e-4,
+                        )
+                        .unwrap();
+                        assert_same_flow(&actual, &raw);
+                    }
+                }
+            }
+        }
+    }
+    /// Generic OpenCV accumulates H from the interpolated int, but stores
+    /// derivatives as short before mismatch accumulation. A residual weight
+    /// of -1 can put a custom i16 derivative just beyond the short limit.
+    /// Measured with the same C++ build as the other numeric references.
+    // Miri: Six numerical fixtures exercise custom derivatives and repeated LK iterations.
+    // Keep this numeric regression in ordinary tests; small validation, borrowing,
+    // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lk_opencv_custom_i16_patch_storage() {
+        let win = Size2i::new(5, 5);
+        let mut prev = reusable_pyramid(&reusable_texture(9, 9, 0), win, true, 0);
+        let next = reusable_pyramid(&reusable_texture(9, 9, 1), win, true, 0);
+        for y in 0..9i32 {
+            for x in 0..9i32 {
+                let i = (y * 9 + x) as usize;
+                prev.dx[0].data[i] = if x % 2 == 1 && y % 2 == 1 {
+                    -32768.0
+                } else {
+                    32767.0
+                };
+                prev.dy[0].data[i] = ((x * 73 - y * 91) % 600) as f32;
+            }
+        }
+        let points = [Point2f::new(2.0000978, 2.0001)];
+        let guesses = [Point2f::new(3.12345, 2.54321)];
+        for (count, x, y, mae) in [
+            (0, 3.12345, 2.54321, 13.3625),
+            (1, 3.1242523, 2.9136558, 20.55625),
+            (20, 3.1392732, 7.592804, 80.36),
+        ] {
+            for (flag, error) in [(0, mae), (OPTFLOW_LK_GET_MIN_EIGENVALS, 0.026640626)] {
+                let actual = calc_optical_flow_pyramid_lk_with_pyramids(
+                    &prev,
+                    &next,
+                    &points,
+                    Some(&guesses),
+                    win,
+                    0,
+                    TermCriteria::new(TermType::Count, count, 0.0),
+                    OPTFLOW_USE_INITIAL_FLOW | flag,
+                    1e-4,
+                )
+                .unwrap();
+                assert_eq!(actual.1, vec![1]);
+                assert!(
+                    (actual.0[0].x - x).abs() <= 2e-6 && (actual.0[0].y - y).abs() <= 2e-6,
+                    "{count}: {:?} vs ({x},{y})",
+                    actual.0[0]
+                );
+                assert!(
+                    (actual.2[0] - error).abs() <= 2e-6,
+                    "{} vs {error}",
+                    actual.2[0]
+                );
             }
         }
     }

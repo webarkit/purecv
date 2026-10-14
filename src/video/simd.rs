@@ -34,7 +34,7 @@
  *
  */
 
-//! SIMD-accelerated inner kernels for the Lucas-Kanade optical flow solver.
+//! Architecture-dispatched inner kernels for Lucas-Kanade optical flow.
 //!
 //! This module contains two hot-path reductions that are called at every
 //! pyramid level and at every LK iteration:
@@ -44,17 +44,20 @@
 //! * [`simd_lk_accumulate_mismatch`] — accumulates the mismatch vector **b**
 //!   from pre-gathered `Ix`, `Iy`, `I1`, and `I2` window samples.
 //!
-//! Both functions wrap their inner loops inside `pulp::Arch::dispatch`, which
-//! signals LLVM to apply the best available SIMD instruction set (AVX2, SSE4,
-//! ARM NEON, or WASM `simd128`) at runtime without any source-level `unsafe`
-//! code.
+//! Both functions wrap their inner loops inside `pulp::Arch::dispatch` without
+//! source-level `unsafe` code. The dispatched path preserves the same ordered
+//! reduction as the sequential path, so feature selection cannot change LK's
+//! numeric behavior.
 //!
 //! # Performance note
 //!
 //! The gather step (bilinear interpolation from the image pyramid) remains
 //! scalar because it involves non-contiguous memory access.  These SIMD
 //! kernels operate *after* the gather, on the pre-collected contiguous `f32`
-//! buffers, where auto-vectorisation applies cleanly.
+//! buffers. Accumulation stays in row-major f32 order to match OpenCV's
+//! generic float CPU path; do not reassociate into lane-wise sums or widen
+//! to f64, since rounding changes subsequent iterations and stopping.
+//! https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L438-L492
 
 #[allow(unused_imports)]
 use num_traits::Float;
@@ -77,21 +80,19 @@ use num_traits::Float;
 ///
 /// # Performance
 ///
-/// Wraps the accumulation loop inside `pulp::Arch::dispatch`, enabling LLVM
-/// auto-vectorisation with the best available SIMD ISA at runtime.
+/// Dispatches through `pulp::Arch` while retaining row-major f32 summation.
+/// Reassociation into independent lane sums would change the LK result.
 #[cfg(feature = "simd")]
-pub(crate) fn simd_lk_accumulate_h(ix_win: &[f32], iy_win: &[f32]) -> (f64, f64, f64) {
+pub(crate) fn simd_lk_accumulate_h(ix_win: &[f32], iy_win: &[f32]) -> (f32, f32, f32) {
     debug_assert_eq!(ix_win.len(), iy_win.len());
 
-    let mut h00 = 0.0f64;
-    let mut h01 = 0.0f64;
-    let mut h11 = 0.0f64;
+    let mut h00 = 0.0f32;
+    let mut h01 = 0.0f32;
+    let mut h11 = 0.0f32;
 
     let arch = pulp::Arch::new();
     arch.dispatch(|| {
         for (&ix, &iy) in ix_win.iter().zip(iy_win.iter()) {
-            let ix = ix as f64;
-            let iy = iy as f64;
             h00 += ix * ix;
             h01 += ix * iy;
             h11 += iy * iy;
@@ -118,21 +119,21 @@ pub(crate) fn simd_lk_accumulate_h(ix_win: &[f32], iy_win: &[f32]) -> (f64, f64,
 ///
 /// # Performance
 ///
-/// Wraps the accumulation loop inside `pulp::Arch::dispatch`, enabling LLVM
-/// auto-vectorisation with the best available SIMD ISA at runtime.
+/// Dispatches through `pulp::Arch` while retaining row-major f32 summation.
+/// Reassociation into independent lane sums would change the LK result.
 #[cfg(feature = "simd")]
 pub(crate) fn simd_lk_accumulate_mismatch(
     ix_win: &[f32],
     iy_win: &[f32],
     i1_win: &[f32],
     i2_win: &[f32],
-) -> (f64, f64) {
+) -> (f32, f32) {
     debug_assert_eq!(ix_win.len(), iy_win.len());
     debug_assert_eq!(ix_win.len(), i1_win.len());
     debug_assert_eq!(ix_win.len(), i2_win.len());
 
-    let mut bx = 0.0f64;
-    let mut by = 0.0f64;
+    let mut bx = 0.0f32;
+    let mut by = 0.0f32;
 
     let arch = pulp::Arch::new();
     arch.dispatch(|| {
@@ -141,9 +142,7 @@ pub(crate) fn simd_lk_accumulate_mismatch(
             .zip(iy_win.iter())
             .zip(i1_win.iter().zip(i2_win.iter()))
         {
-            let ix = ix as f64;
-            let iy = iy as f64;
-            let it = i2 as f64 - i1 as f64;
+            let it = i2 - i1;
             bx -= ix * it;
             by -= iy * it;
         }

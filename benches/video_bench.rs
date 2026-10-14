@@ -57,7 +57,10 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use purecv::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use purecv::core::Matrix;
-use purecv::video::optical_flow::{build_optical_flow_pyramid, calc_optical_flow_pyramid_lk};
+use purecv::video::optical_flow::{
+    build_optical_flow_pyramid, calc_optical_flow_pyramid_lk,
+    calc_optical_flow_pyramid_lk_with_pyramids, OpticalFlowPyramid,
+};
 use std::hint::black_box;
 
 // ---------------------------------------------------------------------------
@@ -288,10 +291,108 @@ fn bench_optical_flow_win_size(c: &mut Criterion) {
     group.finish();
 }
 
+/// Two uses of a shared frame: previous -> current (temporal), current -> right
+/// (stereo). Compare tracking alone with cached preprocessing, and include the
+/// cost of preparing each new frame once. Timings are observations, not tests.
+fn bench_optical_flow_reuse(c: &mut Criterion) {
+    let size = 256;
+    let data: Vec<u8> = (0..size * size)
+        .map(|i| {
+            if ((i % size) / 16 + (i / size) / 16) % 2 == 0 {
+                30
+            } else {
+                210
+            }
+        })
+        .collect();
+    let previous = Matrix::from_vec(size, size, 1, data.clone());
+    let current = Matrix::from_vec(size, size, 1, shift_image(&data, size, 1));
+    let right = Matrix::from_vec(size, size, 1, shift_image(&data, size, 2));
+    let points = make_grid_points(size, 32);
+    let win = Size2i::new(15, 15);
+    let criteria = TermCriteria::new(TermType::Both, 20, 0.03);
+    // `deriv_border = Constant` reproduces the raw-image path's derivative
+    // padding, so the cached and raw workloads differ only by preprocessing.
+    let build = |image: &Matrix<u8>, derivatives| {
+        build_optical_flow_pyramid(
+            image,
+            win,
+            3,
+            derivatives,
+            BorderTypes::Reflect101,
+            BorderTypes::Constant,
+        )
+        .unwrap()
+    };
+    let track = |prev: &OpticalFlowPyramid, next: &OpticalFlowPyramid| {
+        calc_optical_flow_pyramid_lk_with_pyramids(
+            black_box(prev),
+            black_box(next),
+            black_box(&points),
+            None,
+            win,
+            3,
+            criteria,
+            0,
+            1e-4,
+        )
+        .unwrap()
+    };
+    let prev_pyr = build(&previous, true);
+    let current_pyr = build(&current, true);
+    let right_pyr = build(&right, false);
+    let prev_images = build(&previous, false);
+    let current_images = build(&current, false);
+    let mut group = c.benchmark_group("lk_temporal_stereo_reuse");
+    group.bench_function("raw_two_tracks", |b| {
+        b.iter(|| {
+            for (prev, next) in [(&previous, &current), (&current, &right)] {
+                black_box(
+                    calc_optical_flow_pyramid_lk(
+                        black_box(prev),
+                        black_box(next),
+                        black_box(&points),
+                        None,
+                        win,
+                        3,
+                        criteria,
+                        0,
+                        1e-4,
+                    )
+                    .unwrap(),
+                );
+            }
+        })
+    });
+    group.bench_function("cached_levels_two_tracks", |b| {
+        b.iter(|| {
+            black_box(track(&prev_images, &current_images));
+            black_box(track(&current_images, &right_pyr));
+        })
+    });
+    group.bench_function("cached_derivatives_two_tracks", |b| {
+        b.iter(|| {
+            black_box(track(&prev_pyr, &current_pyr));
+            black_box(track(&current_pyr, &right_pyr));
+        })
+    });
+    // The previous frame was prepared in the preceding iteration/frame.
+    group.bench_function("build_new_frames_once_and_two_tracks", |b| {
+        b.iter(|| {
+            let current_pyr = build(black_box(&current), true);
+            let right_pyr = build(black_box(&right), false);
+            black_box(track(&prev_pyr, &current_pyr));
+            black_box(track(&current_pyr, &right_pyr));
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_build_pyramid,
     bench_optical_flow,
-    bench_optical_flow_win_size
+    bench_optical_flow_win_size,
+    bench_optical_flow_reuse
 );
 criterion_main!(benches);

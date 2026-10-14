@@ -56,6 +56,7 @@ pub(crate) mod simd;
 mod tests;
 
 pub use optical_flow::{
-    build_optical_flow_pyramid, calc_optical_flow_pyramid_lk, OpticalFlowPyramid,
-    OPTFLOW_LK_GET_MIN_EIGENVALS, OPTFLOW_USE_INITIAL_FLOW,
+    build_optical_flow_pyramid, calc_optical_flow_pyramid_lk,
+    calc_optical_flow_pyramid_lk_with_pyramids, OpticalFlowPyramid, OPTFLOW_LK_GET_MIN_EIGENVALS,
+    OPTFLOW_USE_INITIAL_FLOW,
 };
