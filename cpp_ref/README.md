@@ -222,6 +222,9 @@ All in one PR on the roadmap (#128):
 6. Update `CONTRIBUTING.md`.
 7. Run the bootstrap: the checkouts are `drifted`, so it fetches and checks out the new
    commits, and must end with two `OK` lines.
+8. Open the matching issue in [webarkit/jsfeatNext](https://github.com/webarkit/jsfeatNext),
+   which pins the same build for its OpenCV fixtures, so both repositories change reference
+   together (`CONTRIBUTING.md`, "OpenCV Reference Version", point 5).
 
 ## `bootstrap.py` provenance
 
