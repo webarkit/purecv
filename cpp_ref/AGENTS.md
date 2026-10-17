@@ -59,4 +59,5 @@ rg -n "\b<Name>\(" cpp_ref/src/opencv/modules/<m>/src
 
 ## Parity audits
 
-Not set up yet; the audit method will be linked here.
+Method, statuses and dimensions: `docs/parity/README.md` (S1–S7, D1–D7). One document per
+module: `docs/parity/<module>.md`. The umbrella issue is #172; the sub-issues are #173–#177.
