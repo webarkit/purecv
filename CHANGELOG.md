@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-10-17
+
+### 📚 Documentation
+
+- Link jsfeatNext in the OpenCV reference policy (#181)
+
+### 🚀 Features
+
+- *(video)* [**breaking**] Support precomputed optical-flow pyramids in LK (#167)
+  - `OpticalFlowPyramid` gains public `pyr_border` and `deriv_border` fields.
+  - `build_optical_flow_pyramid` and the raw LK API share OpenCV 4.10.0's level cutoff (a level is added only while it stays larger than the window), so small images get fewer levels; the builder now requires a window of at least 3x3.
+  - `deriv_border` follows OpenCV's `derivBorder`: Scharr always uses Reflect101 and the border only extends the computed derivatives.
+  - Termination criteria are normalised like OpenCV: `Count`-only criteria also stop at eps 0.01².
+  - Tracking uses OpenCV's fixed-point sampling and f32 arithmetic, so results change numerically.
+
 ## [0.10.0] - 2026-10-14
 
 ### ⚙️ Miscellaneous Tasks
