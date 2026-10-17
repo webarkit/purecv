@@ -3,6 +3,12 @@ name: Miri
 # Undefined-behaviour verification for the `unsafe` slice reinterpretations
 # backing the SIMD fast paths. Full rationale, inclusion/exclusion table and
 # known coverage gaps: .agents/MIRI_PLAN.md
+#
+# Layout (#182): each leg (baseline, simd) runs as two nextest partitions in
+# parallel, and a per-leg aggregator job carries the historical names
+# "Miri UB Check (baseline)" / "Miri UB Check (simd)" that release.yml waits
+# on. Only the aggregator names are load-bearing; the shard jobs can be
+# renamed or re-partitioned freely.
 
 on:
   push:
@@ -24,31 +30,24 @@ env:
   # NOT the issue's `-Zmiri-strict-provenance`: that is now Miri's default and
   # the flag is deprecated. See .agents/MIRI_PLAN.md §3.
   MIRIFLAGS: -Zmiri-deterministic-floats
+  # Partitions per leg. Each shard job passes `slice:<k>/<N>` to nextest, so a
+  # change here must be mirrored in both `partition:` matrices below.
+  MIRI_PARTITIONS: 2
 
 jobs:
-  miri:
-    name: Miri UB Check (${{ matrix.name }})
+  # Safe code paths plus the data_ptr/data_ptr_mut tests in src/core/tests.rs —
+  # the only `unsafe` reachable without `simd`.
+  shard-baseline:
+    name: Miri shard (baseline, ${{ matrix.partition }}/2)
     runs-on: ubuntu-latest
-    # Measured ~4 min of test execution locally; this is headroom for a cold
-    # cache and a slower runner. See .agents/MIRI_PLAN.md §9.
-    timeout-minutes: 30
-    continue-on-error: ${{ matrix.experimental }}
-
+    # One sequential leg took 25–30 min before #182; each shard is a few
+    # minutes now (.agents/MIRI_PLAN.md §9). The budget is headroom for a cold
+    # cache, not for the suite.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Safe code paths plus the data_ptr/data_ptr_mut tests in
-          # src/core/tests.rs — the only `unsafe` reachable without `simd`.
-          # Required gate.
-          - { name: baseline, features: "std", experimental: false }
-          # Reaches the real production `unsafe`: src/core/arithm.rs (119, 267)
-          # and src/imgproc/derivatives.rs (346, 349). Required gate.
-          # pulp is confirmed Miri-compatible: this leg passes clean on both
-          # ubuntu-latest and x86_64-pc-windows-msvc (355 passed / 0 failed,
-          # identical counts). See .agents/MIRI_PLAN.md §3.
-          - { name: simd, features: "std,simd", experimental: false }
-
+        partition: [ 1, 2 ]
     steps:
     - uses: actions/checkout@v6
 
@@ -57,10 +56,20 @@ jobs:
       with:
         components: miri
 
+    # nextest runs every test in its own process. Miri interprets a single
+    # thread, so `cargo miri test` ran the suite serially no matter how many
+    # vCPUs the runner has; under nextest a shard's tests run concurrently on
+    # all of them. Prebuilt binary, ~10 s.
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@cargo-nextest
+
+    # One cache per leg, shared by its partitions: they build identical
+    # artifacts, and Swatinem/rust-cache never overwrites an existing key, so
+    # the partitions do not race on it.
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
-        key: miri-${{ matrix.name }}
+        key: miri-baseline
 
     # Kept as its own step: when a nightly ships without a usable miri
     # component, the failure points at the toolchain rather than at our code.
@@ -78,5 +87,81 @@ jobs:
     # `--lib` also skips tests/ (opencv_reference_links.rs scans the filesystem,
     # which Miri isolation rejects; it runs in ci.yml). Doc-tests remain fully
     # exercised by `cargo test` in ci.yml.
+    # `--partition slice:k/N` deals the test list round-robin into N buckets,
+    # so every test runs in exactly one shard and no module list has to be
+    # maintained here. nextest prints a per-test time, which is the source for
+    # the tables in .agents/MIRI_PLAN.md §4.
     - name: Run Miri
-      run: cargo miri test -p purecv --lib --no-default-features --features ${{ matrix.features }}
+      run: >-
+        cargo miri nextest run -p purecv --lib
+        --no-default-features --features std
+        --partition slice:${{ matrix.partition }}/${{ env.MIRI_PARTITIONS }}
+
+  # Reaches the real production `unsafe`: src/core/arithm.rs (119, 267) and
+  # src/imgproc/derivatives.rs (346, 349). pulp is confirmed Miri-compatible:
+  # this leg passes clean on both ubuntu-latest and x86_64-pc-windows-msvc.
+  # See .agents/MIRI_PLAN.md §3. Steps are identical to shard-baseline apart
+  # from the feature set and the cache key.
+  shard-simd:
+    name: Miri shard (simd, ${{ matrix.partition }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [ 1, 2 ]
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust nightly + Miri
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: miri
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@cargo-nextest
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: miri-simd
+
+    - name: Build Miri sysroot
+      run: cargo miri setup
+
+    - name: Run Miri
+      run: >-
+        cargo miri nextest run -p purecv --lib
+        --no-default-features --features std,simd
+        --partition slice:${{ matrix.partition }}/${{ env.MIRI_PARTITIONS }}
+
+  # The two jobs below exist only to carry the names release.yml waits on.
+  # They must run even when a shard fails: lewagon/wait-on-check-action accepts
+  # `skipped` by default, so a plain `needs:` dependency that got skipped on a
+  # red shard would let a release through. `if: always()` plus an explicit
+  # check of the matrix result (which is `success` only when every partition
+  # succeeded; failure, cancellation and timeouts all show up as something
+  # else) turns any shard problem into a failed required check.
+  baseline:
+    name: Miri UB Check (baseline)
+    needs: [ shard-baseline ]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Require every baseline shard to succeed
+      run: |
+        echo "shard-baseline: ${{ needs.shard-baseline.result }}"
+        test "${{ needs.shard-baseline.result }}" = "success"
+
+  simd:
+    name: Miri UB Check (simd)
+    needs: [ shard-simd ]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Require every simd shard to succeed
+      run: |
+        echo "shard-simd: ${{ needs.shard-simd.result }}"
+        test "${{ needs.shard-simd.result }}" = "success"

@@ -5,6 +5,9 @@
 > **Issue:** [webarkit/purecv#81](https://github.com/webarkit/purecv/issues/81) ·
 > **PR:** [#93](https://github.com/webarkit/purecv/pull/93) ·
 > **Follow-up:** [#94](https://github.com/webarkit/purecv/issues/94) (the `parallel+simd` gap, §5)
+> **Amended:** [#182](https://github.com/webarkit/purecv/issues/182) — the legs grew
+> to the 30-minute job timeout; each now runs as two nextest partitions (§3, §9) and
+> nine more tests are excluded on measurement (§4).
 
 ---
 
@@ -73,13 +76,22 @@ thing the baseline leg meaningfully verifies.
 
 ## 3. What Runs Under Miri
 
-Two matrix legs, both `-p purecv` (never `--workspace`, which would pull in the wasm
+Two legs, both `-p purecv` (never `--workspace`, which would pull in the wasm
 crate) and both `--no-default-features` (the default set silently enables `parallel`).
+
+Since #182 each leg runs as **two nextest partitions** in parallel CI jobs
+(`Miri shard (<leg>, k/2)`), with a per-leg aggregator job that keeps the historical
+names `Miri UB Check (baseline)` / `Miri UB Check (simd)` for `release.yml`. Miri
+interprets a single thread, so `cargo miri test` ran every test of a leg one after
+the other on one core; `cargo miri nextest run` spawns one process per test and uses
+all the runner's vCPUs, and `--partition slice:k/N` deals the test list round-robin
+into N buckets so every test runs in exactly one shard. The commands below are what
+each shard runs; drop `--partition` to run a whole leg.
 
 ### Leg 1 — `baseline` · **required**
 
 ```bash
-cargo miri test -p purecv --lib --no-default-features --features std
+cargo miri nextest run -p purecv --lib --no-default-features --features std --partition slice:k/2
 ```
 
 Covers all safe code paths and the `data_ptr` tests. Expected to pass trivially.
@@ -89,7 +101,7 @@ in any future non-SIMD `unsafe`.
 ### Leg 2 — `simd` · **required**
 
 ```bash
-cargo miri test -p purecv --lib --no-default-features --features std,simd
+cargo miri nextest run -p purecv --lib --no-default-features --features std,simd --partition slice:k/2
 ```
 
 The leg that does the real work: it reaches `arithm.rs:119,267` and
@@ -99,12 +111,11 @@ pulp is **confirmed Miri-compatible** (A1, §6). This leg was designed to start
 advisory (`experimental: true`) in case Miri's target-dependent intrinsic support
 differed on CI, and was promoted to required once it ran green on `ubuntu-latest`
 with counts identical to local Windows — 355 passed, 0 failed, 9 ignored on both
-(measured on `dev` @ v0.7.0; see §9). `fix/orb-123-126` added 7 more
-`#[cfg_attr(miri, ignore)]` tests (§4), bringing this leg's *current* total to 16
-ignored. `cargo test --no-default-features --features std,simd --lib` (which is
-unaffected by `cfg(miri)`, so nothing is skipped) reports 434 tests for this feature
-set at this PR's tip — derived, not re-measured under Miri for this PR: 418 passed,
-0 failed, 16 ignored.
+(measured on `dev` @ v0.7.0; see §9). Later work kept adding tests and exclusions:
+`fix/orb-123-126` 7 ORB tests, #164/#167 9 LK tests, #182 9 more (§4), for 34
+`#[cfg_attr(miri, ignore)]` in total. At #182's tip this leg has 460 tests
+(`cargo test --no-default-features --features std,simd --lib -- --list`), of which
+34 are ignored under Miri; the baseline leg has 404, with the same 34 ignored.
 
 ### Aliasing model and MIRIFLAGS
 
@@ -135,17 +146,37 @@ over ignoring that test, since it keeps the RNG determinism contract under test.
 | `crates/wasm` (`purecv-wasm`) | Miri has no `wasm32-unknown-unknown` support. Excluded structurally via `-p purecv` rather than `--workspace --exclude`. |
 | `benches/` | Not built by `cargo miri test`; Criterion's sampling under interpretation would be meaninglessly slow. |
 | `parallel` feature | Rayon under Miri is slow and its thread support is limited. Accepted cost: a coverage gap (§5). |
-| 16 individual tests | Excluded **on measured evidence, or a reasoned bound for the same algorithm** (see below), never speculatively. |
+| 34 individual tests | Excluded **on measured evidence, or a reasoned bound for the same algorithm** (see below), never speculatively. |
 
 ### Excluded tests — measured
 
-Threshold: **>30s under Miri**. Nine tests qualified by direct measurement. They are
-iteration-heavy algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them contain or
-reach `unsafe`** — so excluding them costs no UB coverage. `fix/orb-123-126` (#123–#126,
-#156) added seven more ORB tests, each heavier than `test_orb_full_pipeline` or
-`test_orb_pyramid_dimensions` on the same detect/detect_and_compute/pyramid+blur
-operations, so they are excluded on that bound rather than an independent Miri
-measurement. Sixteen tests are excluded in total.
+Threshold: **>30s under Miri**. Nine tests qualified by direct measurement in #81.
+They are iteration-heavy algorithms (RANSAC, ORB, Lucas-Kanade), and **none of them
+contain or reach `unsafe`** — so excluding them costs no UB coverage.
+`fix/orb-123-126` (#123–#126, #156) added seven more ORB tests, each heavier than
+`test_orb_full_pipeline` or `test_orb_pyramid_dimensions` on the same
+detect/detect_and_compute/pyramid+blur operations, so they are excluded on that
+bound rather than an independent Miri measurement. #164 and #167 added nine LK
+fixture tests excluded on the same kind of bound (each runs many full pyramid builds
+and LK solves). #182 added nine more, measured from the `dev` run 39021153764 of
+2026-10-17 (job logs, gap between consecutive test lines; `std` / `std,simd`), after
+the two legs reached the 30-minute timeout. Thirty-four tests are excluded in total.
+
+**Coverage check for the #182 batch.** `test_clahe_u16` reaches no `unsafe` on either
+leg: `imgproc/histogram.rs` imports from `core` only `Matrix`, the error type,
+`types` and `border_interpolate`, never `arithm`, and its single `simd` branch is in
+`compare_hist`, which CLAHE does not call. The eight LK tests go through
+`calc_optical_flow_pyramid_lk`; `video/optical_flow.rs` imports `scharr` and
+`pyr_down` and nothing from `arithm`, and `pyramid.rs` uses neither `arithm` nor the
+derivative kernels. So under `std` they reach no `unsafe` at all, and under `simd`
+the only `unsafe` they reach is `fast_deriv_3x3` (the pyramid levels are `f32`),
+which stays covered by `imgproc::tests::test_scharr` and by the LK tests kept on
+purpose below the threshold: `test_lk_min_eigen_matches_opencv_scale` (29.5s / 10.8s)
+and `test_lk_single_newton_step_is_exact_on_quadratic_bowl` (29.0s / 13.9s), plus
+about twenty smaller ones. The `pulp::Arch::dispatch` kernels in `video/simd.rs`
+(no `unsafe`) are exercised directly by `video::simd::tests` and by every remaining
+LK test. `test_harris_at_matches_corner_harris_everywhere` (30.9s / 24.1s) was left
+in: it is at the threshold on one leg only.
 
 | Test | Miri time | File |
 |------|-----------|------|
@@ -165,12 +196,33 @@ measurement. Sixteen tests are excluded in total.
 | `features2d::tests::test_orb_detect_and_compute_golden_fast_params` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
 | `features2d::tests::test_orb_detect_ignores_descriptor_only_params` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
 | `features2d::tests::test_orb_ref_image_matches_generator` | not run; bounded below by `test_orb_full_pipeline` (806 s) / `test_orb_pyramid_dimensions` (30.2 s) | `src/features2d/tests.rs` |
+| `video::…::test_lk_coarse_window_overhang_matches_opencv` | not run; 150-point pyramidal LK, bounded below by `test_lk_pure_translation_x` (#164) | `src/video/tests.rs` |
+| `video::…::test_build_pyramid_opencv_padding_does_not_change_pixels` | not run; ten border combinations each rebuilding image + Scharr pyramids (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_opencv_asymmetric_borders_mae` | not run; twelve border/derivative pyramid builds (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_opencv_asymmetric_borders_step` | not run; multiple full preprocessing + LK fixtures (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_opencv_custom_i16_patch_storage` | not run; six numerical fixtures with repeated LK iterations (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_opencv_quantized_patch_reference` | not run; window × depth × iteration × error-mode fixtures (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_opencv_termination_reference` | not run; many termination fixtures over raw / image-only / derivative-pyramid paths (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_prebuilt_caps_levels_and_preserves_builder_cutoff` | not run; repeated raw/prebuilt tracking across depth combinations (#167) | `src/video/tests.rs` |
+| `video::…::test_lk_prebuilt_matches_raw_borders_small_images_and_flags` | not run; many pyramid-construction × tracking combinations (#167) | `src/video/tests.rs` |
+| `imgproc::…::test_clahe_u16` | 707.2s (`std`) / 952.0s (`std,simd`) — #182 | `src/imgproc/tests.rs` |
+| `video::…::test_lk_recovers_subpixel_shift_with_opencv_defaults` | 244.5s / 87.0s — #182 | `src/video/tests.rs` |
+| `video::…::test_lk_extreme_initial_flow_coordinates_are_lost` | 64.9s / 32.7s — #182 | `src/video/tests.rs` |
+| `video::…::test_calc_optical_flow_pyramid_lk_uses_scharr_derivatives` | 54.9s / 16.9s — #182 (was ~18s before #167) | `src/video/tests.rs` |
+| `video::…::test_lk_coarse_level_degeneracy_keeps_propagated_flow` | 50.8s / 17.0s — #182 | `src/video/tests.rs` |
+| `video::…::test_lk_coarse_level_degeneracy_does_not_lose_point` | 50.5s / 17.0s — #182 | `src/video/tests.rs` |
+| `video::…::test_lk_extreme_template_coordinates_are_lost` | 49.4s / 19.4s — #182 | `src/video/tests.rs` |
+| `video::…::test_lk_tracking_error_uses_exact_win_size_samples` | 37.2s / 16.6s — #182 | `src/video/tests.rs` |
+| `video::…::test_lk_min_eigen_uses_exact_win_size_samples` | 35.5s / 15.7s — #182 | `src/video/tests.rs` |
 
-**Why so few exclusions suffice.** The distribution is extremely skewed: the top 5
-tests are 82% of total runtime, while the remaining **341 tests complete in well
-under two minutes combined**. Sixteen annotations (the original nine, plus seven added by
-`fix/orb-123-126` for the #123–#126/#156 ORB fixes) take the suite from 41 minutes to
-roughly 4.
+**Why so few exclusions suffice.** The distribution is extremely skewed: in #81 the
+top 5 tests were 82% of total runtime, while the remaining 341 tests completed in
+well under two minutes combined, and nine annotations took the suite from 41 minutes
+to roughly 4. The same shape returned in #182: on the 2026-10-17 `dev` run the
+`std` leg spent 1699s in tests, of which `test_clahe_u16` alone was 707s and the
+eight LK tests above 568s; the other 395 tests took 373s combined (`std,simd`: 1451s
+→ 253s). The per-module split after the exclusions, `std` / `std,simd`: core 35s /
+42s, imgproc 130s / 94s, video 182s / 96s, features2d 19s / 15s, calib3d 6s / 5s.
 
 **Coverage check on the one borderline case.** `test_build_pyramid_with_derivatives`
 exercises the Scharr path (Sobel before #130, switched to Scharr by that fix), which
@@ -204,8 +256,10 @@ by grep** instead of drifting out of sync:
 grep -rn -B1 "cfg_attr(miri, ignore)" src/
 ```
 
-The codebase currently has **zero** `#[ignore]` and **zero** `cfg_attr` annotations,
-so every future match is unambiguously Miri-related.
+The codebase has **zero** `#[ignore]` and no `cfg_attr` other than these, so every
+match is unambiguously Miri-related. The reason comment may span several lines;
+`-B1` shows only the last one, so widen the context when auditing. Tests excluded by
+#164/#167 were brought under this convention by #182.
 
 ### If pulp proves wholly incompatible
 
@@ -321,6 +375,22 @@ MIRIFLAGS=-Zmiri-deterministic-floats \
 
 On PowerShell, set the variable separately: `$env:MIRIFLAGS="-Zmiri-deterministic-floats"`.
 
+CI runs the same legs through nextest (§3, §9), which is also the fastest way to run a
+leg locally since it uses every core. Install it once with
+`cargo install cargo-nextest --locked` (or `cargo binstall cargo-nextest`), then:
+
+```bash
+MIRIFLAGS=-Zmiri-deterministic-floats \
+  cargo +nightly miri nextest run -p purecv --lib --no-default-features --features std,simd
+```
+
+Add `--partition slice:1/2` (or `2/2`) to reproduce one CI shard exactly. nextest
+prints each test's wall time, inflated by the concurrent tests sharing the machine
+(§9), so for a threshold measurement run without `-j`/partition contention: add
+`-j1`, or use the `cargo miri test` command above with `--report-time`. The
+`.config/nextest.toml` profile `default-miri` (selected automatically under Miri)
+flags a test as slow after 2 minutes and kills it after 10, naming it.
+
 | Omitting… | Symptom |
 |-----------|---------|
 | `MIRIFLAGS=-Zmiri-deterministic-floats` | `test_randn_determinism` fails on a last-ULP float difference (§6) — looks like a real regression, isn't |
@@ -359,7 +429,7 @@ Quality gate per `CLAUDE.md` before each commit, in order: `cargo fmt` →
 
 ## 9. Workflow
 
-`.github/workflows/miri.yml`:
+`.github/workflows/miri.yml` (abridged; since #182):
 
 ```yaml
 name: Miri
@@ -367,52 +437,58 @@ name: Miri
 on:
   push:
     branches: [ "main", "dev" ]
+    tags: [ "v*" ]          # release.yml waits on the two aggregators below
   pull_request:
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   MIRIFLAGS: -Zmiri-deterministic-floats
+  MIRI_PARTITIONS: 2
 
 jobs:
-  miri:
-    name: Miri UB Check (${{ matrix.name }})
+  shard-baseline:                       # identical twin: shard-simd (std,simd)
+    name: Miri shard (baseline, ${{ matrix.partition }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: ${{ matrix.experimental }}   # both legs now false
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Safe paths + data_ptr tests. Required gate.
-          - { name: baseline, features: "std",      experimental: false }
-          - { name: simd,     features: "std,simd", experimental: false }
-          # Reaches the real unsafe blocks. Advisory until pulp/Miri
-          # compatibility is proven — see .agents/MIRI_PLAN.md §3.
-          - { name: simd,     features: "std,simd", experimental: true  }
+        partition: [ 1, 2 ]
     steps:
       - uses: actions/checkout@v6
-
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-
+      - uses: taiki-e/install-action@cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
-          key: miri-${{ matrix.name }}
-
-      # Separate step: when a broken nightly ships without a usable miri
-      # component, the failure points at the toolchain, not at our code.
+          key: miri-baseline            # one key per leg, shared by its partitions
       - name: Build Miri sysroot
         run: cargo miri setup
-
-      # -p purecv excludes crates/wasm (Miri has no wasm32 support).
-      # --no-default-features suppresses `parallel`, which default = ["std", "parallel"]
-      # would otherwise enable silently.
-      # --lib skips doc-tests (see "Doc-tests" below).
       - name: Run Miri
-        run: cargo miri test -p purecv --lib --no-default-features --features ${{ matrix.features }}
+        run: >-
+          cargo miri nextest run -p purecv --lib
+          --no-default-features --features std
+          --partition slice:${{ matrix.partition }}/${{ env.MIRI_PARTITIONS }}
+
+  baseline:                             # twin: simd → "Miri UB Check (simd)"
+    name: Miri UB Check (baseline)
+    needs: [ shard-baseline ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.shard-baseline.result }}" = "success"
 ```
+
+Why the aggregators are shaped like that: `lewagon/wait-on-check-action` (used by
+`release.yml`) accepts `success,skipped` by default. A job that merely `needs:` the
+shards is *skipped* when one of them fails, and the release would go ahead. With
+`if: always()` the aggregator runs regardless and fails unless the matrix result is
+`success`, which it is only when every partition succeeded — failures, timeouts and
+cancellations all become a red required check. The shard jobs can be renamed or
+re-partitioned without touching `release.yml`; only the two aggregator names and the
+`tags: [ "v*" ]` trigger are load-bearing.
 
 > The file itself is authoritative; this listing is abridged. See
 > `.github/workflows/miri.yml` for the full inline commentary.
@@ -436,9 +512,18 @@ This cost was invisible during the first baseline run, which aborted at the
 - **Broken nightly.** If `cargo miri setup` fails because a given nightly shipped
   without miri, temporarily pin a known-good date
   (`dtolnay/rust-toolchain@nightly-YYYY-MM-DD`) and revert once upstream recovers.
-- **Timeout.** 30 minutes, against a measured ~4 min of test execution. Generous
-  headroom for a cold cache and a slower runner, while still failing fast if a
-  future change reintroduces a pathological test.
+- **Timeout.** 20 minutes per shard, against a few minutes of measured work (see
+  the #182 table below); the budget is headroom for a cold cache and a slow runner.
+  A single pathological test no longer needs the job timeout to be noticed: the
+  `default-miri` nextest profile kills any test that runs for 10 minutes and reports
+  its name (`.config/nextest.toml`).
+- **Partition count.** `MIRI_PARTITIONS` in the workflow env plus the two
+  `partition:` matrices. Raise all three together when a shard creeps past ~10 min;
+  `slice:` keeps every test in exactly one bucket for any N.
+- **Timing a test.** nextest prints each test's wall time in the job log. For a
+  whole-leg profile, download the shard logs and sort by that column, remembering
+  that four tests run at once on the runner, so single-test figures read 1.5–2×
+  higher than under the sequential command (see the #182 table below).
 - **Reproducing locally.** Use the exact commands in §8.
 - **Measured runtime** (`x86_64-pc-windows-msvc`, 2026-08-08):
 
@@ -463,6 +548,32 @@ This cost was invisible during the first baseline run, which aborted at the
   Note leg 1 is *slower* than leg 2 despite running 56 fewer tests: under `simd`,
   several kernels process data in chunks that cost Miri less to interpret than the
   equivalent scalar loops.
+
+- **Measured runtime after #182** (`ubuntu-latest`). Before: the two sequential
+  `cargo miri test` jobs on `dev` @ v0.11.0, run 39021153764 (2026-10-17); the same
+  commit on the release PR #186 (run 39021101772) had its baseline job cancelled at
+  30 min 19 s. After: the nextest shards on the #182 PR.
+
+  | Job | Before (one sequential job) | After (per shard) |
+  |-----|-----------------------------|-------------------|
+  | `baseline` | 29 min 34 s (tests 1699 s) | 1/2: 5 min 56 s (tests 283 s) · 2/2: 6 min 18 s (tests 303 s) |
+  | `simd` | 25 min 22 s (tests 1451 s) | 1/2: 6 min 29 s (tests 317 s) · 2/2: 4 min 1 s (tests 185 s) |
+
+  PR #187, run 39050813686 (2026-10-17, cold cache for the new per-leg keys).
+  Setup is ~1 min per shard: toolchain 10 s, nextest install 1 s, `cargo miri setup`
+  20 s, test build 28 s. Counts: baseline 185 + 185 = 370 run, simd 213 + 213 = 426
+  run, 34 ignored on each leg (nextest reports 219 / 247 "skipped" per shard: the
+  34 ignored plus the other partition's tests), every test in exactly one shard.
+  The aggregators `Miri UB Check (baseline)` / `(simd)` completed 2–4 s after their
+  last shard. The longest job went from 29 min 34 s to 6 min 29 s, a 4.6× cut, with
+  the 20-minute shard timeout leaving ~3× headroom.
+
+  Per-test wall times under nextest are **not** comparable with the sequential
+  figures in §4: four tests share the runner, so each one reads 1.5–2× slower
+  (`test_harris_at_matches_corner_harris_everywhere` 59 s here vs 31 s alone, the
+  slowest remaining test on either leg). Use the sequential leg (§8 without
+  `--partition`, or `cargo miri test`) when measuring a test against the 30 s
+  threshold.
 
 ---
 
@@ -506,6 +617,9 @@ This turns a claim Miri would contradict into one Miri actively backs.
 | # | Decision | Alternatives considered | Rationale |
 |---|----------|-------------------------|-----------|
 | 10 | Set `MIRIFLAGS: -Zmiri-deterministic-floats` — **revises #4** | `#[cfg_attr(miri, ignore)]` on `test_randn_determinism`; leave the failure | #4 said "no flags", but measurement found a genuine need. The flag keeps the RNG determinism contract under test instead of disabling it, and targets a documented Miri behaviour rather than a real defect |
+| 12 | Shard each leg with `cargo miri nextest run --partition slice:k/2` (#182) | Job matrix per module with `cargo miri test -- <filter>`; raise the timeout; exclusions only | Exclusions alone left the legs at ~14–20 min and every new test lands in the same two serial jobs. nextest uses the runner's idle vCPUs (Miri is single-threaded per process) and `slice:` partitions need no hand-kept module list. A per-module matrix would have been 8 sequential jobs each paying setup, bottlenecked by whichever module grows. Cost: one prebuilt tool install (~10 s) and Miri's cross-test data-race detection, which needs shared state the suite doesn't have |
+| 13 | Per-leg aggregator jobs with `if: always()` + explicit result check (#182) | Rename the checks in `release.yml`; plain `needs:` aggregator | Keeps `release.yml` untouched. A plain `needs:` aggregator is *skipped* on a red shard, and `wait-on-check-action` accepts `skipped` by default — the release would proceed |
+| 14 | `.config/nextest.toml` `default-miri` slow-timeout 10 min (#182) | None (job timeout only) | A future `test_clahe_u16` fails with its name in minutes instead of cancelling the job at 20 min with no culprit |
 | 11 | Exclude the 9 tests over 30s — **implements #2** | Exclude >10s (15 tests); shrink inputs under `cfg(miri)`; exclude nothing and raise the timeout | Measurement showed an extreme skew: 5 tests = 82% of runtime, the rest (341 tests as of #131) well under two minutes combined. Nine annotations buy a 10× speedup; none of the nine touch `unsafe`, so no UB coverage is lost |
 
 ---
