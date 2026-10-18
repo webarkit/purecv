@@ -45,6 +45,11 @@
 //! `diverges` row; they fail when run (`cargo test --test parity_core -- --ignored`) and are
 //! the executable form of the measurement.
 
+// The literals below are OpenCV's outputs as the scripts printed them (f32 values such as
+// 1.4142135 or 0.031622779), so they are kept verbatim instead of being replaced by constants
+// or rounded.
+#![allow(clippy::approx_constant, clippy::excessive_precision)]
+
 // `add_scalar`, `add_weighted`, `compare`, `convert_scale_abs`, `copy_make_border`, `exp`,
 // `in_range`, `max`, `min`, `pow`, `sqrt` and the `*_scalar` variants are not re-exported by
 // `purecv::core` (see the D1 notes in docs/parity/core.md), so the submodules are imported.
@@ -774,6 +779,11 @@ fn transform_u8_rounds_half_to_even() {
     let mut dst = Matrix::<u8>::new(0, 0, 0);
     transform(&src, &mut dst, &m).unwrap();
     assert_eq!(dst.data, vec![19u8, 230, 1]);
+    // affine 2x4: OpenCV [[10, 32], [255, 254], [2, 0]]; the 1.5 of the third pixel rounds to
+    // 2 in OpenCV and truncates to 1 in purecv.
+    let affine = Matrix::from_vec(2, 4, 1, vec![1.0f64, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, -0.5]);
+    transform(&src, &mut dst, &affine).unwrap();
+    assert_eq!(dst.data, vec![10u8, 32, 255, 254, 2, 0]);
 }
 
 #[test]
@@ -782,11 +792,12 @@ fn transform_and_perspective_transform_match_opencv() {
     let m = Matrix::from_vec(2, 4, 1, vec![1.0f64, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, -0.5]);
     let mut dst = Matrix::<u8>::new(0, 0, 0);
     transform(&src, &mut dst, &m).unwrap();
-    // OpenCV: [[10, 32], [255, 254], [2, 0]]; 10.5 -> 10 and 1.5 -> 2 (ties to even) agree
-    // with truncation of 10.5 only by accident: see the ignored test above.
+    // OpenCV: [[10, 32], [255, 254], [2, 0]]. Five of the six values agree (10.5 -> 10 and
+    // 32.5 -> 32 by ties-to-even in OpenCV, by truncation here; 255.5 saturates; 0.5 -> 0).
+    // The sixth, 1.5 -> 2 (OpenCV) vs 1 (purecv), is asserted in the ignored test above.
     assert_eq!(dst.channels, 2);
-    assert_eq!(dst.data[0], 10);
-    assert_eq!(dst.data[3], 254);
+    assert_eq!(&dst.data[..4], &[10u8, 32, 255, 254]);
+    assert_eq!(dst.data[5], 0);
     let srcf = Matrix::from_vec(
         1,
         3,

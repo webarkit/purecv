@@ -65,7 +65,8 @@ Headline findings, in order of impact (details in the rows, proposals in
    REFLECT (OpenCV: REPLICATE; REFLECT_101 unreachable), `idft` always scales, `dft` of real
    input returns complex pairs where OpenCV returns the CCS packing, `check_range` is inclusive
    where OpenCV is `[min, max)`, `invert` returns the determinant where OpenCV returns 1.0,
-   `has_no_zero` is the complement of `hasNonZero`, `CV_LOG2` is log2(e) instead of ln 2.
+   `has_no_zero` tests "every element non-zero" where `hasNonZero` tests "any element
+   non-zero", `CV_LOG2` is log2(e) instead of ln 2.
 4. **RNG and approximations (direction `keep?`):** `randu`/`randn`/`rand_shuffle` are a
    different generator from `cv::RNG`; `phase`/`cart_to_polar` use exact `atan2` where OpenCV
    uses `fastAtan2` (0.0095° at 45°); `exp`/`log`/`pow` are correctly rounded where OpenCV's
@@ -323,7 +324,7 @@ approval in the PR review. Those marked `keep?` ask for a decision first; if kep
 | P9 | `core: norm differs from OpenCV 4.10.0: L2SQR, HAMMING, HAMMING2, RELATIVE and the two-array form are missing` | `norm` | → OpenCV | — |
 | P10 | `core: normalize differs from OpenCV 4.10.0: integer outputs truncate, dtype ignored, alpha/beta not sorted` | `normalize` | → OpenCV | #189 |
 | P11 | `core: reduce differs from OpenCV 4.10.0: AVG truncates on integer types, overflowing SUM returns 0, no dtype/SUM2` | `reduce` | → OpenCV | #189 |
-| P12 | `core: has_no_zero differs from OpenCV 4.10.0: it is the complement of hasNonZero` | `has_no_zero` | `keep?` | — |
+| P12 | `core: has_no_zero differs from OpenCV 4.10.0: it requires every element non-zero, hasNonZero requires at least one` | `has_no_zero` | `keep?` | — |
 | P13 | `core: edge semantics differ from OpenCV 4.10.0 (determinant of non-square, mean/sum beyond 4 channels, ones/eye multi-channel, flip_nd negative axis, get_optimal_dft_size edges, psnr of identical inputs)` | `determinant`, `sum`, `mean`, `ones`, `eye`, `flip_nd`, `get_optimal_dft_size`, `psnr` | → OpenCV (`ones`/`eye`: `keep?`) | — |
 | P14 | `core: invert differs from OpenCV 4.10.0: returns the determinant instead of a non-zero flag` | `invert` | → OpenCV | — |
 | P15 | `core: transform differs from OpenCV 4.10.0: integer outputs truncate` | `transform` | → OpenCV | #189 |
