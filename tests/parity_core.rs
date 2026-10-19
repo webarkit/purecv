@@ -1074,20 +1074,27 @@ fn polar_to_cart_matches_opencv_on_opencv_angles() {
     );
 }
 
-/// OpenCV's `exp`/`log` use their own polynomial approximations (about 1 ULP off libm) and
-/// `phase`/`cartToPolar` use `fastAtan2` (atan2(1, 1) = 44.99046 degrees, not 45). purecv
-/// computes both in f64 with libm and rounds once. Recorded as a precision divergence.
+/// `phase` is `intentional` (docs/parity/core.md): purecv keeps the exact `atan2`, OpenCV
+/// uses `fastAtan2` (44.990456 for (1, 1), 135.009552 for (-1, 1), 53.136284 for (3, 4)).
+/// `exp` is `measured` within 2 ULP of OpenCV's polynomial (1.6487212181, 2.7182819843).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (approximate exp/log/fastAtan2; keep?)"]
-fn exp_and_phase_reproduce_opencv_approximations() {
-    let xs = row(&[0.5f32, 1.0]);
-    assert_eq!(
-        exp(&xs).unwrap().data,
-        vec![1.6487212181091309f32, 2.7182819843292236]
-    );
+fn phase_exact_atan2_and_exp_within_2_ulp_of_opencv() {
     let mut ang = Matrix::<f32>::new(0, 0, 0);
-    phase(&row(&[1.0f32]), &row(&[1.0f32]), &mut ang, true).unwrap();
-    assert_eq!(ang.data, vec![44.990455627441406f32]);
+    phase(
+        &row(&[1.0f32, -1.0, 3.0]),
+        &row(&[1.0f32, 1.0, 4.0]),
+        &mut ang,
+        true,
+    )
+    .unwrap();
+    assert_eq!(ang.data, vec![45.0f32, 135.0, 53.130104]);
+    let e = exp(&row(&[0.5f32, 1.0])).unwrap().data;
+    for (got, opencv) in e.iter().zip([1.6487212181091309f32, 2.7182819843292236]) {
+        assert!(
+            (got - opencv).abs() <= 2.0 * f32::EPSILON * opencv,
+            "{got} vs {opencv}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1193,7 +1200,7 @@ fn kmeans_random_centers_three_attempts_find_the_global_partition() {
 /// OpenCV's `theRNG()` is a multiply-with-carry generator (`RNG::next`); purecv seeds a
 /// xoshiro256** generator, so the same seed gives a different sequence.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (RNG algorithm; keep?)"]
+#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (cv::RNG as default generator; issue pending)"]
 fn randu_seed_42_reproduces_cv_rng() {
     set_rng_seed(42);
     let mut m = Matrix::<u8>::new(1, 8, 1);

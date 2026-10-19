@@ -26,7 +26,7 @@ v0.11.0): every `pub` item of `src/core`, the re-exports of `src/core.rs`, and `
   `core_dft_dct.py`, `core_rng.py`, `core_kmeans.py`, `core_misc.py`, `core_convert_to.js`
   (helper `_core_common.py`). Each reads seeded inputs defined in the script and prints the
   build record with its results.
-- **Tests:** `tests/parity_core.rs`. 32 passing tests pin the rows that match; 25 tests marked
+- **Tests:** `tests/parity_core.rs`. 32 passing tests pin the rows that match; 24 tests marked
   `#[ignore = "diverges from OpenCV 4.10.0, …"]` are the executable form of every `diverges`
   row below and fail when run with `--ignored`. Run with `--features fft,transforms` for the
   transform rows and `--features simd` / `--release` for the D6 rows.
@@ -43,8 +43,8 @@ v0.11.0): every `pub` item of `src/core`, the re-exports of `src/core.rs`, and `
 |---|---|
 | `measured` | 28 |
 | `inspected` | 54 |
-| `diverges` | 34 |
-| `intentional` | 0 |
+| `diverges` | 33 |
+| `intentional` | 1 |
 | `purecv-only` | 9 |
 | `missing` | 47 |
 
@@ -67,10 +67,11 @@ Headline findings, in order of impact (details in the rows, proposals in
    where OpenCV is `[min, max)`, `invert` returns the determinant where OpenCV returns 1.0,
    `has_no_zero` tests "every element non-zero" where `hasNonZero` tests "any element
    non-zero", `CV_LOG2` is log2(e) instead of ln 2.
-4. **RNG and approximations (direction `keep?`):** `randu`/`randn`/`rand_shuffle` are a
-   different generator from `cv::RNG`; `phase`/`cart_to_polar` use exact `atan2` where OpenCV
-   uses `fastAtan2` (0.0095° at 45°); `exp`/`log`/`pow` are correctly rounded where OpenCV's
-   polynomials are 1–2 ULP off (recorded as `measured` within that tolerance).
+4. **RNG and approximations:** `randu`/`randn`/`rand_shuffle` use a different generator from
+   `cv::RNG`; the maintainer decided to make `cv::RNG` the default and keep xoshiro256** as an
+   option (P21). `phase`/`cart_to_polar` use exact `atan2` where OpenCV uses `fastAtan2`
+   (0.0095° at 45°): kept on purpose, `intentional`. `exp`/`log`/`pow` are correctly rounded
+   where OpenCV's polynomials are 1–2 ULP off (recorded as `measured` within that tolerance).
 5. **Permissive inputs:** many functions accept depths or shapes OpenCV rejects (`sqrt` on u8,
    `gemm` on u8, `dct` of odd sizes, `min_max_loc` on multi-channel). Correct results are noted
    on the row; silently wrong results (`determinant` of a non-square → 0, `mean` of >4 channels
@@ -168,7 +169,7 @@ Link bases used below: `H` = `https://github.com/opencv/opencv/blob/4.10.0/modul
 | `exp`, `log` | [`cv::exp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L717-L722), [`cv::log`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L750-L755); [`exp32f`, `log32f`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs_core.simd.hpp#L23-L25) | `measured` | D1, D2, D7 | Within 2 ULP (f32). OpenCV's polynomials: `exp(1)` = 2.7182819843, `exp(0.5)` = 1.6487212181, `log(0.5)` = −0.6931471825; purecv computes in f64 and rounds once (2.7182817, 1.6487213, −0.6931472, the correctly rounded values). `exp(100)` → inf, `log(0)` → −inf, `log(−1)` → nan in both. Integer input accepted by purecv only. | |
 | `pow` | [`cv::pow`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L1263-L1295) | `measured` | D1, D2, D7 | Integer powers exact in both (`x²`, `x³` with negative base → −64, `x⁻¹`); `0.5` = `sqrt` identical; non-integer powers within 2 ULP (`100^1.5`: OpenCV 1000.000122, purecv 1000.0). Negative base with non-integer power → nan in both. | |
 | `magnitude` | [`cv::magnitude`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L147-L160) | `measured` | D1, D2, D7 | 7 f32 values bit-identical. OpenCV: 32F/64F only. | |
-| `phase`, `cart_to_polar` | [`cv::phase`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L183-L200), [`cv::cartToPolar`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L278-L300) → [`fastAtan2` polynomial](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs_core.simd.hpp#L36-L73) | `diverges` | D1, D2, D7 | `keep?` OpenCV's `fastAtan2` returns 44.990456° for (1, 1), 135.009552° for (−1, 1), 53.136284° for (3, 4); purecv's libm `atan2` gives 45°, 135°, 53.130104°. Magnitudes identical. Both return `[0, 360)`/`[0, 2π)`. Same class as the #156 note on `fastAtan2`; porting it would reproduce OpenCV's error. | proposed P7 |
+| `phase`, `cart_to_polar` | [`cv::phase`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L183-L200), [`cv::cartToPolar`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L278-L300) → [`fastAtan2` polynomial](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs_core.simd.hpp#L36-L73) | `intentional` | D1, D2, D7 | Kept (maintainer decision, 2026-10-19). OpenCV's `fastAtan2` returns 44.990456° for (1, 1), 135.009552° for (−1, 1), 53.136284° for (3, 4); purecv's libm `atan2` gives 45°, 135°, 53.130104°. Magnitudes identical. Both return `[0, 360)`/`[0, 2π)`. Rationale: purecv's result is the correctly rounded angle; `fastAtan2` is a degree-7 polynomial whose error (about 0.01° on the fixture) is an approximation, not a behaviour worth reproducing, and #156 already moved ORB orientation to an exact f64 `atan2` for cross-platform determinism. Callers that need OpenCV's bits can be served later by a separate `fast_atan2` (see `missing`). `tests/parity_core.rs` pins purecv's exact values. | |
 | `polar_to_cart` | [`cv::polarToCart`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L583-L612), [`SinCos_32f`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L331) | `measured` | D1, D2, D7 | Fed OpenCV's own angles, x/y agree within 1e-6 (OpenCV's `SinCos_32f` table vs libm). Degrees and radians. | |
 | `check_range` | [`checkRange`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L1508-L1545) | `diverges` | D1, D7 | → OpenCV. OpenCV's range is `[minVal, maxVal)` ([L1537–L1538](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L1537-L1538)): 255 fails `[0, 255)`. purecv is inclusive. NaN → false in both. No `quiet`/`pos`. | proposed P8 |
 | `lut` | [`cv::LUT`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/lut.cpp#L359-L380) | `measured` | D1, D2, D7 | 1-channel and 3-channel tables, f32 output, 255-entry error identical. OpenCV also takes 8S sources. | |
@@ -178,7 +179,7 @@ Link bases used below: `H` = `https://github.com/opencv/opencv/blob/4.10.0/modul
 | `normalize` | [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414) | `diverges` | D1, D4, D7 | → OpenCV. f32 `MinMax`, `L1`, `L2`, `Inf`: identical (≤ 1e-7; OpenCV's float `scale`/`shift` gives 1.0000001 for the 0..1 range). Integer destination: OpenCV goes through `convertTo` (u8 `[10, 20, 30, 250]` → `[0, 11, 21, 255]`), purecv truncates (`[0, 10, 21, 255]`). Swapped bounds: OpenCV uses `min(a, b)`/`max(a, b)`, purecv inverts the range. `dtype` is accepted and ignored (OpenCV converts). Masked: untouched elements kept in both. `L2Sqr` rejected by both. | proposed P10 (needs [#189](https://github.com/webarkit/purecv/issues/189)) |
 | `reduce` | [`cv::reduce`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matrix_operations.cpp#L765-L850) | `diverges` | D1, D2, D4, D7 | → OpenCV. `Max`/`Min` on u8 and `Sum`/`Avg` on f32: identical. u8 `Avg`: OpenCV accumulates in 32S and `saturate_cast`s (`1.5` → 2, `67.7` → 68); purecv truncates (1, 67). u8 `Sum`: OpenCV refuses 8U→8U ("Unsupported combination", `dtype` required); purecv returns **0** where the sum overflows (300 → 0). No `dtype`; `REDUCE_SUM2` missing. | proposed P11 |
 | `count_non_zero` | [`countNonZero`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/count_non_zero.dispatch.cpp#L119-L124) | `measured` | D1, D2, D7 | Single channel required in both; identical. | |
-| `has_no_zero` | [`hasNonZero`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/has_non_zero.dispatch.cpp#L60-L65) | `diverges` | D1, D2, D7 | `keep?` Different predicate: `hasNonZero` is "any element ≠ 0", `has_no_zero` is "all elements ≠ 0". purecv also accepts multi-channel input (OpenCV asserts `cn == 1`). | proposed P12 |
+| `has_no_zero` | [`hasNonZero`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/has_non_zero.dispatch.cpp#L60-L65) | `diverges` | D1, D2, D7 | → OpenCV (maintainer decision, 2026-10-19): add `has_non_zero` with `hasNonZero`'s semantics (single channel, any element ≠ 0); keep the current predicate under the name `has_no_zero` (purecv-only). Different predicate today: `hasNonZero` is "any element ≠ 0", `has_no_zero` is "all elements ≠ 0". purecv also accepts multi-channel input (OpenCV asserts `cn == 1`). | proposed P12 |
 | `min_max_loc` | [`minMaxLoc`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/minmax.cpp#L1593-L1615), [`minMaxIdx` asserts](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/minmax.cpp#L1498-L1506) | `measured` | D1, D2, D7 | First occurrence, `(x, y)` locations, NaN skipped, u8 and f32: identical. No `mask`. Multi-channel: OpenCV asserts (locations need `cn == 1`); purecv scans all channels and returns the pixel (D2, permissive). | |
 
 ## Linear algebra, solvers, clustering
@@ -221,7 +222,7 @@ Link bases used below: `H` = `https://github.com/opencv/opencv/blob/4.10.0/modul
 
 | purecv item | OpenCV 4.10.0 counterpart (pinned link) | Status | Dims checked | Direction / notes | Issue |
 |---|---|---|---|---|---|
-| `dft` | [`cv::dft`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L3486-L3534) | `diverges` | D1, D2, D7 | `keep?` Real input with `flags = 0`: OpenCV returns the **CCS-packed** single-channel spectrum; purecv returns 2-channel complex (= OpenCV with `DFT_COMPLEX_OUTPUT`, identical to 1e-4 in f32, 1e-9 in f64). `DFT_SCALE` (÷ rows·cols; ÷ cols with `DFT_ROWS`), `DFT_ROWS`, `nonzero_rows`, `DFT_REAL_OUTPUT`, complex input, `DFT_INVERSE` without scale, the REAL+COMPLEX error and the u8 error: identical. `DFT_COMPLEX_INPUT` is not a flag (inferred from channels). `f32`/`f64` only in both. | proposed P19 |
+| `dft` | [`cv::dft`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L3486-L3534) | `diverges` | D1, D2, D7 | → OpenCV (maintainer decision, 2026-10-19): with `flags = 0` return the CCS packing like OpenCV; the current 2-channel result stays available through `DFT_COMPLEX_OUTPUT`, which `dft` already accepts. The inverse must then accept a CCS-packed single-channel input as well. Real input with `flags = 0`: OpenCV returns the **CCS-packed** single-channel spectrum; purecv returns 2-channel complex (= OpenCV with `DFT_COMPLEX_OUTPUT`, identical to 1e-4 in f32, 1e-9 in f64). `DFT_SCALE` (÷ rows·cols; ÷ cols with `DFT_ROWS`), `DFT_ROWS`, `nonzero_rows`, `DFT_REAL_OUTPUT`, complex input, `DFT_INVERSE` without scale, the REAL+COMPLEX error and the u8 error: identical. `DFT_COMPLEX_INPUT` is not a flag (inferred from channels). `f32`/`f64` only in both. | proposed P19 |
 | `idft` | [`cv::idft`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L3536-L3541), [doc note](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core.hpp#L2284-L2285) | `diverges` | D1, D7 | → OpenCV. OpenCV: `idft(src, flags)` = `dft(src, flags \| DFT_INVERSE)`, "none of dft and idft scales the result by default" (→ 12·src on the 3×4 fixture). purecv always adds `DFT_SCALE` (→ src). | proposed P20 |
 | `get_optimal_dft_size` | [`getOptimalDFTSize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L4625-L4641) | `diverges` | D1, D7 | → OpenCV. 16 sizes in `[1, 2³⁰+1]` identical (65537 → 65610). Edges: 0 → purecv 0 (OpenCV 1); negative → 0 (OpenCV −1); ≥ 2125764000 → computed (OpenCV −1, beyond its table). | proposed P13 |
 | `dct`, `idct` | [`cv::dct`, `cv::idct`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L4408-L4437) | `measured` | D1, D2, D7 | 1×8 and 4×4 forward, inverse and round trip identical (1e-9 against f64, 1e-5 against f32). Output is always `Matrix<f64>` (OpenCV keeps the depth); no flags (`DCT_ROWS` missing, `idct` is the inverse). Odd sizes: OpenCV errors ([L4320](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L4320)), purecv computes the O(N²) transform. Integer input accepted by purecv. | |
@@ -231,10 +232,10 @@ Link bases used below: `H` = `https://github.com/opencv/opencv/blob/4.10.0/modul
 
 | purecv item | OpenCV 4.10.0 counterpart (pinned link) | Status | Dims checked | Direction / notes | Issue |
 |---|---|---|---|---|---|
-| `set_rng_seed(u64)` | [`setRNGSeed(int)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L659-L662), [`RNG(uint64)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/operations.hpp#L394-L395) | `diverges` | D1, D7 | `keep?` Different generator: xoshiro256** seeded through SplitMix64 vs the 64-bit multiply-with-carry [`RNG_NEXT`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L63). Seed 0 is the default state `0xffffffff` in OpenCV. Thread-local in both. | proposed P21 |
-| `randu` | [`cv::randu`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L665-L670), [`RNG::fill`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L391) | `diverges` | D1, D2, D7 | `keep?` Sequences differ (seed 42, u8 `[0, 256)`: OpenCV `164 63 102 186 144 232 246 91`). Range `[low, high)` and per-channel bounds identical. Integers: OpenCV draws integers, purecv a float then truncates (same range). | proposed P21 |
-| `randn` | [`cv::randn`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L672-L677), [ziggurat](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L236-L310) | `diverges` | D1, D4, D7 | → OpenCV for the conversion, `keep?` for the generator. Box–Muller vs ziggurat, sequences differ. Integer destinations: OpenCV `saturate_cast`s; purecv `from_f64().unwrap_or_default()` turns every sample above the type's maximum into **0** (u8, mean 128, σ 200: 1051 of 2000 samples are 0). | proposed P21 |
-| `rand_shuffle(&mut [T])` | [`cv::randShuffle`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L720-L751), [`randShuffle_`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L683-L715) | `diverges` | D1, D7 | `keep?` Fisher–Yates vs OpenCV's `swap(arr[rng % n], arr[i])` for every `i`; no `iterFactor`; takes a slice. Seed 42 on `0..10`: OpenCV `5 3 7 1 4 2 8 9 6 0`. | proposed P21 |
+| `set_rng_seed(u64)` | [`setRNGSeed(int)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L659-L662), [`RNG(uint64)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/operations.hpp#L394-L395) | `diverges` | D1, D7 | → OpenCV (maintainer decision, 2026-10-19): `cv::RNG` becomes the default generator, xoshiro256** stays as an opt-in alternative. Different generator: xoshiro256** seeded through SplitMix64 vs the 64-bit multiply-with-carry [`RNG_NEXT`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L63). Seed 0 is the default state `0xffffffff` in OpenCV. Thread-local in both. | proposed P21 |
+| `randu` | [`cv::randu`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L665-L670), [`RNG::fill`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L391) | `diverges` | D1, D2, D7 | → OpenCV (maintainer decision, 2026-10-19), with the generator switch above. Sequences differ (seed 42, u8 `[0, 256)`: OpenCV `164 63 102 186 144 232 246 91`). Range `[low, high)` and per-channel bounds identical. Integers: OpenCV draws integers, purecv a float then truncates (same range). | proposed P21 |
+| `randn` | [`cv::randn`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L672-L677), [ziggurat](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L236-L310) | `diverges` | D1, D4, D7 | → OpenCV (maintainer decision, 2026-10-19) for both: ziggurat on `cv::RNG` by default (xoshiro256** opt-in) and `saturate_cast` for integer destinations. Box–Muller vs ziggurat, sequences differ. Integer destinations: OpenCV `saturate_cast`s; purecv `from_f64().unwrap_or_default()` turns every sample above the type's maximum into **0** (u8, mean 128, σ 200: 1051 of 2000 samples are 0). | proposed P21 |
+| `rand_shuffle(&mut [T])` | [`cv::randShuffle`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L720-L751), [`randShuffle_`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/rand.cpp#L683-L715) | `diverges` | D1, D7 | → OpenCV (maintainer decision, 2026-10-19), with the generator switch above; add `iter_factor`. Fisher–Yates vs OpenCV's `swap(arr[rng % n], arr[i])` for every `i`; no `iterFactor`; takes a slice. Seed 42 on `0..10`: OpenCV `5 3 7 1 4 2 8 9 6 0`. | proposed P21 |
 
 ## Metrics (`metrics.rs`)
 
@@ -309,8 +310,9 @@ From the 4.10.0 doc groups [Operations on arrays](https://docs.opencv.org/4.10.0
 ## Proposed issues
 
 New `diverges` rows, one issue each, titled per S5. **Not filed**: they wait for the maintainer's
-approval in the PR review. Those marked `keep?` ask for a decision first; if kept, the row becomes
-`intentional` and the rationale is written into the notes.
+approval in the PR review. The maintainer's decisions of 2026-10-19 are applied: P7 is withdrawn
+(kept as `intentional`), P12, P19 and P21 follow OpenCV. Still `keep?`: the `ones`/`eye` part of
+P13 and `KeyPoint`/`DMatch` (see [Seeded rows](#seeded-rows-from-the-plan)).
 
 | # | Title | Rows | Direction | Depends on |
 |---|---|---|---|---|
@@ -319,23 +321,22 @@ approval in the PR review. Those marked `keep?` ask for a decision first; if kep
 | P3 | `core: *_scalar operands differ from OpenCV 4.10.0: scalar truncated, out-of-range scalar or result becomes 0` | `add_scalar`, `subtract_scalar`, `multiply_scalar`, `divide_scalar` (also `gemm` integer outputs) | → OpenCV | #189 |
 | P4 | `core: add_weighted differs from OpenCV 4.10.0: integer outputs truncate and out-of-range sums become 0` | `add_weighted` | → OpenCV | #189 |
 | P5 | `core: convert_scale_abs differs from OpenCV 4.10.0: ties round away from zero` | `convert_scale_abs` | → OpenCV | #189 |
-| P7 | `core: phase/cart_to_polar differ from OpenCV 4.10.0: exact atan2 instead of fastAtan2` | `phase`, `cart_to_polar` | `keep?` | — |
 | P8 | `core: check_range differs from OpenCV 4.10.0: upper bound is inclusive` | `check_range` | → OpenCV | — |
 | P9 | `core: norm differs from OpenCV 4.10.0: L2SQR, HAMMING, HAMMING2, RELATIVE and the two-array form are missing` | `norm` | → OpenCV | — |
 | P10 | `core: normalize differs from OpenCV 4.10.0: integer outputs truncate, dtype ignored, alpha/beta not sorted` | `normalize` | → OpenCV | #189 |
 | P11 | `core: reduce differs from OpenCV 4.10.0: AVG truncates on integer types, overflowing SUM returns 0, no dtype/SUM2` | `reduce` | → OpenCV | #189 |
-| P12 | `core: has_no_zero differs from OpenCV 4.10.0: it requires every element non-zero, hasNonZero requires at least one` | `has_no_zero` | `keep?` | — |
+| P12 | `core: add has_non_zero matching OpenCV 4.10.0 hasNonZero (has_no_zero tests that every element is non-zero)` | `has_no_zero` | → OpenCV | — |
 | P13 | `core: edge semantics differ from OpenCV 4.10.0 (determinant of non-square, mean/sum beyond 4 channels, ones/eye multi-channel, flip_nd negative axis, get_optimal_dft_size edges, psnr of identical inputs)` | `determinant`, `sum`, `mean`, `ones`, `eye`, `flip_nd`, `get_optimal_dft_size`, `psnr` | → OpenCV (`ones`/`eye`: `keep?`) | — |
 | P14 | `core: invert differs from OpenCV 4.10.0: returns the determinant instead of a non-zero flag` | `invert` | → OpenCV | — |
 | P15 | `core: transform differs from OpenCV 4.10.0: integer outputs truncate` | `transform` | → OpenCV | #189 |
 | P16 | `core: kmeans differs from OpenCV 4.10.0: random-center initialisation stays in a local minimum, criteria not clamped` | `kmeans` | → OpenCV | — |
 | P18 | `core: copy_make_border differs from OpenCV 4.10.0: border codes do not follow BorderTypes, oversized borders panic` | `copy_make_border` | → OpenCV | — |
-| P19 | `core: dft differs from OpenCV 4.10.0: complex output for real input where OpenCV packs CCS` | `dft` | `keep?` | — |
+| P19 | `core: dft differs from OpenCV 4.10.0: real input gives complex output where OpenCV packs CCS (keep complex behind DFT_COMPLEX_OUTPUT)` | `dft` | → OpenCV | — |
 | P20 | `core: idft differs from OpenCV 4.10.0: DFT_SCALE is always applied` | `idft` | → OpenCV | — |
-| P21 | `core: randu/randn/rand_shuffle differ from OpenCV 4.10.0: xoshiro256**/Box-Muller/Fisher-Yates instead of cv::RNG; randn zeroes out-of-range integer samples` | `set_rng_seed`, `randu`, `randn`, `rand_shuffle` | `keep?` (generator), → OpenCV (`randn` conversion) | #189; feeds #198/#199 |
+| P21 | `core: use cv::RNG as the default generator for randu/randn/rand_shuffle (keep xoshiro256** as an option; randn must saturate integer samples)` | `set_rng_seed`, `randu`, `randn`, `rand_shuffle` | → OpenCV | #189; feeds #198/#199 |
 | P22 | `core: CV_LOG2 differs from OpenCV 4.10.0: log2(e) instead of ln 2` | `CV_LOG2` | → OpenCV | — |
 
-P6 and P17 were folded into the `measured` rows for `exp`/`log`/`pow` (≤ 2 ULP) and into P13.
+P7 was withdrawn on 2026-10-19 (`intentional`). P6 and P17 were folded into the `measured` rows for `exp`/`log`/`pow` (≤ 2 ULP) and into P13.
 
 ## Notes
 
