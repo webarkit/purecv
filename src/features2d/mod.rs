@@ -113,7 +113,9 @@
 pub mod bit_pattern_31;
 pub mod draw;
 pub mod fast;
-pub mod keypoint;
+// `KeyPoint` lives in `core` (as in OpenCV); the module is re-exported so that
+// `purecv::features2d::keypoint::KeyPoint` keeps working.
+pub use crate::core::keypoint;
 pub mod matcher;
 pub mod orb;
 
