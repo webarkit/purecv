@@ -117,7 +117,7 @@ const B_U8: [u8; 12] = [0, 1, 3, 100, 128, 255, 7, 2, 2, 2, 3, 4];
 
 /// OpenCV: `saturate_cast<uchar>(a + b)`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (u8 add/subtract/multiply overflow; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #208"]
 fn add_u8_saturates() {
     let dst = add(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(
@@ -128,7 +128,7 @@ fn add_u8_saturates() {
 
 /// OpenCV: `saturate_cast<uchar>(a - b)` clamps at 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (u8 add/subtract/multiply overflow; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #208"]
 fn subtract_u8_saturates_at_zero() {
     let dst = subtract(&row(&B_U8), &row(&A_U8)).unwrap();
     assert_eq!(dst.data, vec![0u8, 0, 0, 0, 0, 55, 0, 0, 0, 0, 2, 0]);
@@ -136,7 +136,7 @@ fn subtract_u8_saturates_at_zero() {
 
 /// OpenCV: `saturate_cast<uchar>(a * b)`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (u8 add/subtract/multiply overflow; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #208"]
 fn multiply_u8_saturates() {
     let dst = multiply(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(
@@ -162,7 +162,7 @@ fn add_u8_without_overflow_matches_opencv() {
 /// OpenCV: `b != 0 ? saturate_cast<uchar>(float(a) / b) : 0`, so 7/2 = 3.5 -> 4 and
 /// 250/7 = 35.7 -> 36. purecv divides in integers (7/2 = 3).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (integer divide rounding; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #209"]
 fn divide_u8_rounds_the_float_quotient() {
     let dst = divide(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(dst.data, vec![0u8, 1, 33, 1, 1, 1, 36, 128, 4, 2, 0, 2]);
@@ -179,7 +179,7 @@ fn divide_u8_by_zero_is_zero_matches_opencv() {
 /// OpenCV: float division is plain IEEE division (`a / b`), so x/0 is inf, -inf or nan.
 /// purecv maps every division by zero to 0, for floats too.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (f32 divide by zero; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #209"]
 fn divide_f32_by_zero_is_ieee() {
     let a = row(&[1.0f32, -1.0, 0.0, 4.0]);
     let b = row(&[0.0f32, 0.0, 0.0, 2.0]);
@@ -226,7 +226,7 @@ fn absdiff_min_max_u8_match_opencv() {
 /// -1.5 -> -2, 300 -> 300 then the sum saturates to 255). purecv truncates 10.7 to 10 and
 /// turns every scalar outside the u8 range into 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (scalar operand conversion; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #210"]
 fn add_scalar_u8_rounds_and_saturates_the_scalar() {
     let a = row(&A_U8);
     assert_eq!(
@@ -252,7 +252,7 @@ fn add_scalar_u8_rounds_and_saturates_the_scalar() {
 /// OpenCV: `saturate_cast<uchar>(a * 0.3)` computed in double, so 9 * 0.3 = 2.7 -> 3 and
 /// 127 / 0.4 = 317.5 -> 255. purecv truncates (2) and maps out-of-range results to 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (scalar operand conversion; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #210"]
 fn multiply_divide_scalar_u8_round_and_saturate() {
     let a = row(&A_U8);
     assert_eq!(
@@ -307,7 +307,7 @@ fn add_weighted_f32_matches_opencv() {
 /// 3.5 -> 4, 128.5 -> 128 (ties to even), 910 -> 255. purecv truncates and maps
 /// out-of-range sums to 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (add_weighted u8 rounding; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #211"]
 fn add_weighted_u8_rounds_half_even_and_saturates() {
     let a = row(&A_U8);
     let b = row(&B_U8);
@@ -336,7 +336,7 @@ fn convert_scale_abs_i16_alpha1_matches_opencv() {
 /// 2.5 -> 2, -2.5 -> 2; and 1 * 0.5 = 0.5 -> 0. purecv uses `round()` (half away from
 /// zero): 1, 3, 3 and 1.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (convert_scale_abs ties; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #212"]
 fn convert_scale_abs_rounds_half_to_even() {
     let src = row(&[
         0.5f32, 1.5, 2.5, -0.5, -1.5, -2.5, 254.5, 255.5, -255.5, 300.0,
@@ -374,7 +374,7 @@ fn norm_inf_l1_l2_match_opencv() {
 
 /// OpenCV: `norm(src, NORM_L2SQR)` = 177.5 and `norm(u8, NORM_HAMMING)` = popcount (12).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (norm types L2SQR/HAMMING; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #214"]
 fn norm_l2sqr_and_hamming_are_supported_by_opencv() {
     assert_eq!(
         norm(&row(&NORM_SRC), NormTypes::L2Sqr, None).unwrap(),
@@ -445,7 +445,7 @@ fn normalize_f32_matches_opencv() {
 /// OpenCV writes integer outputs through `convertTo` (saturate_cast): u8 MINMAX 0..255 of
 /// [10, 20, 30, 250] is [0, 11, 21, 255]; purecv truncates to [0, 10, 21, 255].
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (normalize integer rounding; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #215"]
 fn normalize_u8_minmax_rounds_like_convert_to() {
     let s8 = row(&[10u8, 20, 30, 250]);
     let mut d8 = Matrix::<u8>::new(1, 4, 1);
@@ -458,7 +458,7 @@ fn normalize_u8_minmax_rounds_like_convert_to() {
 /// OpenCV sorts alpha/beta (`dmin = MIN(a, b)`), so (255, 0) equals (0, 255); purecv uses
 /// them as given and inverts the range.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (normalize swapped alpha/beta; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #215"]
 fn normalize_minmax_swapped_bounds_match_sorted_bounds() {
     let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
     let mut dst = Matrix::<f32>::new(1, 4, 1);
@@ -540,7 +540,7 @@ fn reduce_max_min_and_f32_match_opencv() {
 /// OpenCV: REDUCE_AVG on u8 accumulates in 32S and converts back with `saturate_cast`
 /// (1.5 -> 2, 2.5 -> 2, 67.7 -> 68); purecv truncates.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (reduce integer rounding; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #216"]
 fn reduce_avg_u8_rounds_half_to_even() {
     let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
     assert_eq!(
@@ -595,7 +595,7 @@ fn border_interpolate_matches_opencv() {
 /// `copy_make_border` takes a raw `i32` whose value 1 means BORDER_REFLECT; OpenCV's
 /// `BorderTypes` has REPLICATE = 1, REFLECT = 2 and REFLECT_101 = 4 (the default).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (copy_make_border border codes; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #222"]
 fn copy_make_border_uses_opencv_border_codes() {
     let src = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 3, 4, 5, 6]);
     let reflect_101 = copy_make_border(&src, 2, 1, 2, 1, 4, Scalar::all(9)).unwrap();
@@ -685,7 +685,7 @@ fn flip_rotate_transpose_repeat_match_opencv() {
 
 /// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`. purecv is inclusive.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (check_range half-open bound; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #213"]
 fn check_range_upper_bound_is_exclusive() {
     let a = row(&[0u8, 100, 255]);
     assert!(!check_range(&a, 0.0, 255.0));
@@ -772,7 +772,7 @@ fn sort_and_sort_idx_match_opencv() {
 /// OpenCV writes integer outputs through `saturate_cast`: (10+20+33)*0.3 = 18.9 -> 19 and
 /// 229.5 -> 230; purecv truncates (18, 229).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (transform integer rounding; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #220"]
 fn transform_u8_rounds_half_to_even() {
     let src = Matrix::from_vec(1, 3, 3, vec![10u8, 20, 33, 255, 255, 255, 1, 1, 1]);
     let m = Matrix::from_vec(1, 3, 1, vec![0.3f64, 0.3, 0.3]);
@@ -888,7 +888,7 @@ fn gemm_determinant_solve_trace_mahalanobis_match_opencv() {
 
 /// OpenCV `invert(DECOMP_LU)` returns 1.0 on success (a non-zero flag), not the determinant.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (invert return value; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #219"]
 fn invert_lu_returns_one_on_success() {
     let s = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
     let mut inv = Matrix::<f64>::new(2, 2, 1);
@@ -910,7 +910,7 @@ fn set_identity_and_psnr_match_opencv() {
 
 /// OpenCV `PSNR` of identical images is `20*log10(R/DBL_EPSILON)` = 361.2, not infinity.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (psnr of identical inputs; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn psnr_identical_inputs_is_finite() {
     let rgb = Matrix::from_vec(1, 2, 3, vec![10u8, 20, 30, 40, 50, 60]);
     assert!((psnr(&rgb, &rgb).unwrap() - 361.20199909921956).abs() < 1e-6);
@@ -1174,7 +1174,7 @@ fn kmeans_converges_to_opencv_partition() {
 /// compactness 9.5 on this fixture with 5 attempts (and with 1). purecv picks k samples with
 /// an LCG seeded by the attempt index and stays in a local minimum (198.75) for 3 attempts.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (kmeans random centers; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #221"]
 fn kmeans_random_centers_three_attempts_find_the_global_partition() {
     let data = kmeans_data();
     let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
@@ -1200,7 +1200,7 @@ fn kmeans_random_centers_three_attempts_find_the_global_partition() {
 /// OpenCV's `theRNG()` is a multiply-with-carry generator (`RNG::next`); purecv seeds a
 /// xoshiro256** generator, so the same seed gives a different sequence.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (cv::RNG as default generator; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #225"]
 fn randu_seed_42_reproduces_cv_rng() {
     set_rng_seed(42);
     let mut m = Matrix::<u8>::new(1, 8, 1);
@@ -1215,7 +1215,7 @@ fn randu_seed_42_reproduces_cv_rng() {
 /// OpenCV writes integer `randn` samples through `saturate_cast`, so a u8 destination with a
 /// wide distribution holds many 255s and 0s. purecv turns every sample above 255 into 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (randn integer saturation; issue pending)"]
+#[ignore = "diverges from OpenCV 4.10.0, see #225"]
 fn randn_u8_saturates_above_255() {
     set_rng_seed(1);
     let mut m = Matrix::<u8>::new(1, 2000, 1);
@@ -1328,7 +1328,7 @@ mod fft {
     /// OpenCV's `idft(src, flags)` is `dft(src, flags | DFT_INVERSE)`: it does **not** scale
     /// unless DFT_SCALE is passed. purecv's `idft` always adds DFT_SCALE.
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (idft implicit DFT_SCALE; issue pending)"]
+    #[ignore = "diverges from OpenCV 4.10.0, see #224"]
     fn idft_does_not_scale_by_default() {
         let spec = dft(&src(), 0, 0).unwrap();
         let back = idft(&spec, 0, 0).unwrap();
@@ -1367,7 +1367,7 @@ mod fft {
     /// OpenCV returns 1 for 0 and -1 for negative sizes and for sizes above its table
     /// (>= 2125764000). purecv returns 0, 0 and a computed value.
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see docs/parity/core.md (get_optimal_dft_size edges; issue pending)"]
+    #[ignore = "diverges from OpenCV 4.10.0, see #218"]
     fn get_optimal_dft_size_edges_match_opencv() {
         assert_eq!(get_optimal_dft_size(0), 1);
         assert_eq!(get_optimal_dft_size(-5), -1);
