@@ -47,29 +47,9 @@ pub enum NormType {
     NormL2,
 }
 
-/// Structure for storing match information.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DMatch {
-    /// Index of the descriptor in the query set.
-    pub query_idx: i32,
-    /// Index of the descriptor in the train set.
-    pub train_idx: i32,
-    /// Index of the train image (relevant for multi-image matching).
-    pub train_img_idx: i32,
-    /// Distance between the two descriptors.
-    pub distance: f32,
-}
-
-impl DMatch {
-    pub fn new(query_idx: i32, train_idx: i32, train_img_idx: i32, distance: f32) -> Self {
-        Self {
-            query_idx,
-            train_idx,
-            train_img_idx,
-            distance,
-        }
-    }
-}
+// `DMatch` lives in `core` (as `cv::DMatch` does in OpenCV); re-exported here so that
+// `purecv::features2d::matcher::DMatch` keeps working.
+pub use crate::core::dmatch::DMatch;
 
 /// A modular trait for all descriptor matching algorithms.
 pub trait DescriptorMatcher<T> {

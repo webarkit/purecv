@@ -58,8 +58,10 @@ pub mod constants;
 pub mod dct;
 #[cfg(feature = "fft")]
 pub mod dft;
+pub mod dmatch;
 pub mod dynamic;
 pub mod error;
+pub mod keypoint;
 pub mod logging;
 pub mod matrix;
 pub mod metrics;
@@ -96,8 +98,10 @@ pub use self::dft::{
     dft, get_optimal_dft_size, idft, DftFloat, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_REAL_OUTPUT,
     DFT_ROWS, DFT_SCALE,
 };
+pub use self::dmatch::DMatch;
 pub use self::dynamic::{DynamicData, DynamicMatrix};
 pub use self::error::{PureCvError, Result};
+pub use self::keypoint::KeyPoint;
 pub use self::logging::{get_log_level, set_log_level, LogLevel};
 // `init_basic_logger` writes to stdout and is only available with `std`.
 #[cfg(feature = "std")]

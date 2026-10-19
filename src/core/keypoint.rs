@@ -34,9 +34,21 @@
  *
  */
 
+//! `KeyPoint`: a salient point found by a feature detector, mirroring `cv::KeyPoint`.
+//!
+//! OpenCV defines it in the `core` module
+//! ([`types.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/types.hpp#L744)),
+//! so purecv does too; `purecv::features2d::KeyPoint` remains available as a re-export.
+
+use alloc::string::ToString;
+use alloc::vec::Vec;
+// `num_traits::Float` provides `sqrt`, `acos`, `sin` on `f32` via libm when `std` is
+// disabled; with `std` the inherent methods win, so the import is only "used" in no_std builds.
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::core::error::{PureCvError, Result};
 use crate::core::types::Point2f;
-use std::default::Default;
 
 /// Data structure for salient point detectors.
 ///
@@ -146,7 +158,7 @@ impl KeyPoint {
 
             let intersection_area =
                 segment_area_a + segment_area_b - triangle_area_a - triangle_area_b;
-            let union_area = (a_2 + b_2) * std::f32::consts::PI - intersection_area;
+            let union_area = (a_2 + b_2) * core::f32::consts::PI - intersection_area;
 
             if union_area > 0.0 {
                 return intersection_area / union_area;
@@ -216,7 +228,7 @@ impl KeyPoint {
             let ord = a
                 .response
                 .partial_cmp(&b.response)
-                .unwrap_or(std::cmp::Ordering::Equal);
+                .unwrap_or(core::cmp::Ordering::Equal);
             if descending {
                 ord.reverse()
             } else {
