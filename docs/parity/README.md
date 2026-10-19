@@ -23,7 +23,7 @@ audit PR.
 |---|---|---|---|
 | method (this file) | `docs/parity/README.md` | [#172](https://github.com/webarkit/purecv/issues/172) (umbrella) | done |
 | core | [`docs/parity/core.md`](core.md) | [#173](https://github.com/webarkit/purecv/issues/173) | done (PR #206 merged, #173 closed; 19 issues filed: #208–#226) |
-| imgproc | [`docs/parity/imgproc.md`](imgproc.md) | [#174](https://github.com/webarkit/purecv/issues/174) | in progress (PR #228 open; 20 issues filed: #229–#248) |
+| imgproc | [`docs/parity/imgproc.md`](imgproc.md) | [#174](https://github.com/webarkit/purecv/issues/174) | done (PR #228; 20 issues filed: #229–#248) |
 | features2d | `docs/parity/features2d.md` | [#175](https://github.com/webarkit/purecv/issues/175) | pending |
 | video | `docs/parity/video.md` | [#176](https://github.com/webarkit/purecv/issues/176) | pending |
 | calib3d | `docs/parity/calib3d.md` | [#177](https://github.com/webarkit/purecv/issues/177) | pending |
@@ -192,7 +192,7 @@ Progress: `pending` / `in progress` / `done`.
 | **A** reference version | | #165 (closed by PR #169; #181) | done |
 | **B0** method | #172 (umbrella) | PR #188 (method), PR for the splits | done |
 | **B1** core | #189 (shared `saturate_cast`), #192 (`convert_to`); #208–#226 (filed from [`core.md`](core.md#filed-issues), 2026-10-19) | #173 (closed; audit merged by PR #206); PR #207 (`KeyPoint`/`DMatch` move to `core`, merged into `dev`, synced into `parity-audit` by PR #227); #156 (pattern for D6; fixed by PR #162) | done |
-| **B2** imgproc | #174; #157 (filter sites), #189 (prerequisite), #190 (tie rule), #191 (RGB→gray, both paths), #193 (needs `INTER_LINEAR_EXACT`), #225 (`hough_lines_p`), #100 (`integral`); #229–#248 (filed from [`imgproc.md`](imgproc.md#filed-issues), 2026-10-20) | | in progress |
+| **B2** imgproc | #174; #157 (filter sites), #189 (prerequisite), #190 (tie rule), #191 (RGB→gray, both paths), #193 (needs `INTER_LINEAR_EXACT`), #225 (`hough_lines_p`), #100 (`integral`); #229–#248 (filed from [`imgproc.md`](imgproc.md#filed-issues), 2026-10-20) | | done |
 | **B3** features2d | #175; #158; #159 → #193, #194, #195, #196, #197; #160 → #198, #199, #200; #161 → #201, #202, #203 (`SIMD`), #204 (`wasm`); contrib requests #101–#104 | #123, #124, #125, #126, #136, #156: fixed by PR #162, shipped in v0.10.0, still open | pending |
 | **B4** video | #176; #154, #155, #178, #183, #184 | #130, #131, #138, #142, #144, #145, #149, #163 (PR #164), #166 (PR #167) | pending |
 | **B5** calib3d | #177; #127, #133 (PR #134 closed unmerged), #135 | | pending |
