@@ -22,7 +22,7 @@ audit PR.
 | Module | Document | Sub-issue | Progress |
 |---|---|---|---|
 | method (this file) | `docs/parity/README.md` | [#172](https://github.com/webarkit/purecv/issues/172) (umbrella) | done |
-| core | `docs/parity/core.md` | [#173](https://github.com/webarkit/purecv/issues/173) | pending |
+| core | [`docs/parity/core.md`](core.md) | [#173](https://github.com/webarkit/purecv/issues/173) | in progress (PR #206 open; 19 issues filed: #208–#226) |
 | imgproc | `docs/parity/imgproc.md` | [#174](https://github.com/webarkit/purecv/issues/174) | pending |
 | features2d | `docs/parity/features2d.md` | [#175](https://github.com/webarkit/purecv/issues/175) | pending |
 | video | `docs/parity/video.md` | [#176](https://github.com/webarkit/purecv/issues/176) | pending |
@@ -184,14 +184,14 @@ script or an `#[ignore]`d test, and S7 passes.
 
 ## Issue map
 
-Existing open issues and PRs, by phase. State as of 2026-10-17; S6 keeps it current.
+Existing open issues and PRs, by phase. State as of 2026-10-18; S6 keeps it current.
 Progress: `pending` / `in progress` / `done`.
 
 | Phase | Open | Fixed on `dev` or closed | Progress |
 |---|---|---|---|
 | **A** reference version | | #165 (closed by PR #169; #181) | done |
 | **B0** method | #172 (umbrella) | PR #188 (method), PR for the splits | done |
-| **B1** core | #173; #189 (shared `saturate_cast`), #192 (`convert_to`) | #156 (pattern for D6; fixed by PR #162) | pending |
+| **B1** core | #173; #189 (shared `saturate_cast`), #192 (`convert_to`); #208–#226 (filed from [`core.md`](core.md#filed-issues), 2026-10-19); PR #207 (`KeyPoint`/`DMatch` move to `core`) | #156 (pattern for D6; fixed by PR #162) | in progress |
 | **B2** imgproc | #174; #157 (filter sites), #190 (tie rule), #191 (RGB→gray), #100 | | pending |
 | **B3** features2d | #175; #158; #159 → #193, #194, #195, #196, #197; #160 → #198, #199, #200; #161 → #201, #202, #203 (`SIMD`), #204 (`wasm`); contrib requests #101–#104 | #123, #124, #125, #126, #136, #156: fixed by PR #162, shipped in v0.10.0, still open | pending |
 | **B4** video | #176; #154, #155, #178, #183, #184 | #130, #131, #138, #142, #144, #145, #149, #163 (PR #164), #166 (PR #167) | pending |
