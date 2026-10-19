@@ -71,11 +71,11 @@ pub mod prelude {
         TermCriteria, TermType, Vec2b, Vec2d, Vec2f, Vec2i, Vec2s, Vec3b, Vec3d, Vec3f, Vec3i,
         Vec3s, Vec4b, Vec4d, Vec4f, Vec4i, Vec4s, Vec6d, Vec6f, VecN,
     };
-    pub use crate::core::Matrix;
+    pub use crate::core::{DMatch, KeyPoint, Matrix};
     #[cfg(feature = "std")]
     pub use crate::features2d::{
-        draw_keypoints, draw_matches, filter_matches, BFMatcher, DMatch, DescriptorMatcher,
-        FastFeatureDetector, FastType, KeyPoint, NormType, Orb,
+        draw_keypoints, draw_matches, filter_matches, BFMatcher, DescriptorMatcher,
+        FastFeatureDetector, FastType, NormType, Orb,
     };
     pub use crate::imgproc::derivatives::{laplacian, scharr, sobel};
     pub use crate::imgproc::edge::canny;
