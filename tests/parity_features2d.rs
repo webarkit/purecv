@@ -47,8 +47,6 @@
 //! Tests that pass pin rows that already match OpenCV. Tests marked `#[ignore]` document a
 //! `diverges` row; they fail when run (`cargo test --test parity_features2d -- --ignored`)
 //! and are the executable form of the measurement; the issue in each reason tracks the fix.
-//! "P<n>" reasons refer to the proposed issues of `docs/parity/features2d.md` and are
-//! replaced by the issue numbers once those are filed.
 
 use purecv::core::types::{Point2f, Scalar};
 use purecv::core::Matrix;
@@ -554,7 +552,7 @@ fn fast_type7_12_and_5_8_match_opencv() {
 /// `FastFeatureDetector_Impl::detect` and `ORB_Impl::detectAndCompute` convert a
 /// multi-channel image with `COLOR_BGR2GRAY`; purecv returns `InvalidInput`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see P3"]
+#[ignore = "diverges from OpenCV 4.10.0, see #252"]
 fn fast_and_orb_accept_multichannel_input_like_opencv() {
     let gray = noise_u8(64, 80, 7);
     let bgr = gray_to_3ch(&gray);
@@ -686,7 +684,7 @@ fn orb_orientation_within_0_01_degree_of_opencv() {
 /// about  0.3 degrees); purecv uses the exact `atan2`. The two differ by up to 0.009 degrees here, which is
 /// enough to move `cvRound`ed BRIEF sample positions.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #250"]
 fn orb_orientation_matches_opencv_fast_atan2() {
     let textured = textured_u8(240, 320, 5);
     let umax = precompute_umax(15);
@@ -1005,7 +1003,7 @@ fn bfmatcher_l2_matches_opencv() {
 
 /// `DescriptorMatcher::knnMatch` asserts `knn > 0`; purecv returns one empty list per query.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #251"]
 fn bfmatcher_knn_match_k0_is_an_error() {
     let (q, t) = matcher_u8_sets();
     let bf = BFMatcher::<u8>::new(NormType::NormHamming, false).unwrap();
@@ -1058,7 +1056,7 @@ fn draw_canvas_layout_matches_opencv() {
 /// count and always draws a Bresenham circle of radius `round(size / 2)` plus the line.
 /// The expected values are the changed pixels with their BGR values.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see P4"]
+#[ignore = "diverges from OpenCV 4.10.0, see #253"]
 fn draw_keypoints_matches_opencv() {
     let gray = noise_u8(20, 24, 31);
     let red = Scalar::new(0u8, 0, 255, 255);
@@ -1082,7 +1080,7 @@ fn draw_keypoints_matches_opencv() {
 /// of range is a `CV_Assert`. purecv draws Bresenham primitives, keeps 1 channel, rejects
 /// mixed channel counts and skips invalid indices.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see P4"]
+#[ignore = "diverges from OpenCV 4.10.0, see #253"]
 fn draw_matches_matches_opencv() {
     let img1 = noise_u8(16, 20, 51);
     let img2 = noise_u8(14, 24, 52);
