@@ -25,7 +25,7 @@ audit PR.
 | core | [`docs/parity/core.md`](core.md) | [#173](https://github.com/webarkit/purecv/issues/173) | done (PR #206 merged, #173 closed; 19 issues filed: #208–#226) |
 | imgproc | [`docs/parity/imgproc.md`](imgproc.md) | [#174](https://github.com/webarkit/purecv/issues/174) | done (PR #228; 20 issues filed: #229–#248) |
 | features2d | [`docs/parity/features2d.md`](features2d.md) | [#175](https://github.com/webarkit/purecv/issues/175) | done (PR #249; 5 issues filed: #250–#254) |
-| video | `docs/parity/video.md` | [#176](https://github.com/webarkit/purecv/issues/176) | pending |
+| video | [`docs/parity/video.md`](video.md) | [#176](https://github.com/webarkit/purecv/issues/176) | in progress (PR open; 2 issues proposed: P1, P2) |
 | calib3d | `docs/parity/calib3d.md` | [#177](https://github.com/webarkit/purecv/issues/177) | pending |
 
 The audits run in this order: core → imgproc → features2d → video → calib3d.
@@ -194,7 +194,7 @@ Progress: `pending` / `in progress` / `done`.
 | **B1** core | #189 (shared `saturate_cast`), #192 (`convert_to`); #208–#226 (filed from [`core.md`](core.md#filed-issues), 2026-10-19) | #173 (closed; audit merged by PR #206); PR #207 (`KeyPoint`/`DMatch` move to `core`, merged into `dev`, synced into `parity-audit` by PR #227); #156 (pattern for D6; fixed by PR #162) | done |
 | **B2** imgproc | #174; #157 (filter sites), #189 (prerequisite), #190 (tie rule), #191 (RGB→gray, both paths), #193 (needs `INTER_LINEAR_EXACT`), #225 (`hough_lines_p`), #100 (`integral`); #229–#248 (filed from [`imgproc.md`](imgproc.md#filed-issues), 2026-10-20) | | done |
 | **B3** features2d | #175; #158; #159 → #193, #194, #195, #196, #197; #160 → #198, #199, #200; #161 → #201, #202, #203 (`SIMD`), #204 (`wasm`); contrib requests #101–#104; #250–#254 (filed from [`features2d.md`](features2d.md#proposed-issues), 2026-10-20) | #123, #124, #125, #126, #136, #156: fixed by PR #162, shipped in v0.10.0, still open (confirmed at `0e310c3`) | done |
-| **B4** video | #176; #154, #155, #178, #183, #184 | #130, #131, #138, #142, #144, #145, #149, #163 (PR #164), #166 (PR #167) | pending |
+| **B4** video | #176; #155, #178 (item 2), #183, #184; #154 (fixed by PR #164, confirmed at `5201b8a`, can be closed); P1, P2 proposed from [`video.md`](video.md#proposed-issues), awaiting approval | #130, #131, #138, #142, #144, #145, #149, #163 (PR #164), #166 (PR #167): all confirmed against the 4.10.0 wheel | in progress |
 | **B5** calib3d | #177; #127, #133 (PR #134 closed unmerged), #135 | | pending |
 | Tooling (Part A follow-ups) | #170, #171 | | tracked separately |
 | Not part of the comparison | #128 (roadmap; owns the future version bump), #132 (GPU), #97 (WASM SIMD perf), #81 and #94 (Miri), #182 (Miri shards), #67 (architecture diagram), #113 (benchmark doc) | PR #168 (license metadata) | |
