@@ -46,8 +46,9 @@
 //! The wheel runs the `CV_SIMD128` block of `LKTrackerInvoker` for windows at least 8 px wide
 //! (four-lane `f32` sums reduced at the end), while purecv keeps the generic scalar order, so
 //! those cases agree to about 1e-3 px and a few intensity counts of mean absolute error; windows
-//! up to 7 px wide run the scalar loop in the wheel and agree to 1 ulp. Statuses agree exactly
-//! in every case. Tests that pass pin rows that already match OpenCV. Tests marked `#[ignore]`
+//! up to 7 px wide run the scalar loop in the wheel and agree to 1 ulp (`SIMD_TOL`, `SCALAR_TOL`
+//! hold the bounds the tests enforce). Statuses agree exactly in every case. Tests that pass pin
+//! rows that already match OpenCV. Tests marked `#[ignore]`
 //! document a `diverges` row; they fail when run
 //! (`cargo test --test parity_video -- --ignored`) and are the executable form of the
 //! measurement; the proposed issue in each reason tracks the fix.
@@ -316,23 +317,51 @@ fn lk(
     .unwrap()
 }
 
-/// Tolerances for a case: windows at least 8 px wide go through the wheel's `CV_SIMD128`
-/// reduction (see the module docs), narrower ones through its scalar loop.
-fn tolerances(win_width: i32, min_eig_output: bool) -> (f32, f32) {
-    let pos = if win_width >= 8 { 2e-3 } else { 1e-4 };
-    let err = if min_eig_output {
-        1e-5
-    } else if win_width >= 8 {
-        2e-2
+/// Tolerances of one case group: positions within `pos` px, errors within
+/// `err_abs + err_rel * |err|`.
+#[derive(Clone, Copy)]
+struct Tol {
+    pos: f32,
+    err_abs: f32,
+    err_rel: f32,
+}
+
+/// Windows up to 7 px wide run the wheel's scalar loop: the largest differences measured are
+/// 6.8e-6 px (1 ulp at x = 130) and 3e-6 in the mean absolute error.
+const SCALAR_TOL: Tol = Tol {
+    pos: 2e-5,
+    err_abs: 1e-5,
+    err_rel: 1e-6,
+};
+
+/// Windows at least 8 px wide go through the wheel's `CV_SIMD128` reduction (see the module
+/// docs): the largest differences measured are 1.2e-3 px (20x20) and 0.013 in the mean
+/// absolute error (21x21).
+const SIMD_TOL: Tol = Tol {
+    pos: 2e-3,
+    err_abs: 2e-2,
+    err_rel: 0.0,
+};
+
+/// Tolerances for a case: the position bound depends on the window width, the error bound on
+/// whether `err` is the mean absolute error or the minimum eigenvalue (within 7.2e-7, 1 ulp of
+/// 0.63, for every window).
+fn tolerances(win_width: i32, min_eig_output: bool) -> Tol {
+    let base = if win_width >= 8 { SIMD_TOL } else { SCALAR_TOL };
+    if min_eig_output {
+        Tol {
+            pos: base.pos,
+            err_abs: 1e-6,
+            err_rel: 1e-6,
+        }
     } else {
-        1e-5
-    };
-    (pos, err)
+        base
+    }
 }
 
 /// Statuses must match exactly; for points both sides track, the coordinates within
-/// `pos_tol` px and the error within `err_tol * max(1, |err|)`.
-fn assert_flow(actual: &Flow, expected: &[FlowRow], pos_tol: f32, err_tol: f32, what: &str) {
+/// `tol.pos` px and the error within `tol.err_abs + tol.err_rel * |err|`.
+fn assert_flow(actual: &Flow, expected: &[FlowRow], tol: Tol, what: &str) {
     let (pts, status, err) = actual;
     assert_eq!(pts.len(), expected.len(), "{what}: count");
     for (i, e) in expected.iter().enumerate() {
@@ -341,7 +370,7 @@ fn assert_flow(actual: &Flow, expected: &[FlowRow], pos_tol: f32, err_tol: f32, 
             continue;
         }
         assert!(
-            (pts[i].x - e.0).abs() <= pos_tol && (pts[i].y - e.1).abs() <= pos_tol,
+            (pts[i].x - e.0).abs() <= tol.pos && (pts[i].y - e.1).abs() <= tol.pos,
             "{what}[{i}]: purecv ({}, {}) vs OpenCV ({}, {})",
             pts[i].x,
             pts[i].y,
@@ -349,7 +378,7 @@ fn assert_flow(actual: &Flow, expected: &[FlowRow], pos_tol: f32, err_tol: f32, 
             e.1
         );
         assert!(
-            (err[i] - e.3).abs() <= err_tol * e.3.abs().max(1.0),
+            (err[i] - e.3).abs() <= tol.err_abs + tol.err_rel * e.3.abs(),
             "{what}[{i}]: err purecv {} vs OpenCV {}",
             err[i],
             e.3
@@ -484,12 +513,12 @@ fn build_optical_flow_pyramid_accepts_multi_channel_input() {
 /// 320x240 cell texture, 150-point grid, integer shifts of 0 and 10 px, 21x21 window, four
 /// levels, OpenCV's default criteria and threshold, `OPTFLOW_USE_INITIAL_FLOW` with the
 /// template positions as the initial estimate: the accept set is identical (150, 150, 149 and
-/// 145 points) and every tracked position is within 1e-3 px of OpenCV's.
+/// 145 points) and every tracked position is within 4.1e-4 px of OpenCV's (bound 2e-3).
 #[test]
 fn lk_grid163_matches_opencv() {
     let img = cell_texture(320, 240);
     let pts = grid_150();
-    let (pos_tol, err_tol) = tolerances(21, false);
+    let tol = tolerances(21, false);
     for (dx, dy, expected) in [
         (0, 0, &GRID163_SHIFT_0_0),
         (10, 0, &GRID163_SHIFT_10_0),
@@ -508,13 +537,7 @@ fn lk_grid163_matches_opencv() {
             OPTFLOW_USE_INITIAL_FLOW,
             1e-4,
         );
-        assert_flow(
-            &flow,
-            expected,
-            pos_tol,
-            err_tol,
-            &format!("shift ({dx}, {dy})"),
-        );
+        assert_flow(&flow, expected, tol, &format!("shift ({dx}, {dy})"));
     }
     // Without the flag the initial estimate is the template position: the same result.
     let next = shift_image(&img, 10, 0);
@@ -529,13 +552,7 @@ fn lk_grid163_matches_opencv() {
         0,
         1e-4,
     );
-    assert_flow(
-        &flow,
-        &GRID163_SHIFT_10_0,
-        pos_tol,
-        err_tol,
-        "shift (10, 0), no flags",
-    );
+    assert_flow(&flow, &GRID163_SHIFT_10_0, tol, "shift (10, 0), no flags");
 }
 
 /// Parameter variations on 30 of the grid points and the 10 px shift: both flags, even and
@@ -582,8 +599,7 @@ fn lk_parameter_variations_match_opencv() {
             _ => unreachable!("{key}"),
         };
         let flow = lk(&img, &next, &pts, init, win, level, c, flags, min_eig);
-        let (pos_tol, err_tol) = tolerances(win.0, flags & GME != 0);
-        assert_flow(&flow, expected, pos_tol, err_tol, key);
+        assert_flow(&flow, expected, tolerances(win.0, flags & GME != 0), key);
     }
 }
 
@@ -613,8 +629,7 @@ fn lk_subpixel_shift_matches_opencv() {
             _ => unreachable!("{key}"),
         };
         let flow = lk(&tex, &next, &pts, None, win, level, c, flags, 1e-4);
-        let (pos_tol, err_tol) = tolerances(win.0, flags != 0);
-        assert_flow(&flow, expected, pos_tol, err_tol, key);
+        assert_flow(&flow, expected, tolerances(win.0, flags != 0), key);
     }
 }
 
@@ -676,8 +691,7 @@ fn lk_edge_and_outside_points_match_opencv() {
             flags,
             1e-4,
         );
-        let (pos_tol, err_tol) = tolerances(5, parts[1] == "min_eig");
-        assert_flow(&flow, expected, pos_tol, err_tol, key);
+        assert_flow(&flow, expected, tolerances(5, parts[1] == "min_eig"), key);
     }
 }
 
@@ -711,7 +725,7 @@ fn lk_final_bounds_gate_matches_opencv() {
         if status == 1 {
             assert_eq!((flow.0[0].x, flow.0[0].y), (gx, gy), "{what}: position");
             assert!(
-                (flow.2[0] - err).abs() <= 1e-5 * err.abs().max(1.0),
+                (flow.2[0] - err).abs() <= SCALAR_TOL.err_abs + SCALAR_TOL.err_rel * err.abs(),
                 "{what}: err {} vs {err}",
                 flow.2[0]
             );
@@ -773,7 +787,7 @@ fn lk_prebuilt_pyramid_borders_match_opencv() {
                 1e-4,
             )
             .unwrap();
-            assert_flow(&mae, &mae_rows, 1e-4, 1e-5, &format!("{what}: MAE"));
+            assert_flow(&mae, &mae_rows, SCALAR_TOL, &format!("{what}: MAE"));
             let step = calc_optical_flow_pyramid_lk_with_pyramids(
                 &prev,
                 &next,
@@ -786,7 +800,7 @@ fn lk_prebuilt_pyramid_borders_match_opencv() {
                 1e-4,
             )
             .unwrap();
-            assert_flow(&step, &step_rows, 1e-4, 1e-5, &format!("{what}: step"));
+            assert_flow(&step, &step_rows, SCALAR_TOL, &format!("{what}: step"));
         }
     }
 }
@@ -817,8 +831,7 @@ fn lk_termination_criteria_match_opencv() {
         assert_flow(
             &flow,
             &[row],
-            1e-4,
-            1e-5,
+            SCALAR_TOL,
             &format!("{kind}/{count}/{epsilon}/({x}, {y})"),
         );
     }
@@ -863,7 +876,7 @@ fn lk_input_validation_matches_opencv() {
             .unwrap();
     assert!(empty.0.is_empty() && empty.1.is_empty() && empty.2.is_empty());
     let negative = lk(&prev, &next, &pts, None, (5, 5), 3, d, 0, -1.0);
-    assert_flow(&negative, &D2_U8C1, 1e-4, 1e-5, "minEigThreshold -1");
+    assert_flow(&negative, &D2_U8C1, SCALAR_TOL, "minEigThreshold -1");
 }
 
 /// OpenCV tracks on images of any channel count (the window spans `winSize.width * cn`
@@ -887,7 +900,48 @@ fn lk_accepts_multi_channel_images() {
         1e-4,
     )
     .expect("OpenCV accepts CV_8UC3 images");
-    assert_flow(&flow, &D2_U8C3, 1e-4, 1e-5, "3 channels");
+    assert_flow(&flow, &D2_U8C3, SCALAR_TOL, "3 channels");
+}
+
+/// OpenCV asserts that a supplied pyramid's padding (the builder's `winSize`) is at least the
+/// tracking window (`lkpyramid.cpp`, the `locateROI` check on level 1); purecv has no padding
+/// and extends every level on the fly, so a larger window is accepted.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #184"]
+fn lk_prebuilt_rejects_windows_larger_than_the_pyramid_padding() {
+    let build = |img: &Matrix<u8>| {
+        build_optical_flow_pyramid(
+            img,
+            Size2i::new(5, 5),
+            2,
+            true,
+            BorderTypes::Reflect101,
+            BorderTypes::Constant,
+        )
+        .unwrap()
+    };
+    let prev = build(&reusable_texture(33, 49, 0));
+    let next = build(&reusable_texture(33, 49, 1));
+    assert_eq!(
+        prev.levels.len(),
+        3,
+        "the padding check needs more than one level"
+    );
+    let r = calc_optical_flow_pyramid_lk_with_pyramids(
+        &prev,
+        &next,
+        &[Point2f::new(16.0, 16.0)],
+        None,
+        Size2i::new(7, 7),
+        2,
+        default_criteria(),
+        0,
+        1e-4,
+    );
+    assert!(
+        r.is_err(),
+        "OpenCV rejects a 7x7 window on a pyramid padded for 5x5"
+    );
 }
 
 /// OpenCV asserts `maxLevel >= 0`; purecv clamps a negative `max_level` to 0 and tracks.
