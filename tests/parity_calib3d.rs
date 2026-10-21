@@ -670,8 +670,9 @@ fn solve_pnp_method_sqpnp_discriminant_matches_opencv() {
 // find_homography (calib3d_homography.py)
 // ---------------------------------------------------------------------------------------
 
-/// `exact`: 40 exact correspondences, every method, thresholds 3 and 1; `d2`: four points
-/// (OpenCV runs the kernel directly) and the identity.
+/// `exact`: 40 exact correspondences with methods 0, RANSAC and LMedS, thresholds 3 and 1;
+/// `d2`: four points (OpenCV runs the kernel directly) and the identity. RHO is in
+/// `find_homography_rho_is_distinct_from_ransac`: purecv runs RANSAC for it.
 #[test]
 fn find_homography_exact_matches_opencv() {
     let (src, exact, _, _) = homography_inputs();
@@ -684,9 +685,6 @@ fn find_homography_exact_matches_opencv() {
         assert_close(&norm_h(&h), &H_EXACT, 1e-5, name);
         assert_eq!(mask, vec![1u8; 40], "{name}: mask");
     }
-    let (h, mask) = homography(&src, &exact, HomographyMethod::Rho, 3.0);
-    assert_close(&norm_h(&h), &H_EXACT_RHO, 1e-5, "rho");
-    assert_eq!(mask, vec![1u8; 40], "rho: mask");
     let (h, mask) = homography(&src, &exact, HomographyMethod::Ransac, 1.0);
     assert_close(&norm_h(&h), &H_EXACT, 1e-5, "ransac_thr_1");
     assert_eq!(mask, vec![1u8; 40]);
@@ -765,11 +763,15 @@ fn find_homography_ransac_mask_matches_opencv_on_noisy_data() {
 }
 
 /// RHO (PROSAC) is a distinct estimator in OpenCV (`outliers/rho`: 21 inliers, its own
-/// matrix); purecv runs RANSAC for `Rho` and `LMedS`.
+/// matrix; `exact/rho`: a single-precision result 9.9e-6 from the LM-refined one); purecv
+/// runs RANSAC for `Rho` and `LMedS`.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #P1"]
 fn find_homography_rho_is_distinct_from_ransac() {
-    let (src, _, _, outl) = homography_inputs();
+    let (src, exact, _, outl) = homography_inputs();
+    let (h, mask) = homography(&src, &exact, HomographyMethod::Rho, 3.0);
+    assert_eq!(mask, vec![1u8; 40], "exact/rho: mask");
+    assert_close(&norm_h(&h), &H_EXACT_RHO, 1e-6, "exact/rho");
     let (h, mask) = homography(&src, &outl, HomographyMethod::Rho, 3.0);
     assert_eq!(mask, MASK_OUTLIERS_RHO.to_vec());
     assert_close(&norm_h(&h), &H_OUTLIERS_RHO, 1e-4, "outliers/rho");
@@ -1010,7 +1012,8 @@ fn solve_pnp_planar_matches_opencv() {
 
 /// OpenCV undistorts the image points with `distCoeffs` (`nonplanar_24_dist5` recovers the
 /// true pose); purecv ignores them and returns OpenCV's zero-coefficient pose
-/// (`nonplanar_24_dist5_ignored`, 0.05 units off), and accepts a 3-element vector.
+/// (`nonplanar_24_dist5_ignored`, 0.05 units off, measured by the script), and accepts a
+/// 3-element vector.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #P3"]
 fn solve_pnp_applies_distortion_coefficients() {
@@ -1020,17 +1023,11 @@ fn solve_pnp_applies_distortion_coefficients() {
         .map(|&(x, y)| Point2f::new(x, y))
         .collect();
     let got = pnp(&p.obj, &dist_img, &DIST5, None, SolvePnPMethod::Iterative).unwrap();
-    assert_pose(
-        &got,
-        &PNP_NONPLANAR_24_DIST5_IGNORED,
-        1e-6,
-        "what purecv computes",
-    );
+    assert_pose(&got, &PNP_NONPLANAR_24_DIST5, 1e-6, "nonplanar_24_dist5");
     assert!(
         pnp(&p.obj, &p.img, &[0.0; 3], None, SolvePnPMethod::Iterative).is_err(),
         "dist_3_invalid"
     );
-    assert_pose(&got, &PNP_NONPLANAR_24_DIST5, 1e-6, "nonplanar_24_dist5");
 }
 
 /// Four coplanar points (`square_4`) and three points with an extrinsic guess
@@ -1138,8 +1135,9 @@ fn solve_pnp_other_methods_match_opencv() {
 
 /// `outliers_default` / `outliers_thr_3` / `outliers_iters_1000` (6 of 24 correspondences
 /// replaced by random pixels), `exact_default`, `noisy_default` and `points_6`: the inlier
-/// index sets are identical and the poses agree to 2e-8; `all_outliers` and `iters_0` fail in
-/// both libraries.
+/// index sets are identical and the poses agree to 2e-8; `all_outliers` fails in both
+/// libraries, and so does `iters_0` (OpenCV runs no hypothesis; purecv clamps the count to one
+/// and that one hypothesis finds fewer than six inliers on this set).
 #[test]
 fn solve_pnp_ransac_matches_opencv() {
     let p = pnp_inputs();
@@ -1727,8 +1725,6 @@ mod ocv {
     pub const PNP_NONPLANAR_24_NOISY: ([f64; 3], [f64; 3]) = ([0.525347642951197, 0.5886462602082522, 0.21685505601855323], [0.2497393287550799, -0.1250830272664002, 4.000802155542033]);
     #[rustfmt::skip]
     pub const PNP_NONPLANAR_24_DIST5: ([f64; 3], [f64; 3]) = ([0.5259482960832232, 0.587824609917828, 0.21656694953845898], [0.24999999352237032, -0.12499999442596199, 3.9999999528420425]);
-    #[rustfmt::skip]
-    pub const PNP_NONPLANAR_24_DIST5_IGNORED: ([f64; 3], [f64; 3]) = ([0.5241693047387793, 0.5872972360837923, 0.2155572075424165], [0.251107632203885, -0.12413263657720637, 4.052057105574226]);
     #[rustfmt::skip]
     pub const PNP_PLANAR_16_EXACT: ([f64; 3], [f64; 3]) = ([0.525948306967193, 0.5878246073430022, 0.21656696476154447], [0.2499999885637055, -0.12499999934343545, 4.000000008310727]);
     #[rustfmt::skip]
