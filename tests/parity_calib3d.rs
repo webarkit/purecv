@@ -661,7 +661,7 @@ fn method_discriminants_match_opencv() {
 
 /// OpenCV: `SOLVEPNP_IPPE = 6`, `SOLVEPNP_IPPE_SQUARE = 7`, `SOLVEPNP_SQPNP = 8`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P4"]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
 fn solve_pnp_method_sqpnp_discriminant_matches_opencv() {
     assert_eq!(SolvePnPMethod::SqPnP as i32, 8);
 }
@@ -738,7 +738,7 @@ fn find_homography_input_validation_matches_opencv() {
 /// Levenberg-Marquardt iterations on the reprojection error; purecv returns the DLT
 /// solution. `noisy/method0`, `noisy/lmeds`, `outliers/ransac`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
 fn find_homography_refines_with_lm_like_opencv() {
     let (src, _, noisy, outl) = homography_inputs();
     let (h, _) = homography(&src, &noisy, HomographyMethod::None, 3.0);
@@ -766,7 +766,7 @@ fn find_homography_ransac_mask_matches_opencv_on_noisy_data() {
 /// matrix; `exact/rho`: a single-precision result 9.9e-6 from the LM-refined one); purecv
 /// runs RANSAC for `Rho` and `LMedS`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
 fn find_homography_rho_is_distinct_from_ransac() {
     let (src, exact, _, outl) = homography_inputs();
     let (h, mask) = homography(&src, &exact, HomographyMethod::Rho, 3.0);
@@ -780,7 +780,7 @@ fn find_homography_rho_is_distinct_from_ransac() {
 /// A non-positive `ransacReprojThreshold` means the default 3 in OpenCV; purecv finds no
 /// inlier and fails (`*/ransac_thr_0`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
 fn find_homography_defaults_threshold_when_non_positive() {
     let (src, exact, _, _) = homography_inputs();
     let (h, mask) = homography(&src, &exact, HomographyMethod::Ransac, 0.0);
@@ -791,7 +791,7 @@ fn find_homography_defaults_threshold_when_non_positive() {
 /// Collinear or coincident points give an empty matrix in OpenCV (`collinear_4`,
 /// `collinear_5_ransac`, `coincident_4`); purecv returns a matrix with a zero last row.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
 fn find_homography_rejects_degenerate_input_like_opencv() {
     let col: Vec<Point2f> = (0..4)
         .map(|i| Point2f::new(10.0 * i as f32, 10.0 * i as f32))
@@ -868,7 +868,7 @@ fn rodrigues_input_validation_matches_opencv() {
 /// other direction OpenCV builds the matrix of any vector above `DBL_EPSILON`; purecv returns
 /// the identity below 1e-10 (`tiny_1e-12`: off-diagonals of 1e-12 lost).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #260"]
 fn rodrigues_small_angles_return_zero_like_opencv() {
     for name in ["small_1e-6", "small_2e-6", "small_5e-6"] {
         let (_, rvec, _, back) = RODRIGUES.iter().find(|e| e.0 == name).unwrap();
@@ -881,7 +881,7 @@ fn rodrigues_small_angles_return_zero_like_opencv() {
 /// For `1e-5 <= sin(theta) < 1e-4` below pi OpenCV uses the general formula; purecv's
 /// diagonal method there leaves a 3.1e-5 spurious component (`near_pi_2e-5`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #260"]
 fn rodrigues_near_pi_band_matches_opencv() {
     for name in ["near_pi_2e-5", "near_pi_2e-5_neg"] {
         let (_, rvec, _, back) = RODRIGUES.iter().find(|e| e.0 == name).unwrap();
@@ -893,7 +893,7 @@ fn rodrigues_near_pi_band_matches_opencv() {
 /// the vector; purecv reads the trace and the off-diagonals as they are (`scaled_1.1`,
 /// `perturbed_01`, `reflection_z`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #260"]
 fn rodrigues_projects_non_rotations_like_opencv() {
     for name in ["scaled_1.1", "perturbed_01", "reflection_z"] {
         let (_, m, rvec) = MAT_TO_VEC.iter().find(|e| e.0 == name).unwrap();
@@ -903,7 +903,7 @@ fn rodrigues_projects_non_rotations_like_opencv() {
 
 /// OpenCV accepts a 1x1 three-channel vector (`vec3_1x1x3`); purecv requires one channel.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #260"]
 fn rodrigues_accepts_three_channel_vectors() {
     let m = rod(&Matrix::from_vec(1, 1, 3, vec![0.1, -0.2, 0.3]));
     assert_eq!(m.data, rod(&vec3([0.1, -0.2, 0.3])).data);
@@ -992,7 +992,7 @@ fn solve_pnp_input_validation_matches_opencv() {
 /// homography and recovers the pose; purecv's 12-parameter DLT is rank deficient there and
 /// returns a pose 2.9 rad and 8 units away.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P3"]
+#[ignore = "diverges from OpenCV 4.10.0, see #261"]
 fn solve_pnp_planar_matches_opencv() {
     let p = pnp_inputs();
     let it = SolvePnPMethod::Iterative;
@@ -1015,7 +1015,7 @@ fn solve_pnp_planar_matches_opencv() {
 /// (`nonplanar_24_dist5_ignored`, 0.05 units off, measured by the script), and accepts a
 /// 3-element vector.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P3"]
+#[ignore = "diverges from OpenCV 4.10.0, see #261"]
 fn solve_pnp_applies_distortion_coefficients() {
     let p = pnp_inputs();
     let dist_img: Vec<Point2f> = IMG_24_DIST5
@@ -1033,7 +1033,7 @@ fn solve_pnp_applies_distortion_coefficients() {
 /// Four coplanar points (`square_4`) and three points with an extrinsic guess
 /// (`guess_good_3_points`) are solved by OpenCV's ITERATIVE method; purecv needs six.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P3"]
+#[ignore = "diverges from OpenCV 4.10.0, see #261"]
 fn solve_pnp_accepts_four_planar_points_like_opencv() {
     let (square, img) = square_inputs();
     assert_pose(
@@ -1086,7 +1086,7 @@ fn solve_pnp_extrinsic_guess_matches_opencv() {
 /// `epnp`, `sqpnp` (24 noisy points), `p3p` / `ap3p` (four points) return OpenCV's poses;
 /// purecv returns `NotImplemented` for every method but `Iterative`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P4"]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
 fn solve_pnp_other_methods_match_opencv() {
     let p = pnp_inputs();
     assert_pose(
@@ -1230,7 +1230,7 @@ fn solve_pnp_ransac_noisy_threshold_1_mask_matches_opencv() {
 /// Four points run P3P and five points EPnP directly in OpenCV (`points_4`, `points_5`);
 /// purecv requires six.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P5"]
+#[ignore = "diverges from OpenCV 4.10.0, see #263"]
 fn solve_pnp_ransac_accepts_four_and_five_points_like_opencv() {
     let p = pnp_inputs();
     let it = SolvePnPMethod::Iterative;
@@ -1252,7 +1252,7 @@ fn solve_pnp_ransac_accepts_four_and_five_points_like_opencv() {
 
 /// OpenCV asserts `0 < confidence < 1` (`conf_1`); purecv ignores the value.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P5"]
+#[ignore = "diverges from OpenCV 4.10.0, see #263"]
 fn solve_pnp_ransac_rejects_confidence_outside_0_1() {
     let p = pnp_inputs();
     assert!(pnp_ransac(
@@ -1272,7 +1272,7 @@ fn solve_pnp_ransac_rejects_confidence_outside_0_1() {
 /// the final pose in OpenCV (true pose recovered, same inlier set); purecv's pose is 0.05
 /// units off. `planar_noisy`: the planar failure of `solve_pnp` (same inlier set).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P3"]
+#[ignore = "diverges from OpenCV 4.10.0, see #261"]
 fn solve_pnp_ransac_distortion_and_planar_match_opencv() {
     let p = pnp_inputs();
     let it = SolvePnPMethod::Iterative;
@@ -1345,7 +1345,7 @@ fn solve_pnp_ransac_extrinsic_guess_matches_opencv() {
 /// `outliers_epnp`: with `SOLVEPNP_EPNP` OpenCV refines the inliers with EPnP (same inlier
 /// set, a slightly different pose); purecv returns `NotImplemented`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P4"]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
 fn solve_pnp_ransac_other_methods_match_opencv() {
     let p = pnp_inputs();
     let (ok, r, t, inl) = pnp_ransac(
@@ -1429,7 +1429,7 @@ fn init_undistort_rectify_map_matches_opencv() {
 /// at most eight coefficients, so the maps are up to 0.18 px (`k12`) and 4.2 px (`k14`,
 /// `rectified/k14`) off.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P6"]
+#[ignore = "diverges from OpenCV 4.10.0, see #264"]
 fn init_undistort_rectify_map_thin_prism_and_tilt_match_opencv() {
     let k = camera_matrix();
     assert_maps_identical(
@@ -1449,7 +1449,7 @@ fn init_undistort_rectify_map_thin_prism_and_tilt_match_opencv() {
 /// OpenCV asserts that `distCoeffs` has 4, 5, 8, 12 or 14 elements (`dist_3_invalid`,
 /// `dist_6_invalid`, `dist_9_invalid`); purecv reads what is there and pads with zeros.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P6"]
+#[ignore = "diverges from OpenCV 4.10.0, see #264"]
 fn init_undistort_rectify_map_rejects_invalid_coefficient_counts() {
     let k = camera_matrix();
     assert!(undistort_maps(&k, &[0.1, 0.2, 0.3], None, &k, 64, 48).is_err());
@@ -1459,7 +1459,7 @@ fn init_undistort_rectify_map_rejects_invalid_coefficient_counts() {
 /// A 0x0 size gives empty maps in OpenCV (`size_0x0`); purecv panics in the `parallel` build
 /// (`par_chunks_exact_mut(0)`) and returns empty maps otherwise.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P6"]
+#[ignore = "diverges from OpenCV 4.10.0, see #264"]
 fn init_undistort_rectify_map_empty_size_returns_empty_maps() {
     let k = camera_matrix();
     let (m1, m2) = undistort_maps(&k, &K5, None, &k, 0, 0).unwrap();
@@ -1555,7 +1555,7 @@ fn find_fundamental_mat_ransac_masks_match_opencv_on_noisy_data() {
 /// With fewer than 15 points `FM_RANSAC` runs LMedS in OpenCV (`noisy/fm_ransac_14_points`:
 /// 8 inliers of 14 from the median error); purecv runs RANSAC with the given threshold.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P7"]
+#[ignore = "diverges from OpenCV 4.10.0, see #265"]
 fn find_fundamental_mat_uses_lmeds_below_15_points_like_opencv() {
     let (_, _, n1, n2, _) = fundamental_inputs();
     let (_, mask) = fundamental(
@@ -1573,7 +1573,7 @@ fn find_fundamental_mat_uses_lmeds_below_15_points_like_opencv() {
 /// (`fm_ransac_thr_0` returns the threshold-3 result, `fm_ransac_conf_0` likewise); purecv
 /// fails on the threshold and stops after the first model with confidence 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P7"]
+#[ignore = "diverges from OpenCV 4.10.0, see #265"]
 fn find_fundamental_mat_resets_invalid_threshold_and_confidence_like_opencv() {
     let (p1, p2, n1, _, o2) = fundamental_inputs();
     let (f, mask) = fundamental(&p1, &p2, FundamentalMatMethod::FM_RANSAC, 0.0, 0.99, 1000);
@@ -1586,7 +1586,7 @@ fn find_fundamental_mat_resets_invalid_threshold_and_confidence_like_opencv() {
 /// Seven points run the 7-point algorithm whatever the method (`seven_points_8point`: three
 /// stacked solutions, a 9x3 matrix); purecv requires eight.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P7"]
+#[ignore = "diverges from OpenCV 4.10.0, see #265"]
 fn find_fundamental_mat_accepts_seven_points_like_opencv() {
     let (p1, p2, _, _, _) = fundamental_inputs();
     let f = find_fundamental_mat(
@@ -1605,7 +1605,7 @@ fn find_fundamental_mat_accepts_seven_points_like_opencv() {
 /// Collinear points and identical point sets give an empty matrix in OpenCV (`collinear_10`,
 /// `identical_sets_8point`: a 9x9 eigenvalue below `DBL_EPSILON`); purecv returns a matrix.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #P7"]
+#[ignore = "diverges from OpenCV 4.10.0, see #265"]
 fn find_fundamental_mat_rejects_degenerate_input_like_opencv() {
     let (p1, _, _, _, _) = fundamental_inputs();
     let same: Vec<Point2f> = (0..10)
