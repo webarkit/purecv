@@ -26,7 +26,7 @@ audit PR.
 | imgproc | [`docs/parity/imgproc.md`](imgproc.md) | [#174](https://github.com/webarkit/purecv/issues/174) | done (PR #228; 20 issues filed: #229–#248) |
 | features2d | [`docs/parity/features2d.md`](features2d.md) | [#175](https://github.com/webarkit/purecv/issues/175) | done (PR #249; 5 issues filed: #250–#254) |
 | video | [`docs/parity/video.md`](video.md) | [#176](https://github.com/webarkit/purecv/issues/176) | done (PR #255; 2 issues filed: #256, #257) |
-| calib3d | `docs/parity/calib3d.md` | [#177](https://github.com/webarkit/purecv/issues/177) | pending |
+| calib3d | [`docs/parity/calib3d.md`](calib3d.md) | [#177](https://github.com/webarkit/purecv/issues/177) | in progress (PR open; 7 issues proposed, P1–P7) |
 
 The audits run in this order: core → imgproc → features2d → video → calib3d.
 
@@ -195,9 +195,17 @@ Progress: `pending` / `in progress` / `done`.
 | **B2** imgproc | #174; #157 (filter sites), #189 (prerequisite), #190 (tie rule), #191 (RGB→gray, both paths), #193 (needs `INTER_LINEAR_EXACT`), #225 (`hough_lines_p`), #100 (`integral`); #229–#248 (filed from [`imgproc.md`](imgproc.md#filed-issues), 2026-10-20) | | done |
 | **B3** features2d | #175; #158; #159 → #193, #194, #195, #196, #197; #160 → #198, #199, #200; #161 → #201, #202, #203 (`SIMD`), #204 (`wasm`); contrib requests #101–#104; #250–#254 (filed from [`features2d.md`](features2d.md#proposed-issues), 2026-10-20) | #123, #124, #125, #126, #136, #156: fixed by PR #162, shipped in v0.10.0, still open (confirmed at `0e310c3`) | done |
 | **B4** video | #176; #155, #178 (item 2), #183, #184; #154 (fixed by PR #164, confirmed at `5201b8a`, can be closed); #184 also tracks the padding-check `diverges` row; #256, #257 (filed from [`video.md`](video.md#proposed-issues), 2026-10-21) | #130, #131, #138, #142, #144, #145, #149, #163 (PR #164), #166 (PR #167): all confirmed against the 4.10.0 wheel | done |
-| **B5** calib3d | #177; #127, #133 (PR #134 closed unmerged), #135 | | pending |
+| **B5** calib3d | #177; #127 (`decomposeHomographyMat` is `missing`, the helper would be `purecv-only`), #133 (both guess paths `diverges`; PR #134 closed unmerged), #135 (`inspected`: same minima measured; blocks the homography / planar refinements); #225 (three RANSAC rows), #237 (`undistort` is `missing`); P1–P7 proposed in [`calib3d.md`](calib3d.md#proposed-issues) | | in progress |
 | Tooling (Part A follow-ups) | #170, #171 | | tracked separately |
 | Not part of the comparison | #128 (roadmap; owns the future version bump), #132 (GPU), #97 (WASM SIMD perf), #81 and #94 (Miri), #182 (Miri shards), #67 (architecture diagram), #113 (benchmark doc) | PR #168 (license metadata) | |
+
+**Series complete.** With B5 every module of purecv has its audit document. The next steps
+are the `parity-audit` → `dev` pull request that merges the five documents, the scripts and
+the pin tests in one change (not opened by an audit task), and the version-strategy question
+(stay on 4.10.0 or move to 4.13 / 5.x) that goes on the agenda in
+[#128](https://github.com/webarkit/purecv/issues/128). The 60-odd issues filed from the
+documents are the backlog of fixes; each lands through its own PR to `dev`, never through an
+audit PR.
 
 **Tooling.** #170 (bootstrap output noise) and #171 (bootstrap and reference-guard
 robustness) do not compare purecv with OpenCV, but S2 depends on the bootstrap and S7 on the
