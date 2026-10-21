@@ -51,7 +51,7 @@
 //! rows that already match OpenCV. Tests marked `#[ignore]`
 //! document a `diverges` row; they fail when run
 //! (`cargo test --test parity_video -- --ignored`) and are the executable form of the
-//! measurement; the proposed issue in each reason tracks the fix.
+//! measurement; the issue in each reason tracks the fix.
 
 use purecv::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use purecv::core::Matrix;
@@ -491,7 +491,7 @@ fn build_optical_flow_pyramid_rejects_small_windows_like_opencv() {
 /// OpenCV builds pyramids of any channel count (`CV_8UC3` levels, `CV_16SC6` derivatives);
 /// purecv rejects every non-single-channel image.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/video.md P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #256"]
 fn build_optical_flow_pyramid_accepts_multi_channel_input() {
     let img = replicate_channels(&reusable_texture(33, 49, 0), 3);
     let pyr = build_optical_flow_pyramid(
@@ -883,7 +883,7 @@ fn lk_input_validation_matches_opencv() {
 /// samples); three replicated channels give the single-channel result to 1 ulp. purecv
 /// rejects every non-single-channel image.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/video.md P1"]
+#[ignore = "diverges from OpenCV 4.10.0, see #256"]
 fn lk_accepts_multi_channel_images() {
     let prev = replicate_channels(&reusable_texture(33, 49, 0), 3);
     let next = replicate_channels(&reusable_texture(33, 49, 1), 3);
@@ -946,7 +946,7 @@ fn lk_prebuilt_rejects_windows_larger_than_the_pyramid_padding() {
 
 /// OpenCV asserts `maxLevel >= 0`; purecv clamps a negative `max_level` to 0 and tracks.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see docs/parity/video.md P2"]
+#[ignore = "diverges from OpenCV 4.10.0, see #257"]
 fn lk_rejects_negative_max_level() {
     let prev = reusable_texture(33, 49, 0);
     let next = reusable_texture(33, 49, 1);
