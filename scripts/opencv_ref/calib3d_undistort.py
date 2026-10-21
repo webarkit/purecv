@@ -164,7 +164,7 @@ def main() -> None:
     up["k5_iter_20_eps"] = tolist(cv2.undistortPointsIter(
         pts, k, np.array(COEFFS["k5"]), None, None,
         (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 20, 1e-9)).reshape(-1, 2))
-    up["k5_p_k"] = tolist(cv2.undistortPoints(pts, k, np.array(COEFFS["k5"]), None, k).reshape(-1, 2))
+    up["k5_p_k"] = tolist(cv2.undistortPoints(pts, k, np.array(COEFFS["k5"]), None, None, k).reshape(-1, 2))
     up["k14"] = tolist(cv2.undistortPoints(pts, k, np.array(COEFFS["k14"])).reshape(-1, 2))
     up["default_criteria"] = "TermCriteria(MAX_ITER, 5, 0.01)"
     results["undistort_points"] = up

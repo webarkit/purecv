@@ -55,6 +55,8 @@ def main() -> None:
     results = {"data": tolist(DATA)}
     results["pp_centers_attempts3"] = run(cv2.KMEANS_PP_CENTERS, 3)
     results["random_centers_attempts5"] = run(cv2.KMEANS_RANDOM_CENTERS, 5)
+    results["random_centers_attempts3"] = run(cv2.KMEANS_RANDOM_CENTERS, 3)
+    results["random_centers_attempts1"] = run(cv2.KMEANS_RANDOM_CENTERS, 1)
     init = np.array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2], dtype=np.int32)
     results["use_initial_labels"] = run(cv2.KMEANS_USE_INITIAL_LABELS, 1, init.copy())
     bad_init = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], dtype=np.int32)

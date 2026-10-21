@@ -84,6 +84,13 @@ def main() -> None:
         "transpose": tolist(cv2.transpose(m23)),
         "repeat_2_3": tolist(cv2.repeat(m23, 2, 3)),
         "repeat_0_1": attempt(lambda: cv2.repeat(m23, 0, 1)),
+        # flipND: axis in [-ndims, ndims), a negative axis counts from the end
+        "flip_nd_axis_0": tolist(cv2.flipND(m23, 0)),
+        "flip_nd_axis_1": tolist(cv2.flipND(m23, 1)),
+        "flip_nd_axis_minus1": tolist(cv2.flipND(m23, -1)),
+        "flip_nd_axis_minus2": tolist(cv2.flipND(m23, -2)),
+        "flip_nd_axis_2": attempt(lambda: cv2.flipND(m23, 2)),
+        "flip_nd_axis_minus3": attempt(lambda: cv2.flipND(m23, -3)),
     }
 
     # --- checkRange (half-open upper bound), compare, inRange

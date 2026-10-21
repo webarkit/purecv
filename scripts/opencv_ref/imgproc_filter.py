@@ -66,6 +66,7 @@ def main() -> None:
     g["u8_k3x5_sigma0"] = tolist(cv2.GaussianBlur(img8, (3, 5), 0))
     g["u8_k3x5_sigma1.5_sigma2_0"] = tolist(cv2.GaussianBlur(img8, (3, 5), 1.5))
     g["f32_k3x5_sigma1.5_sigma2_0"] = tolist(cv2.GaussianBlur(img32, (3, 5), 1.5))
+    g["f32_k5x3_sigma1.5_sigma2_0"] = tolist(cv2.GaussianBlur(img32, (5, 3), 1.5))
     g["u8c3_k3_sigma0"] = tolist(cv2.GaussianBlur(img8c3, (3, 3), 0))
     g["u8_k3_sigma0_replicate"] = tolist(cv2.GaussianBlur(img8, (3, 3), 0, borderType=cv2.BORDER_REPLICATE))
     g["u8_k3_sigma0_constant"] = tolist(cv2.GaussianBlur(img8, (3, 3), 0, borderType=cv2.BORDER_CONSTANT))

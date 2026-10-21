@@ -56,7 +56,6 @@ function convert(srcType, dstType, alpha, beta) {
   const src = cv.matFromArray(1, SRC.length, srcType, SRC);
   const dst = new cv.Mat();
   src.convertTo(dst, dstType, alpha, beta);
-  const out = Array.from(dst.data8S.length ? [] : []); // placeholder, replaced below
   let values;
   switch (dstType) {
     case cv.CV_8U: values = Array.from(dst.data); break;

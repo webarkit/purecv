@@ -212,23 +212,46 @@ fn gaussian_blur_u8_matches_opencv_bit_exact_path() {
     );
 }
 
-/// OpenCV: `ksize = (0, 0)` derives the size from sigma; sigma2 = 0 means sigma2 = sigma1 for
-/// any ksize. purecv rejects (0, 0) and panics (index out of bounds) on 3x5 with sigma2 = 0.
+/// OpenCV: `ksize = (0, 0)` derives the size from sigma; purecv rejects it.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #229"]
-fn gaussian_blur_ksize_from_sigma_and_non_square_kernel() {
+fn gaussian_blur_ksize_from_sigma() {
     let src = pattern_u8(8, 8, 1);
     let auto = gaussian_blur(&src, Size2i::new(0, 0), 1.0, 0.0, B101).unwrap();
     assert_eq!(
         auto.data,
         OCV_GAUSSIAN_BLUR_U8_K0_SIGMA1_AUTO_KSIZE.to_vec()
     );
+}
+
+/// OpenCV: sigma2 = 0 means sigma2 = sigma1 for any ksize. purecv clones the width kernel for
+/// the vertical pass, so a 3x5 kernel (width 3, height 5) panics (index out of bounds).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #229"]
+fn gaussian_blur_tall_kernel_with_sigma2_0() {
+    let src = pattern_u8(8, 8, 1);
     let rect = gaussian_blur(&to_f32(&src), Size2i::new(3, 5), 1.5, 0.0, B101).unwrap();
     assert_close(
         &rect.data,
         &OCV_GAUSSIAN_BLUR_F32_K3X5_SIGMA1_5_SIGMA2_0,
         1e-5,
         "3x5",
+    );
+}
+
+/// The reverse case does not panic but is silently wrong: with a 5x3 kernel (width 5,
+/// height 3) and sigma2 = 0 the vertical pass reads the first three taps of the 5-tap width
+/// kernel, an asymmetric, unnormalised vertical filter (`f32_k5x3_sigma1.5_sigma2_0`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #229"]
+fn gaussian_blur_wide_kernel_with_sigma2_0() {
+    let src = pattern_u8(8, 8, 1);
+    let rect = gaussian_blur(&to_f32(&src), Size2i::new(5, 3), 1.5, 0.0, B101).unwrap();
+    assert_close(
+        &rect.data,
+        &OCV_GAUSSIAN_BLUR_F32_K5X3_SIGMA1_5_SIGMA2_0,
+        1e-5,
+        "5x3",
     );
 }
 
@@ -1579,33 +1602,15 @@ fn corner_responses_are_normalised_like_opencv() {
     assert_close(&eigenvalues, &expected, 1e-4, "eigenvalues");
 }
 
-/// The current behaviour, pinned so that a fix shows up: the f32 responses are exactly OpenCV's
-/// times 256 (Harris, block 3, ksize 3) and 16 (min eigenvalue, both eigenvalues of
-/// `corner_eigen_vals_and_vecs`); the eigenvectors match up to sign.
+/// The eigenvectors of `corner_eigen_vals_and_vecs` match OpenCV's up to sign wherever the
+/// first eigenvalue is not negligible (the eigenvalues themselves differ by the constant factor
+/// of `corner_responses_are_normalised_like_opencv`, #243).
 #[test]
-fn corner_responses_current_behaviour_is_a_constant_factor() {
+fn corner_eigen_vals_and_vecs_eigenvectors_match_opencv_up_to_sign() {
     let sq = to_f32(&square_u8(16, 20, 220, 4, 12));
-    let h = corner_harris(&sq, 3, 3, 0.04, B101).unwrap();
-    let scaled: Vec<f32> = OCV_CORNERS_HARRIS_F32_B3_K3_0_04
-        .iter()
-        .map(|v| v * 256.0)
-        .collect();
-    assert_close(&h.data, &scaled, 1e-4, "harris x256");
-    let m = corner_min_eigen_val(&sq, 3, 3, B101).unwrap();
-    let scaled: Vec<f32> = OCV_CORNERS_MIN_EIGEN_F32_B3_K3
-        .iter()
-        .map(|v| v * 16.0)
-        .collect();
-    assert_close(&m.data, &scaled, 1e-4, "min eigen x16");
     let ev = corner_eigen_vals_and_vecs(&sq, 3, 3, B101).unwrap();
     let expected = OCV_CORNERS_EIGEN_VALS_VECS_F32_B3_K3;
     assert_eq!(ev.data.len(), expected.len(), "eigen length");
-    let eigenvalues: Vec<f32> = ev.data.chunks(6).flat_map(|p| [p[0], p[1]]).collect();
-    let scaled: Vec<f32> = expected
-        .chunks(6)
-        .flat_map(|p| [p[0] * 16.0, p[1] * 16.0])
-        .collect();
-    assert_close(&eigenvalues, &scaled, 1e-4, "eigenvalues x16");
     for (i, (a, e)) in ev.data.chunks(6).zip(expected.chunks(6)).enumerate() {
         if e[0].abs() > 1e-3f32 {
             for k in 2..6 {
@@ -1823,6 +1828,7 @@ fn hough_circles_matches_opencv() {
 // allowed for this module only.
 // ---------------------------------------------------------------------------------------
 
+// Generated OpenCV 4.10.0 outputs: literals are copied, not approximations of constants.
 #[allow(clippy::approx_constant, clippy::excessive_precision)]
 mod ocv {
     #[rustfmt::skip]
@@ -1957,6 +1963,8 @@ mod ocv {
     pub const OCV_EQUALIZE_HIST_U8_TIE_HALF_EVEN: [u8; 7] = [0, 42, 85, 128, 170, 212, 255];
     #[rustfmt::skip]
     pub const OCV_EQUALIZE_HIST_U8_TWO_VALUES: [u8; 4] = [0, 0, 0, 255];
+    #[rustfmt::skip]
+    pub const OCV_GAUSSIAN_BLUR_F32_K5X3_SIGMA1_5_SIGMA2_0: [f32; 64] = [153.68356323242188, 159.52847290039062, 165.1067352294922, 164.8468017578125, 133.8468017578125, 102.84680938720703, 79.29167175292969, 70.23713684082031, 154.8367462158203, 160.68167114257812, 166.2599334716797, 166.0, 135.0, 104.0, 80.44486236572266, 71.39032745361328, 157.83676147460938, 163.68167114257812, 169.25994873046875, 169.0, 138.0, 107.0, 83.44486236572266, 74.39032745361328, 160.83676147460938, 166.68167114257812, 172.2599334716797, 172.0, 141.0, 110.0, 86.44486236572266, 77.39032745361328, 163.83676147460938, 169.68167114257812, 175.25994873046875, 175.0, 144.0, 113.0, 89.44485473632812, 80.39032745361328, 166.83676147460938, 172.68167114257812, 178.2599334716797, 178.0, 147.0, 116.0, 92.44486236572266, 83.39032745361328, 169.83676147460938, 175.68167114257812, 181.2599334716797, 181.0, 150.0, 119.0, 95.44486236572266, 86.39032745361328, 170.9899444580078, 176.83485412597656, 182.4131317138672, 182.15318298339844, 151.1531982421875, 120.15319061279297, 96.59805297851562, 87.54351806640625];
     #[rustfmt::skip]
     pub const OCV_GAUSSIAN_BLUR_F32_K3X5_SIGMA1_5_SIGMA2_0: [f32; 64] = [141.35483, 149.04709, 196.84422, 165.84422, 134.84422, 103.84423, 72.84422, 60.92791, 142.23108, 149.92332, 197.72047, 166.72047, 135.72047, 104.720474, 73.72047, 61.804153, 144.5106, 152.20287, 2e+02, 168.99998, 138.0, 107.0, 76.0, 64.08368, 147.5106, 155.20287, 203.0, 172.0, 141.0, 1.1e+02, 79.0, 67.08369, 150.5106, 158.20287, 206.0, 175.0, 144.0, 113.0, 82.0, 70.08369, 153.51059, 161.20285, 209.0, 178.0, 147.0, 116.0, 85.0, 73.08368, 155.79013, 163.48238, 211.27953, 180.27954, 149.27953, 118.27953, 87.279526, 75.363205, 156.66638, 164.35863, 212.15578, 181.15578, 150.15578, 119.15578, 88.15577, 76.239456];
     #[rustfmt::skip]

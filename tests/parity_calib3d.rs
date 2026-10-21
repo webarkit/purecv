@@ -470,6 +470,7 @@ fn pnp(
 
 type RansacPose = purecv::core::error::Result<(bool, Vec<f64>, Vec<f64>, Vec<i32>)>;
 
+// Mirrors the library function's own argument list (which carries the same allow).
 #[allow(clippy::too_many_arguments)]
 fn pnp_ransac(
     obj: &[Point3f],
@@ -734,17 +735,32 @@ fn find_homography_input_validation_matches_opencv() {
     assert!(find_homography(&src[..5], &exact[..4], HomographyMethod::None, 3.0, None).is_err());
 }
 
-/// OpenCV refines every result of `n > 4` points (methods 0, RANSAC, LMEDS) with ten
-/// Levenberg-Marquardt iterations on the reprojection error; purecv returns the DLT
-/// solution. `noisy/method0`, `noisy/lmeds`, `outliers/ransac`.
+/// OpenCV refines every result of `n > 4` points with ten Levenberg-Marquardt iterations on
+/// the reprojection error; purecv returns the DLT solution (`noisy/method0`).
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #259"]
-fn find_homography_refines_with_lm_like_opencv() {
-    let (src, _, noisy, outl) = homography_inputs();
+fn find_homography_method0_refines_with_lm_like_opencv() {
+    let (src, _, noisy, _) = homography_inputs();
     let (h, _) = homography(&src, &noisy, HomographyMethod::None, 3.0);
     assert_close(&norm_h(&h), &H_NOISY_METHOD0, 1e-4, "noisy/method0");
+}
+
+/// OpenCV's LMedS result is refined like method 0 (`noisy/lmeds` equals `noisy/method0`);
+/// purecv runs its RANSAC and refits with the DLT.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
+fn find_homography_lmeds_refines_with_lm_like_opencv() {
+    let (src, _, noisy, _) = homography_inputs();
     let (h, _) = homography(&src, &noisy, HomographyMethod::LMedS, 3.0);
     assert_close(&norm_h(&h), &H_NOISY_METHOD0, 1e-4, "noisy/lmeds");
+}
+
+/// OpenCV re-fits the RANSAC inliers with the kernel and refines them with LM
+/// (`outliers/ransac`: same inlier set as purecv, a matrix 0.011 away).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #259"]
+fn find_homography_ransac_refines_with_lm_like_opencv() {
+    let (src, _, _, outl) = homography_inputs();
     let (h, _) = homography(&src, &outl, HomographyMethod::Ransac, 3.0);
     assert_close(&norm_h(&h), &H_OUTLIERS_RANSAC, 1e-4, "outliers/ransac");
 }
@@ -988,26 +1004,38 @@ fn solve_pnp_input_validation_matches_opencv() {
     .is_err());
 }
 
-/// Coplanar object points (`planar_16_exact`, `planar_16_noisy`): OpenCV initialises from a
-/// homography and recovers the pose; purecv's 12-parameter DLT is rank deficient there and
-/// returns a pose 2.9 rad and 8 units away.
+/// Coplanar object points (`planar_16_exact`): OpenCV initialises from a homography and
+/// recovers the pose; purecv's 12-parameter DLT is rank deficient there and returns a pose
+/// 2.9 rad and 8 units away.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #261"]
-fn solve_pnp_planar_matches_opencv() {
+fn solve_pnp_planar_exact_matches_opencv() {
     let p = pnp_inputs();
-    let it = SolvePnPMethod::Iterative;
-    assert_pose(
-        &pnp(&p.planar, &p.img_planar, &NO_DIST, None, it).unwrap(),
-        &PNP_PLANAR_16_EXACT,
-        1e-5,
-        "planar_16_exact",
-    );
-    assert_pose(
-        &pnp(&p.planar, &p.noisy_planar, &NO_DIST, None, it).unwrap(),
-        &PNP_PLANAR_16_NOISY,
-        1e-5,
-        "planar_16_noisy",
-    );
+    let got = pnp(
+        &p.planar,
+        &p.img_planar,
+        &NO_DIST,
+        None,
+        SolvePnPMethod::Iterative,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_PLANAR_16_EXACT, 1e-5, "planar_16_exact");
+}
+
+/// The same planar failure with +-0.5 px noise (`planar_16_noisy`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #261"]
+fn solve_pnp_planar_noisy_matches_opencv() {
+    let p = pnp_inputs();
+    let got = pnp(
+        &p.planar,
+        &p.noisy_planar,
+        &NO_DIST,
+        None,
+        SolvePnPMethod::Iterative,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_PLANAR_16_NOISY, 1e-5, "planar_16_noisy");
 }
 
 /// OpenCV undistorts the image points with `distCoeffs` (`nonplanar_24_dist5` recovers the
@@ -1044,9 +1072,9 @@ fn solve_pnp_accepts_four_planar_points_like_opencv() {
     );
 }
 
-/// `useExtrinsicGuess` starts the refinement from the given pose (`guess_good_noisy` reaches
-/// the same minimum, `guess_bad_noisy` diverges to OpenCV's documented garbage,
-/// `guess_good_3_points` solves three points); purecv returns `NotImplemented`.
+/// `useExtrinsicGuess` starts the refinement from the given pose: from a good guess OpenCV
+/// reaches the same minimum as without (`guess_good_noisy`); purecv returns
+/// `NotImplemented`.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #133"]
 fn solve_pnp_extrinsic_guess_matches_opencv() {
@@ -1055,78 +1083,87 @@ fn solve_pnp_extrinsic_guess_matches_opencv() {
         [0.5759483135718835, 0.5578245857568109, 0.23656695264724611],
         [0.35, -0.175, 4.2],
     );
-    assert_pose(
-        &pnp(
-            &p.obj,
-            &p.noisy,
-            &NO_DIST,
-            Some(good),
-            SolvePnPMethod::Iterative,
-        )
-        .unwrap(),
-        &PNP_GUESS_GOOD_NOISY,
-        1e-6,
-        "guess_good_noisy",
-    );
-    assert_pose(
-        &pnp(
-            &p.obj[..3],
-            &p.img[..3],
-            &NO_DIST,
-            Some(good),
-            SolvePnPMethod::Iterative,
-        )
-        .unwrap(),
-        &PNP_GUESS_GOOD_3_POINTS,
-        1e-5,
-        "guess_good_3_points",
-    );
+    let got = pnp(
+        &p.obj,
+        &p.noisy,
+        &NO_DIST,
+        Some(good),
+        SolvePnPMethod::Iterative,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_GUESS_GOOD_NOISY, 1e-6, "guess_good_noisy");
 }
 
-/// `epnp`, `sqpnp` (24 noisy points), `p3p` / `ap3p` (four points) return OpenCV's poses;
-/// purecv returns `NotImplemented` for every method but `Iterative`.
+/// With a guess OpenCV's ITERATIVE method solves three points (`guess_good_3_points`);
+/// purecv rejects fewer than six.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #133"]
+fn solve_pnp_extrinsic_guess_solves_three_points_like_opencv() {
+    let p = pnp_inputs();
+    let good = (
+        [0.5759483135718835, 0.5578245857568109, 0.23656695264724611],
+        [0.35, -0.175, 4.2],
+    );
+    let got = pnp(
+        &p.obj[..3],
+        &p.img[..3],
+        &NO_DIST,
+        Some(good),
+        SolvePnPMethod::Iterative,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_GUESS_GOOD_3_POINTS, 1e-5, "guess_good_3_points");
+}
+
+/// `SOLVEPNP_EPNP` on 24 noisy points (`epnp/nonplanar_24_noisy`); purecv returns
+/// `NotImplemented` for every method but `Iterative`.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #262"]
-fn solve_pnp_other_methods_match_opencv() {
+fn solve_pnp_epnp_matches_opencv() {
     let p = pnp_inputs();
-    assert_pose(
-        &pnp(&p.obj, &p.noisy, &NO_DIST, None, SolvePnPMethod::EPnP).unwrap(),
-        &PNP_EPNP_NONPLANAR_24_NOISY,
-        1e-6,
-        "epnp",
-    );
-    assert_pose(
-        &pnp(&p.obj, &p.noisy, &NO_DIST, None, SolvePnPMethod::SqPnP).unwrap(),
-        &PNP_SQPNP_NONPLANAR_24_NOISY,
-        1e-6,
-        "sqpnp",
-    );
-    assert_pose(
-        &pnp(
-            &p.obj[..4],
-            &p.img[..4],
-            &NO_DIST,
-            None,
-            SolvePnPMethod::P3P,
-        )
-        .unwrap(),
-        &PNP_P3P_NONPLANAR_4,
-        1e-5,
-        "p3p",
-    );
-    assert_pose(
-        &pnp(
-            &p.obj[..4],
-            &p.img[..4],
-            &NO_DIST,
-            None,
-            SolvePnPMethod::AP3P,
-        )
-        .unwrap(),
-        &PNP_AP3P_NONPLANAR_4,
-        1e-5,
-        "ap3p",
-    );
+    let got = pnp(&p.obj, &p.noisy, &NO_DIST, None, SolvePnPMethod::EPnP).unwrap();
+    assert_pose(&got, &PNP_EPNP_NONPLANAR_24_NOISY, 1e-6, "epnp");
+}
+
+/// `SOLVEPNP_SQPNP` on 24 noisy points (`sqpnp/nonplanar_24_noisy`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
+fn solve_pnp_sqpnp_matches_opencv() {
+    let p = pnp_inputs();
+    let got = pnp(&p.obj, &p.noisy, &NO_DIST, None, SolvePnPMethod::SqPnP).unwrap();
+    assert_pose(&got, &PNP_SQPNP_NONPLANAR_24_NOISY, 1e-6, "sqpnp");
+}
+
+/// `SOLVEPNP_P3P` on four points (`p3p/nonplanar_4`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
+fn solve_pnp_p3p_matches_opencv() {
+    let p = pnp_inputs();
+    let got = pnp(
+        &p.obj[..4],
+        &p.img[..4],
+        &NO_DIST,
+        None,
+        SolvePnPMethod::P3P,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_P3P_NONPLANAR_4, 1e-5, "p3p");
+}
+
+/// `SOLVEPNP_AP3P` on four points (`ap3p/nonplanar_4`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #262"]
+fn solve_pnp_ap3p_matches_opencv() {
+    let p = pnp_inputs();
+    let got = pnp(
+        &p.obj[..4],
+        &p.img[..4],
+        &NO_DIST,
+        None,
+        SolvePnPMethod::AP3P,
+    )
+    .unwrap();
+    assert_pose(&got, &PNP_AP3P_NONPLANAR_4, 1e-5, "ap3p");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1227,11 +1264,10 @@ fn solve_pnp_ransac_noisy_threshold_1_mask_matches_opencv() {
     assert_eq!(inl, RANSAC_NOISY_THR_1.2.to_vec());
 }
 
-/// Four points run P3P and five points EPnP directly in OpenCV (`points_4`, `points_5`);
-/// purecv requires six.
+/// Five points run EPnP directly in OpenCV (`points_5`: the true pose); purecv requires six.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #263"]
-fn solve_pnp_ransac_accepts_four_and_five_points_like_opencv() {
+fn solve_pnp_ransac_accepts_five_points_like_opencv() {
     let p = pnp_inputs();
     let it = SolvePnPMethod::Iterative;
     let (ok, r, t, inl) =
@@ -1244,10 +1280,25 @@ fn solve_pnp_ransac_accepts_four_and_five_points_like_opencv() {
         1e-5,
         "points_5",
     );
-    let (ok, _, _, inl) =
+}
+
+/// Four points run P3P directly in OpenCV (`points_4`: all four inliers, the true pose);
+/// purecv requires six.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #263"]
+fn solve_pnp_ransac_accepts_four_points_like_opencv() {
+    let p = pnp_inputs();
+    let it = SolvePnPMethod::Iterative;
+    let (ok, r, t, inl) =
         pnp_ransac(&p.obj[..4], &p.img[..4], &NO_DIST, None, 100, 8.0, 0.99, it).unwrap();
     assert!(ok);
     assert_eq!(inl, RANSAC_POINTS_4.2.to_vec());
+    assert_pose(
+        &(r, t),
+        &(RANSAC_POINTS_4.0, RANSAC_POINTS_4.1),
+        1e-5,
+        "points_4",
+    );
 }
 
 /// OpenCV asserts `0 < confidence < 1` (`conf_1`); purecv ignores the value.
@@ -1425,25 +1476,26 @@ fn init_undistort_rectify_map_matches_opencv() {
     );
 }
 
-/// `k12` adds the thin-prism terms `s1..s4` and `k14` the tilt `tau_x, tau_y`; purecv reads
-/// at most eight coefficients, so the maps are up to 0.18 px (`k12`) and 4.2 px (`k14`,
-/// `rectified/k14`) off.
+/// `k12` adds the thin-prism terms `s1..s4`; purecv reads at most eight coefficients, so the
+/// maps are up to 0.18 px off.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #264"]
-fn init_undistort_rectify_map_thin_prism_and_tilt_match_opencv() {
+fn init_undistort_rectify_map_thin_prism_matches_opencv() {
     let k = camera_matrix();
-    assert_maps_identical(
-        &undistort_maps(&k, &K12, None, &k, 64, 48).unwrap(),
-        "identity_r_same_k/k12",
-    );
-    assert_maps_identical(
-        &undistort_maps(&k, &K14, None, &k, 64, 48).unwrap(),
-        "identity_r_same_k/k14",
-    );
-    assert_maps_identical(
-        &undistort_maps(&k, &K14, Some(&r_small()), &new_camera_matrix(), 64, 48).unwrap(),
-        "rectified/k14",
-    );
+    let got = undistort_maps(&k, &K12, None, &k, 64, 48).unwrap();
+    assert_maps_identical(&got, "identity_r_same_k/k12");
+}
+
+/// `k14` adds the tilt `tau_x, tau_y` (`computeTiltProjectionMatrix`): the maps are up to
+/// 4.2 px off, without and with a rectification (`identity_r_same_k/k14`, `rectified/k14`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #264"]
+fn init_undistort_rectify_map_tilt_matches_opencv() {
+    let k = camera_matrix();
+    let got = undistort_maps(&k, &K14, None, &k, 64, 48).unwrap();
+    assert_maps_identical(&got, "identity_r_same_k/k14");
+    let got = undistort_maps(&k, &K14, Some(&r_small()), &new_camera_matrix(), 64, 48).unwrap();
+    assert_maps_identical(&got, "rectified/k14");
 }
 
 /// OpenCV asserts that `distCoeffs` has 4, 5, 8, 12 or 14 elements (`dist_3_invalid`,
@@ -1538,16 +1590,23 @@ fn find_fundamental_mat_ransac_exact_matches_opencv() {
     }
 }
 
-/// On the noisy and outlier sets OpenCV's RANSAC (7-point kernel, point-to-epiline error,
-/// `cv::RNG`, no refit; the mask of the best minimal model) keeps 58 and 48 points where
-/// purecv (8-point kernel, Sampson error, refit, mask of the refit) keeps 60 and 50, the
-/// two extra ones being true outliers (`noisy/fm_ransac`, `outliers/fm_ransac`).
+/// On the noisy set OpenCV's RANSAC (7-point kernel, point-to-epiline error, `cv::RNG`, no
+/// refit; the mask of the best minimal model) keeps 58 points where purecv (8-point kernel,
+/// Sampson error, refit, mask of the refit) keeps 60 (`noisy/fm_ransac`).
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #225"]
-fn find_fundamental_mat_ransac_masks_match_opencv_on_noisy_data() {
-    let (_, _, n1, n2, o2) = fundamental_inputs();
+fn find_fundamental_mat_ransac_mask_matches_opencv_on_noisy_data() {
+    let (_, _, n1, n2, _) = fundamental_inputs();
     let (_, mask) = fundamental(&n1, &n2, FundamentalMatMethod::FM_RANSAC, 3.0, 0.99, 1000);
     assert_eq!(mask, F_MASK_NOISY_RANSAC.to_vec());
+}
+
+/// On the outlier set OpenCV keeps the 48 true inliers, purecv 50 (two true outliers within
+/// 3 px of their epilines; `outliers/fm_ransac`).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #225"]
+fn find_fundamental_mat_ransac_mask_matches_opencv_on_outliers() {
+    let (_, _, n1, _, o2) = fundamental_inputs();
     let (_, mask) = fundamental(&n1, &o2, FundamentalMatMethod::FM_RANSAC, 3.0, 0.99, 1000);
     assert_eq!(mask, F_MASK_OUTLIERS_RANSAC.to_vec());
 }
@@ -1569,16 +1628,23 @@ fn find_fundamental_mat_uses_lmeds_below_15_points_like_opencv() {
     assert_eq!(mask, F_MASK_NOISY_RANSAC_14.to_vec());
 }
 
-/// A non-positive threshold means 3 and a confidence outside `(0, 1)` means 0.99 in OpenCV
-/// (`fm_ransac_thr_0` returns the threshold-3 result, `fm_ransac_conf_0` likewise); purecv
-/// fails on the threshold and stops after the first model with confidence 0.
+/// A non-positive threshold means 3 in OpenCV (`fm_ransac_thr_0` returns the threshold-3
+/// result); purecv fails.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #265"]
-fn find_fundamental_mat_resets_invalid_threshold_and_confidence_like_opencv() {
-    let (p1, p2, n1, _, o2) = fundamental_inputs();
+fn find_fundamental_mat_resets_non_positive_threshold_like_opencv() {
+    let (p1, p2, _, _, _) = fundamental_inputs();
     let (f, mask) = fundamental(&p1, &p2, FundamentalMatMethod::FM_RANSAC, 0.0, 0.99, 1000);
     assert_eq!(mask, vec![1u8; 60]);
     assert_close(&norm_f(&f), &F_EXACT_RANSAC, 1e-5, "fm_ransac_thr_0");
+}
+
+/// A confidence outside `(0, 1)` means 0.99 in OpenCV (`outliers/fm_ransac_conf_0` returns
+/// the 48 inliers of the default); purecv stops after the first model with confidence 0.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #265"]
+fn find_fundamental_mat_resets_invalid_confidence_like_opencv() {
+    let (_, _, n1, _, o2) = fundamental_inputs();
     let (_, mask) = fundamental(&n1, &o2, FundamentalMatMethod::FM_RANSAC, 3.0, 0.0, 1000);
     assert_eq!(mask, F_MASK_OUTLIERS_RANSAC_CONF_0.to_vec());
 }
@@ -1639,6 +1705,7 @@ fn find_fundamental_mat_rejects_degenerate_input_like_opencv() {
 
 /// Generated from the JSON output of the scripts (`opencv-contrib-python 4.10.0.84`,
 /// `cv2.ipp.setUseIPP(False)`).
+// Generated OpenCV 4.10.0 outputs: literals are copied, not approximations of constants.
 #[allow(clippy::approx_constant, clippy::excessive_precision)]
 mod ocv {
     /// `(name, rvec, rmat, the vector OpenCV recovers from rmat)`.

@@ -48,7 +48,6 @@
 // The literals below are OpenCV's outputs as the scripts printed them (f32 values such as
 // 1.4142135 or 0.031622779), so they are kept verbatim instead of being replaced by constants
 // or rounded.
-#![allow(clippy::approx_constant, clippy::excessive_precision)]
 
 // `add_scalar`, `add_weighted`, `compare`, `convert_scale_abs`, `copy_make_border`, `exp`,
 // `in_range`, `max`, `min`, `pow`, `sqrt` and the `*_scalar` variants are not re-exported by
@@ -517,6 +516,60 @@ fn min_max_loc_matches_opencv() {
 }
 
 // ---------------------------------------------------------------------------------------
+// Constants, initialisers, has_no_zero (core_mat_initializers.js, core_misc.py)
+// ---------------------------------------------------------------------------------------
+
+/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #226"]
+fn cv_log2_is_ln_2() {
+    assert_eq!(purecv::core::constants::CV_LOG2, core::f64::consts::LN_2);
+}
+
+/// Single-channel `ones` and `eye` match opencv.js 4.10.0 (`ones_2x3_8uc1`, `eye_2x3_32fc1`).
+#[test]
+fn ones_and_eye_single_channel_match_opencv() {
+    assert_eq!(Matrix::<u8>::ones(2, 3, 1).data, ONES_2X3_8UC1.to_vec());
+    assert_eq!(Matrix::<f32>::eye(2, 3, 1).data, EYE_2X3_32FC1.to_vec());
+}
+
+/// OpenCV's `Mat::ones` / `Mat::eye` write `Scalar(alpha)`: only channel 0 gets the value on
+/// multi-channel types (`ones_1x1_8uc3`, `ones_2x2_32fc2`, `eye_2x2_8uc2`, `eye_3x3_32fc3`);
+/// purecv fills every channel.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #218"]
+fn ones_and_eye_multi_channel_set_only_channel_0() {
+    assert_eq!(Matrix::<u8>::ones(1, 1, 3).data, ONES_1X1_8UC3.to_vec());
+    assert_eq!(Matrix::<f32>::ones(2, 2, 2).data, ONES_2X2_32FC2.to_vec());
+    assert_eq!(Matrix::<u8>::eye(2, 2, 2).data, EYE_2X2_8UC2.to_vec());
+    assert_eq!(Matrix::<f32>::eye(3, 3, 3).data, EYE_3X3_32FC3.to_vec());
+}
+
+/// OpenCV's `flipND` takes `axis` in `[-ndims, ndims)` and counts a negative axis from the
+/// end (`flip_nd_axis_minus1` flips the columns, `flip_nd_axis_minus2` the rows; 2 and -3 are
+/// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`); purecv maps every negative axis to
+/// "both" and accepts axis 2.
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #218"]
+fn flip_nd_negative_axis_counts_from_the_end() {
+    let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
+    let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
+    assert_eq!(flip(-1).unwrap().data, vec![3, 2, 1, 6, 5, 4], "axis -1");
+    assert_eq!(flip(-2).unwrap().data, vec![4, 5, 6, 1, 2, 3], "axis -2");
+    assert!(flip(-3).is_err(), "axis -3");
+    assert!(flip(2).is_err(), "axis 2");
+}
+
+/// `flipND` with axis 0 and 1 matches (`flip_nd_axis_0`, `flip_nd_axis_1`).
+#[test]
+fn flip_nd_non_negative_axis_matches_opencv() {
+    let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
+    let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
+    assert_eq!(flip(0).unwrap().data, vec![4, 5, 6, 1, 2, 3], "axis 0");
+    assert_eq!(flip(1).unwrap().data, vec![3, 2, 1, 6, 5, 4], "axis 1");
+}
+
+// ---------------------------------------------------------------------------------------
 // reduce (core_stats.py)
 // ---------------------------------------------------------------------------------------
 
@@ -551,6 +604,16 @@ fn reduce_avg_u8_rounds_half_to_even() {
         reduce(&r8, 1, ReduceTypes::Avg).unwrap().data,
         vec![68u8, 35]
     );
+}
+
+/// OpenCV refuses REDUCE_SUM from 8U into 8U (`u8_sum_dim0_default_dtype`: "Unsupported
+/// combination of input and output array formats"; a `dtype` such as `CV_32S` is required);
+/// purecv returns the sum in `u8` and 0 where it overflows (300 -> 0).
+#[test]
+#[ignore = "diverges from OpenCV 4.10.0, see #216"]
+fn reduce_sum_u8_into_u8_is_rejected() {
+    let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
+    assert!(reduce(&r8, 0, ReduceTypes::Sum).is_err());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -973,6 +1036,8 @@ fn solve_cubic_and_solve_poly_match_opencv() {
 // ---------------------------------------------------------------------------------------
 
 #[test]
+// The literals are OpenCV 4.10.0 outputs copied from the script, not approximations.
+#[allow(clippy::approx_constant, clippy::excessive_precision)]
 fn sqrt_magnitude_integer_pow_match_opencv() {
     let xs = row(&[0.0f32, 0.5, 1.0, 2.0, 10.0, 100.0, 1e-3, 3.7]);
     assert_eq!(
@@ -1018,6 +1083,8 @@ fn sqrt_magnitude_integer_pow_match_opencv() {
 /// Fed OpenCV's own (fastAtan2) angles, `polar_to_cart` reproduces OpenCV's x/y to 1e-6:
 /// OpenCV's `SinCos_32f` table and libm agree to a few ULP.
 #[test]
+// The literals are OpenCV 4.10.0 outputs copied from the script, not approximations.
+#[allow(clippy::approx_constant, clippy::excessive_precision)]
 fn polar_to_cart_matches_opencv_on_opencv_angles() {
     let mag = row(&[
         1.4142135f32,
@@ -1078,6 +1145,8 @@ fn polar_to_cart_matches_opencv_on_opencv_angles() {
 /// uses `fastAtan2` (44.990456 for (1, 1), 135.009552 for (-1, 1), 53.136284 for (3, 4)).
 /// `exp` is `measured` within 2 ULP of OpenCV's polynomial (1.6487212181, 2.7182819843).
 #[test]
+// The literals are OpenCV 4.10.0 outputs copied from the script, not approximations.
+#[allow(clippy::approx_constant, clippy::excessive_precision)]
 fn phase_exact_atan2_and_exp_within_2_ulp_of_opencv() {
     let mut ang = Matrix::<f32>::new(0, 0, 0);
     phase(
@@ -1170,9 +1239,11 @@ fn kmeans_converges_to_opencv_partition() {
     assert!(kmeans(&data, 13, &mut l1, criteria, 1, KMEANS_PP_CENTERS, &mut c1).is_err());
 }
 
-/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` and reaches
-/// compactness 9.5 on this fixture with 5 attempts (and with 1). purecv picks k samples with
-/// an LCG seeded by the attempt index and stays in a local minimum (198.75) for 3 attempts.
+/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` (seeded 42)
+/// and reaches compactness 9.5 on this fixture with 1, 3 and 5 attempts
+/// (`random_centers_attempts1`, `random_centers_attempts3`, `random_centers_attempts5`).
+/// purecv picks k samples with an LCG seeded by the attempt index and stays in a local
+/// minimum (198.75) for 3 attempts.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #221"]
 fn kmeans_random_centers_three_attempts_find_the_global_partition() {
@@ -1340,6 +1411,31 @@ mod fft {
         );
     }
 
+    /// OpenCV's `dft(src, 0)` on real input returns the single-channel CCS packing
+    /// (`flags0_ccs_packed_1ch`); purecv returns the 2-channel complex spectrum.
+    #[test]
+    #[ignore = "diverges from OpenCV 4.10.0, see #223"]
+    fn dft_real_input_returns_ccs_by_default() {
+        let d = dft(&src(), 0, 0).unwrap();
+        assert_eq!(d.channels, 1);
+        assert_close(&as_f64(&d), &CCS, 1e-4, "dft CCS");
+    }
+
+    const CCS: [f64; 12] = [
+        79.0,
+        -6.0,
+        7.0,
+        -7.0, //
+        -24.5,
+        -0.8660253882408142,
+        -0.5,
+        0.5, //
+        14.722431182861328,
+        0.8660253882408142,
+        -0.5,
+        -0.8660253882408142,
+    ];
+
     #[test]
     fn get_optimal_dft_size_matches_opencv_in_range() {
         for (n, expected) in [
@@ -1426,3 +1522,14 @@ mod fft {
         );
     }
 }
+
+/// `core_mat_initializers.js` (opencv.js 4.10.0).
+const ONES_1X1_8UC3: [u8; 3] = [1, 0, 0];
+const ONES_2X2_32FC2: [f32; 8] = [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0];
+const ONES_2X3_8UC1: [u8; 6] = [1, 1, 1, 1, 1, 1];
+const EYE_2X2_8UC2: [u8; 8] = [1, 0, 0, 0, 0, 0, 1, 0];
+const EYE_3X3_32FC3: [f32; 27] = [
+    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+];
+const EYE_2X3_32FC1: [f32; 6] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];

@@ -241,7 +241,7 @@ def main() -> None:
     # --- the per-level budget and the level scales, as OpenCV computes them (emulated in
     # numpy f32, cited rows #197/#193): pinned here so the Rust tests can compare
     bud = {}
-    for nfeatures, nlevels, sf in ((500, 8, 1.2), (4530, 9, 1.2), (1000, 8, 1.2), (100, 4, 1.5)):
+    for nfeatures, nlevels, sf in ((500, 8, 1.2), (4530, 9, 1.2), (1000, 8, 1.2), (100, 4, 1.5), (100, 8, 1.2)):
         factor = np.float32(1.0 / sf)
         nd = np.float32(nfeatures * (1 - factor) / (1 - np.float32(float(factor) ** nlevels)))
         levels = []

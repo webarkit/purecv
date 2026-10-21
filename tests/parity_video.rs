@@ -291,6 +291,7 @@ fn default_criteria() -> TermCriteria {
     criteria(3, 30, 0.01)
 }
 
+// Mirrors the library function's own argument list (which carries the same allow).
 #[allow(clippy::too_many_arguments)]
 fn lk(
     prev: &Matrix<u8>,
@@ -970,6 +971,7 @@ fn lk_rejects_negative_max_level() {
 
 /// OpenCV 4.10.0 values from `scripts/opencv_ref/video_pyramid.py` and `video_lk.py`
 /// (opencv-contrib-python 4.10.0.84, IPP off, Windows x86-64).
+// Generated OpenCV 4.10.0 outputs: literals are copied, not approximations of constants.
 #[allow(clippy::approx_constant, clippy::excessive_precision)]
 mod ocv {
     /// One tracked point: `(x, y, status, err)`; `x`, `y` and `err` are compared only when
