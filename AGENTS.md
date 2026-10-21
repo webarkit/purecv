@@ -26,6 +26,7 @@ src/
 ```
 
 - **Reference sources** live in `cpp_ref/src/opencv/` (and `cpp_ref/src/opencv_contrib/`), created by `cpp_ref/bootstrap.py` at 4.10.0 — consult when porting algorithms. **Before reading, citing or measuring OpenCV, read `cpp_ref/AGENTS.md`.**
+- **Parity audits** live in `docs/parity/<version>/` and are frozen: never edit them. Rules in `docs/parity/AGENTS.md` (next to `cpp_ref/AGENTS.md`), method in `docs/parity/README.md`, rationale in `docs/adr/0001-opencv-parity-audit.md`.
 - **Tests** are co-located: `src/core/tests.rs`, `src/imgproc/tests.rs`.
 - **Benchmarks** use Criterion: `benches/arithm_bench.rs`, `benches/imgproc_bench.rs`.
 
