@@ -5,7 +5,7 @@ it byte for byte. Keypoint lists are reported as a count, an FNV-1a digest of th
 little-endian field bytes and a short prefix, so that a Rust test can check a long list
 without a thousand-line constant.
 
-Imported *after* the script's own ``assert cv2.__version__ == "4.10.0"`` and
+Imported *after* the script's own ``assert cv2.__version__ == REFERENCE_VERSION`` and
 ``cv2.ipp.setUseIPP(False)`` lines (see _core_common.py).
 """
 

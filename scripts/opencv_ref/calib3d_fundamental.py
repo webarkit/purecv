@@ -13,17 +13,19 @@ Run from the repository root:
     cpp_ref/.venv/bin/python scripts/opencv_ref/calib3d_fundamental.py       # Linux/macOS
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import numpy as np
+
 from _calib3d_common import (  # noqa: E402
     Lcg,
     add_noise,

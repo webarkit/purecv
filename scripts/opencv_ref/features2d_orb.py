@@ -12,9 +12,15 @@ Run from the repository root:
     cpp_ref/.venv/bin/python scripts/opencv_ref/features2d_orb.py       # Linux/macOS
 """
 
+import os
+import sys
+
 import cv2
 
-assert cv2.__version__ == "4.10.0"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
 cv2.ipp.setUseIPP(False)  # measure the generic CPU path
 
 import os
@@ -23,7 +29,6 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _core_common import dump, tolist  # noqa: E402
 from _features2d_common import (  # noqa: E402
     fnv1a32,

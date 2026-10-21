@@ -6,7 +6,7 @@ a fixed operation order, so tests/parity_calib3d.rs rebuilds every point bit for
 committing a data file. Results are reported in full (3x3 matrices, pose vectors, inlier
 masks) plus FNV-1a digests of the long outputs (undistortion maps).
 
-Imported *after* the script's own ``assert cv2.__version__ == "4.10.0"`` and
+Imported *after* the script's own ``assert cv2.__version__ == REFERENCE_VERSION`` and
 ``cv2.ipp.setUseIPP(False)`` lines (see _core_common.py).
 """
 

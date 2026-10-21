@@ -1,7 +1,7 @@
 """Shared helpers for the core parity scripts (docs/parity/4.10.0/core.md).
 
 Every script imports this module *after* its own
-``assert cv2.__version__ == "4.10.0"`` / ``cv2.ipp.setUseIPP(False)`` lines, so the
+``assert cv2.__version__ == REFERENCE_VERSION`` / ``cv2.ipp.setUseIPP(False)`` lines, so the
 evidence rule of docs/parity/README.md stays visible at the top of each script.
 """
 
@@ -12,6 +12,7 @@ import sys
 
 import cv2
 import numpy as np
+from _reference import WHEEL_VERSION
 
 
 def build_info() -> dict:
@@ -24,6 +25,7 @@ def build_info() -> dict:
     ]
     return {
         "cv2_version": cv2.__version__,
+        "reference_pin": f"opencv-contrib-python=={WHEEL_VERSION}",
         "numpy_version": np.__version__,
         "useIPP": cv2.ipp.useIPP(),
         "useOptimized": cv2.useOptimized(),
