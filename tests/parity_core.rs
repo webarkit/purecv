@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `core` module (`docs/parity/core.md`).
+//! OpenCV 4.10.0 parity pins for the `core` module (`docs/parity/4.10.0/core.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! run in `cpp_ref/.venv` (opencv-contrib-python 4.10.0.84, `cv2.ipp.setUseIPP(False)`,
@@ -51,7 +51,7 @@
 
 // `add_scalar`, `add_weighted`, `compare`, `convert_scale_abs`, `copy_make_border`, `exp`,
 // `in_range`, `max`, `min`, `pow`, `sqrt` and the `*_scalar` variants are not re-exported by
-// `purecv::core` (see the D1 notes in docs/parity/core.md), so the submodules are imported.
+// `purecv::core` (see the D1 notes in docs/parity/4.10.0/core.md), so the submodules are imported.
 use purecv::core::arithm::*;
 use purecv::core::structural::copy_make_border;
 use purecv::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar, TermCriteria, TermType};
@@ -1141,7 +1141,7 @@ fn polar_to_cart_matches_opencv_on_opencv_angles() {
     );
 }
 
-/// `phase` is `intentional` (docs/parity/core.md): purecv keeps the exact `atan2`, OpenCV
+/// `phase` is `intentional` (docs/parity/4.10.0/core.md): purecv keeps the exact `atan2`, OpenCV
 /// uses `fastAtan2` (44.990456 for (1, 1), 135.009552 for (-1, 1), 53.136284 for (3, 4)).
 /// `exp` is `measured` within 2 ULP of OpenCV's polynomial (1.6487212181, 2.7182819843).
 #[test]

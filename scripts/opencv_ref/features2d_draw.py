@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the drawing rows (docs/parity/features2d.md).
+"""OpenCV 4.10.0 reference values for the drawing rows (docs/parity/4.10.0/features2d.md).
 
 Rows: draw_keypoints, draw_matches. `cv2.drawKeypoints` / `cv2.drawMatches` with fixed
 colours on small seeded images; the changed pixels are listed so that

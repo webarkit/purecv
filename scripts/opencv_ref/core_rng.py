@@ -1,7 +1,7 @@
 """OpenCV 4.10.0 reference sequences for the core RNG rows.
 
 Rows: set_rng_seed, randu, randn, rand_shuffle (cv::theRNG, a 64-bit multiply-with-carry
-generator). See docs/parity/core.md.
+generator). See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_rng.py   # Windows

@@ -34,7 +34,7 @@
  *
  */
 
-// OpenCV 4.10.0 (opencv.js) reference values for Matrix::{ones, eye} (docs/parity/core.md).
+// OpenCV 4.10.0 (opencv.js) reference values for Matrix::{ones, eye} (docs/parity/4.10.0/core.md).
 //
 // Python's cv2 does not bind Mat::ones / Mat::eye (numpy arrays stand in for Mat), so the
 // measurement comes from the pinned opencv.js build. Both return a MatExpr whose scale is

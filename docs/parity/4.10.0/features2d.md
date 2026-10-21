@@ -1,9 +1,12 @@
+> **Frozen snapshot:** purecv at `0e310c3` audited against OpenCV 4.10.0. Do not edit; a later reference version gets its own folder.
+> See [`docs/adr/0001-opencv-parity-audit.md`](../../adr/0001-opencv-parity-audit.md).
+
 # Parity audit: `features2d` ↔ OpenCV 4.10.0
 
 Task B3 of [#172](https://github.com/webarkit/purecv/issues/172), sub-issue
 [#175](https://github.com/webarkit/purecv/issues/175). Method, statuses (`measured`,
 `inspected`, `diverges`, `intentional`, `purecv-only`, `missing`) and dimensions D1–D7:
-[`README.md`](README.md). Inventory taken at the branch base `0e310c3` (`parity-audit` after
+[`README.md`](../README.md). Inventory taken at the branch base `0e310c3` (`parity-audit` after
 the imgproc audit, PR #228): every `pub` item of `src/features2d`, the public inherent methods
 of `FastFeatureDetector`, `Orb` and `BFMatcher`, the re-exports of `src/features2d/mod.rs`, and
 the methods of `KeyPoint` and `DMatch`, which live in `src/core` since PR #207 and are

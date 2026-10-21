@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `video` module (`docs/parity/video.md`).
+//! OpenCV 4.10.0 parity pins for the `video` module (`docs/parity/4.10.0/video.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`video_pyramid.py`, `video_lk.py`; helpers `_core_common.py`, `_features2d_common.py`,

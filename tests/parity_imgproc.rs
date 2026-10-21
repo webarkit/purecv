@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `imgproc` module (`docs/parity/imgproc.md`).
+//! OpenCV 4.10.0 parity pins for the `imgproc` module (`docs/parity/4.10.0/imgproc.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`imgproc_filter.py`, `imgproc_geom.py`, `imgproc_color_hist.py`, `imgproc_feature.py`)

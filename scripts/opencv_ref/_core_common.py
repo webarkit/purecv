@@ -1,4 +1,4 @@
-"""Shared helpers for the core parity scripts (docs/parity/core.md).
+"""Shared helpers for the core parity scripts (docs/parity/4.10.0/core.md).
 
 Every script imports this module *after* its own
 ``assert cv2.__version__ == "4.10.0"`` / ``cv2.ipp.setUseIPP(False)`` lines, so the

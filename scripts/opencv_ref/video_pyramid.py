@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the pyramid rows (docs/parity/video.md).
+"""OpenCV 4.10.0 reference values for the pyramid rows (docs/parity/4.10.0/video.md).
 
 Rows: build_optical_flow_pyramid, OpticalFlowPyramid. `cv2.buildOpticalFlowPyramid` is run on
 seeded images for several window sizes, depths, border modes and `withDerivatives` settings;

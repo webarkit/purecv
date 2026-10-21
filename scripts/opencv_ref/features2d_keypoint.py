@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the KeyPoint rows (docs/parity/features2d.md).
+"""OpenCV 4.10.0 reference values for the KeyPoint rows (docs/parity/4.10.0/features2d.md).
 
 Rows: KeyPoint::{overlap, convert_to_points, convert_to_points_masked,
 convert_from_points}. `KeyPointsFilter` is not bound by cv2 (`CV_EXPORTS`), so

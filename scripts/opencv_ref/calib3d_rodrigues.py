@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the rodrigues rows (docs/parity/calib3d.md).
+"""OpenCV 4.10.0 reference values for the rodrigues rows (docs/parity/4.10.0/calib3d.md).
 
 `cv2.Rodrigues` in both directions on literal rotation vectors (zero, tiny, small, general,
 the pi edge in several axes, just below pi, beyond pi), on the 1x3 row form, on matrices

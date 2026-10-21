@@ -1,4 +1,4 @@
-"""Shared inputs and digests for the calib3d parity scripts (docs/parity/calib3d.md).
+"""Shared inputs and digests for the calib3d parity scripts (docs/parity/4.10.0/calib3d.md).
 
 Every input is built from integer LCG draws turned into dyadic fractions (k / 1024, k / 64),
 from exact rational rotations (Pythagorean triples) and from plain IEEE double arithmetic in

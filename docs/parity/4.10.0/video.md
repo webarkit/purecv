@@ -1,9 +1,12 @@
+> **Frozen snapshot:** purecv at `5201b8a` audited against OpenCV 4.10.0. Do not edit; a later reference version gets its own folder.
+> See [`docs/adr/0001-opencv-parity-audit.md`](../../adr/0001-opencv-parity-audit.md).
+
 # Parity audit: `video` ↔ OpenCV 4.10.0
 
 Task B4 of [#172](https://github.com/webarkit/purecv/issues/172), sub-issue
 [#176](https://github.com/webarkit/purecv/issues/176). Method, statuses (`measured`,
 `inspected`, `diverges`, `intentional`, `purecv-only`, `missing`) and dimensions D1–D7:
-[`README.md`](README.md). Inventory taken at the branch base `5201b8a` (`parity-audit` after
+[`README.md`](../README.md). Inventory taken at the branch base `5201b8a` (`parity-audit` after
 the features2d audit, PR #249): every `pub` item of `src/video` (`src/video.rs`,
 `src/video/optical_flow.rs`), the public fields of `OpticalFlowPyramid`, and the re-exports of
 `src/video.rs` and of the crate prelude. The module has no public inherent methods, no enums

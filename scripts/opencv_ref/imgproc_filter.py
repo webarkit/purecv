@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the imgproc filter, derivative, morphology and
-threshold rows (docs/parity/imgproc.md).
+threshold rows (docs/parity/4.10.0/imgproc.md).
 
 Rows: get_gaussian_kernel, gaussian_blur, blur / box_filter, median_blur, bilateral_filter,
 get_sobel_kernels, sobel, scharr, laplacian, get_structuring_element, erode, dilate,

@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the core kmeans row. See docs/parity/core.md.
+"""OpenCV 4.10.0 reference values for the core kmeans row. See docs/parity/4.10.0/core.md.
 
 Three well-separated 2-D clusters, so that every initialisation converges to the same
 partition and the centers and compactness can be compared independently of cv::RNG.

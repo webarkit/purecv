@@ -1,7 +1,7 @@
 """OpenCV 4.10.0 reference values for the core conversion and u8 arithmetic rows.
 
 Rows: Matrix::convert_to, add/subtract/multiply/divide (+ _scalar), add_weighted,
-convert_scale_abs. See docs/parity/core.md.
+convert_scale_abs. See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_convert_arith.py   # Windows

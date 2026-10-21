@@ -1,4 +1,4 @@
-"""Shared inputs and digests for the features2d parity scripts (docs/parity/features2d.md).
+"""Shared inputs and digests for the features2d parity scripts (docs/parity/4.10.0/features2d.md).
 
 Every image is built from integer arithmetic only, so tests/parity_features2d.rs rebuilds
 it byte for byte. Keypoint lists are reported as a count, an FNV-1a digest of their

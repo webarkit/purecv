@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `calib3d` module (`docs/parity/calib3d.md`).
+//! OpenCV 4.10.0 parity pins for the `calib3d` module (`docs/parity/4.10.0/calib3d.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`calib3d_homography.py`, `calib3d_rodrigues.py`, `calib3d_pnp.py`, `calib3d_undistort.py`,

@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the Lucas-Kanade rows (docs/parity/video.md).
+"""OpenCV 4.10.0 reference values for the Lucas-Kanade rows (docs/parity/4.10.0/video.md).
 
 Rows: calc_optical_flow_pyramid_lk, calc_optical_flow_pyramid_lk_with_pyramids,
 OPTFLOW_USE_INITIAL_FLOW, OPTFLOW_LK_GET_MIN_EIGENVALS, and the seeded rows #130, #131,

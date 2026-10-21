@@ -1,6 +1,6 @@
 """OpenCV 4.10.0 reference values for the core transform rows.
 
-Rows: dft, idft, dct, idct, get_optimal_dft_size and the DFT_* flags. See docs/parity/core.md.
+Rows: dft, idft, dct, idct, get_optimal_dft_size and the DFT_* flags. See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_dft_dct.py   # Windows

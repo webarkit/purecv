@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the find_fundamental_mat rows (docs/parity/calib3d.md).
+"""OpenCV 4.10.0 reference values for the find_fundamental_mat rows (docs/parity/4.10.0/calib3d.md).
 
 `cv2.findFundamentalMat` with FM_8POINT, FM_RANSAC, FM_LMEDS and FM_7POINT on 60 seeded 3-D
 points seen by two cameras (identity and a rational rotation with a baseline): exact, with

@@ -1,7 +1,7 @@
 """OpenCV 4.10.0 reference values for the core statistics rows.
 
 Rows: norm, normalize, mean, sum, mean_std_dev, min_max_loc, reduce, count_non_zero,
-has_no_zero. See docs/parity/core.md.
+has_no_zero. See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_stats.py   # Windows

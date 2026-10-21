@@ -1,4 +1,4 @@
-"""Shared inputs and digests for the video parity scripts (docs/parity/video.md).
+"""Shared inputs and digests for the video parity scripts (docs/parity/4.10.0/video.md).
 
 Every image is built from integer arithmetic only, so tests/parity_video.rs rebuilds it
 byte for byte. Flow results are reported in full (one `[x, y, status, err]` row per point)

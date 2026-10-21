@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the solve_pnp / solve_pnp_ransac rows
-(docs/parity/calib3d.md).
+(docs/parity/4.10.0/calib3d.md).
 
 `cv2.solvePnP` with every `SOLVEPNP_*` flag, with and without `useExtrinsicGuess`, on seeded
 object points (24 non-planar, 16 planar, 4-point and 5-point subsets) projected through a

@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the FAST rows (docs/parity/features2d.md).
+"""OpenCV 4.10.0 reference values for the FAST rows (docs/parity/4.10.0/features2d.md).
 
 Rows: FastFeatureDetector::{new, detect}, FastType. Every `(type, nonmax, threshold)`
 combination of #161 is run on three seeded images; the keypoint lists are reported as a

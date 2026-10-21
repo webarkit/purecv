@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the init_undistort_rectify_map row and the undistort /
-undistortPoints `missing` rows (docs/parity/calib3d.md).
+undistortPoints `missing` rows (docs/parity/4.10.0/calib3d.md).
 
 `cv2.initUndistortRectifyMap` with 4, 5, 8, 12 and 14 distortion coefficients, with and
 without a rectification `R` and a new camera matrix, on a 64x48 map (`CV_32FC1`): the FNV-1a

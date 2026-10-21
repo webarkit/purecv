@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the imgproc geometric rows (docs/parity/imgproc.md).
+"""OpenCV 4.10.0 reference values for the imgproc geometric rows (docs/parity/4.10.0/imgproc.md).
 
 Rows: resize, remap, warp_perspective, pyr_down, pyr_up, build_pyramid, plus the
 INTER_* modes and warpAffine / getRotationMatrix2D that purecv does not have (`missing`).

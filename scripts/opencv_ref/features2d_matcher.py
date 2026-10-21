@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the matcher rows (docs/parity/features2d.md).
+"""OpenCV 4.10.0 reference values for the matcher rows (docs/parity/4.10.0/features2d.md).
 
 Rows: BFMatcher::{new, match_descriptors, knn_match}, NormType, DescriptorDistance,
 filter_matches. `cv2.BFMatcher` on seeded u8 and f32 descriptors with constructed ties, so

@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the imgproc feature rows (docs/parity/imgproc.md).
+"""OpenCV 4.10.0 reference values for the imgproc feature rows (docs/parity/4.10.0/imgproc.md).
 
 Rows: canny, corner_harris, corner_min_eigen_val, corner_eigen_vals_and_vecs,
 pre_corner_detect, good_features_to_track, corner_sub_pix, hough_lines, hough_lines_p,

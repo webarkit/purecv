@@ -1,9 +1,12 @@
+> **Frozen snapshot:** purecv at `9f10cf9` audited against OpenCV 4.10.0. Do not edit; a later reference version gets its own folder.
+> See [`docs/adr/0001-opencv-parity-audit.md`](../../adr/0001-opencv-parity-audit.md).
+
 # Parity audit: `imgproc` ↔ OpenCV 4.10.0
 
 Task B2 of [#172](https://github.com/webarkit/purecv/issues/172), sub-issue
 [#174](https://github.com/webarkit/purecv/issues/174). Method, statuses (`measured`,
 `inspected`, `diverges`, `intentional`, `purecv-only`, `missing`) and dimensions D1–D7:
-[`README.md`](README.md). Inventory taken at the branch base `9f10cf9` (`parity-audit` after the
+[`README.md`](../README.md). Inventory taken at the branch base `9f10cf9` (`parity-audit` after the
 dev sync of PR #227, which brings in dev `21c2fe6`): every `pub` item of `src/imgproc`, the
 public inherent methods of `Clahe`, and the re-exports of `src/imgproc.rs`.
 

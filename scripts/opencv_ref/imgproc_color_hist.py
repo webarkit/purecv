@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the imgproc colour and histogram rows
-(docs/parity/imgproc.md).
+(docs/parity/4.10.0/imgproc.md).
 
 Rows: cvt_color (RGB/BGR/RGBA/BGRA -> GRAY, GRAY -> RGB/BGR/RGBA/BGRA), calc_hist,
 calc_back_project, compare_hist, equalize_hist, Clahe.
