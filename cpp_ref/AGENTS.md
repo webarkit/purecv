@@ -59,5 +59,8 @@ rg -n "\b<Name>\(" cpp_ref/src/opencv/modules/<m>/src
 
 ## Parity audits
 
-Method, statuses and dimensions: `docs/parity/README.md` (S1–S7, D1–D7). One document per
-module: `docs/parity/<module>.md`. The umbrella issue is #172; the sub-issues are #173–#177.
+Method, statuses and dimensions: `docs/parity/README.md` (S1–S7, D1–D7). Rules for editing
+audits: `docs/parity/AGENTS.md`. Each series is a frozen folder `docs/parity/<version>/`, one
+document per module (`docs/parity/4.10.0/<module>.md` for the 4.10.0 series, umbrella #172,
+sub-issues #173–#177); never edit a frozen folder. A new reference version gets its own folder
+after the bump PR. Rationale: `docs/adr/0001-opencv-parity-audit.md`.

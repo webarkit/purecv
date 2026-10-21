@@ -49,6 +49,7 @@ Four feature combinations must be supported: `parallel`, `simd`, both, or none.
 ## Naming & Style Conventions
 
 - **OpenCV parity**: Mirror OpenCV function names in snake_case (`cvt_color`, `box_filter`, `copy_make_border`).
+- **Parity audits**: per reference version in `docs/parity/<version>/`, frozen once complete; read `docs/parity/AGENTS.md` and the ADR (`docs/adr/0001-opencv-parity-audit.md`) before changing the reference version or a parity test.
 - **Generics**: All operations take `Matrix<T>` with trait bounds like `T: Default + Clone + ToPrimitive + FromPrimitive + Send + Sync`.
 - **Module re-exports**: Each module file (`core.rs`, `imgproc.rs`) re-exports public symbols so users write `purecv::core::Matrix`, `purecv::imgproc::cvt_color`.
 - **Comments & docs in English**.
