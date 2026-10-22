@@ -37,7 +37,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The OpenCV release every reference in the source tree and the docs must name.
+/// The OpenCV release every reference in the source tree and the docs must name, except
+/// the frozen parity series under `docs/parity/<version>/` (see `required_version`).
 const REFERENCE: &str = "4.10.0";
 
 /// The commit the `REFERENCE` tag of opencv/opencv peels to.
@@ -98,8 +99,13 @@ fn is_link_text(rest: &str) -> bool {
             .any(|target| rest[close + 2..].starts_with(target))
 }
 
-/// One message per offending OpenCV reference on `line`.
+/// One message per offending OpenCV reference on `line`, against the current reference.
 fn line_violations(line: &str) -> Vec<String> {
+    line_violations_for(line, REFERENCE)
+}
+
+/// One message per offending OpenCV reference on `line`, which must name `reference`.
+fn line_violations_for(line: &str, reference: &str) -> Vec<String> {
     let bytes = line.as_bytes();
     let mut out = Vec::new();
 
@@ -111,9 +117,9 @@ fn line_violations(line: &str) -> Vec<String> {
                 .take_while(|&&b| is_segment_byte(b))
                 .count();
             let segment = &line[start..start + len];
-            if segment != REFERENCE {
+            if segment != reference {
                 out.push(format!(
-                    "`{prefix}{segment}` names `{segment}`, expected `{REFERENCE}`"
+                    "`{prefix}{segment}` names `{segment}`, expected `{reference}`"
                 ));
             }
         }
@@ -139,7 +145,7 @@ fn line_violations(line: &str) -> Vec<String> {
                     .take_while(|&&b| b.is_ascii_digit() || matches!(b, b',' | b'-'))
                     .count();
             out.push(format!(
-                "bare line citation `{}`; link it as https://github.com/opencv/opencv/blob/{REFERENCE}/<path>#L<n>",
+                "bare line citation `{}`; link it as https://github.com/opencv/opencv/blob/{reference}/<path>#L<n>",
                 line[from..to].trim_end_matches([',', '-'])
             ));
         }
@@ -148,16 +154,48 @@ fn line_violations(line: &str) -> Vec<String> {
     out
 }
 
-/// `(1-based line number, message)` for every offending reference in `text`.
+/// `(1-based line number, message)` for every offending reference in `text`, against the
+/// current reference.
 fn content_violations(text: &str) -> Vec<(usize, String)> {
+    content_violations_for(text, REFERENCE)
+}
+
+/// `(1-based line number, message)` for every reference in `text` that does not name
+/// `reference`.
+fn content_violations_for(text: &str, reference: &str) -> Vec<(usize, String)> {
     text.lines()
         .enumerate()
         .flat_map(|(i, line)| {
-            line_violations(line)
+            line_violations_for(line, reference)
                 .into_iter()
                 .map(move |msg| (i + 1, msg))
         })
         .collect()
+}
+
+/// Frozen parity series live in `docs/parity/<version>/` (ADR 0001). A file inside one must
+/// keep naming that folder's version after the reference is bumped; every other file must
+/// name the current `REFERENCE`. `rel` is a `/`-separated path relative to the crate root.
+fn required_version(rel: &str) -> &str {
+    let mut parts = rel.split('/');
+    if parts.next() == Some("docs") && parts.next() == Some("parity") {
+        if let Some(folder) = parts.next() {
+            // the folder must be followed by a file (or a subfolder), and look like `X.Y.Z`
+            if parts.next().is_some() && is_version(folder) {
+                return folder;
+            }
+        }
+    }
+    REFERENCE
+}
+
+/// `X.Y.Z` with decimal components, as the OpenCV release tags are named.
+fn is_version(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn collect_files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
@@ -201,7 +239,7 @@ fn scan(root: &Path, dirs: &[(&str, &str)]) -> (usize, Vec<String>) {
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        for (line, msg) in content_violations(&text) {
+        for (line, msg) in content_violations_for(&text, required_version(&rel)) {
             violations.push(format!("{rel}:{line}: {msg}"));
         }
     }
@@ -481,6 +519,55 @@ fn line_violations_detects_drift() {
 }
 
 #[test]
+fn required_version_follows_the_parity_folder() {
+    let cases: &[(&str, &str)] = &[
+        ("docs/parity/4.10.0/core.md", "4.10.0"),
+        ("docs/parity/4.13.0/README.md", "4.13.0"),
+        ("docs/parity/4.10.0/notes/old.md", "4.10.0"),
+        ("docs/parity/README.md", REFERENCE),
+        ("docs/parity/AGENTS.md", REFERENCE),
+        ("docs/parity/4.10/core.md", REFERENCE),
+        ("docs/parity/4.10.0-rc/core.md", REFERENCE),
+        ("docs/parity/4.10.0", REFERENCE),
+        ("src/core/matrix.rs", REFERENCE),
+        ("docs/other/4.13.0/x.md", REFERENCE),
+    ];
+    for (rel, expected) in cases {
+        assert_eq!(required_version(rel), *expected, "path: {rel}");
+    }
+}
+
+#[test]
+fn frozen_folders_are_checked_against_their_own_version() {
+    let link_4_13 = "[`orb.cpp`](https://github.com/opencv/opencv/blob/4.13.0/modules/features2d/src/orb.cpp#L862)";
+    let link_4_10 = "https://docs.opencv.org/4.10.0/db/d95/classcv_1_1ORB.html";
+    // a frozen 4.13.0 folder linking its own version is valid
+    let rel = "docs/parity/4.13.0/features2d.md";
+    assert!(content_violations_for(link_4_13, required_version(rel)).is_empty());
+    // the same folder with a link drifting to 4.10.0 (or to 4.x) is not
+    assert_eq!(
+        content_violations_for(link_4_10, required_version(rel)).len(),
+        1
+    );
+    assert_eq!(
+        content_violations_for("https://docs.opencv.org/4.x/x", required_version(rel)).len(),
+        1
+    );
+    // a nested path inside the folder follows the folder
+    let nested = "docs/parity/4.13.0/notes/features2d.md";
+    assert!(content_violations_for(link_4_13, required_version(nested)).is_empty());
+    // outside a version folder the current reference applies
+    assert_eq!(
+        content_violations_for(link_4_13, required_version("docs/parity/README.md")).len(),
+        if REFERENCE == "4.13.0" { 0 } else { 1 }
+    );
+    // the bare-citation hint names the folder's version
+    let v = content_violations_for("`orb.cpp:862`", "4.13.0");
+    assert_eq!(v.len(), 1);
+    assert!(v[0].1.contains("/blob/4.13.0/"), "{}", v[0].1);
+}
+
+#[test]
 fn content_violations_reports_crlf_line_numbers() {
     let v = content_violations("ok\r\nhttps://docs.opencv.org/4.x/x\r\n");
     assert_eq!(v.len(), 1);
@@ -620,7 +707,8 @@ fn opencv_references_are_pinned_to_reference_version() {
     let (_, v) = scan(Path::new(env!("CARGO_MANIFEST_DIR")), SCANNED);
     assert!(
         v.is_empty(),
-        "OpenCV references must be pinned to {REFERENCE} (see CONTRIBUTING.md):\n{}",
+        "OpenCV references must be pinned to {REFERENCE}, or to the folder's version under \
+         docs/parity/<version>/ (see CONTRIBUTING.md and docs/adr/0001-opencv-parity-audit.md):\n{}",
         v.join("\n")
     );
 }

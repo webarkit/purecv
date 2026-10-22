@@ -12,7 +12,7 @@ high-performance. See `.agents/instructions.md` for the full architectural manda
 - **Concurrency:** Use Rayon (`parallel` feature) for pixel-parallel tasks; always provide a sequential fallback.
 - **SIMD:** Use `pulp` (`simd` feature) for manual SIMD. Prefer `.chunks_exact(n)` over `.chunks(n)` for LLVM auto-vectorization.
 - **OpenCV Parity:** Match OpenCV default border types and naming (e.g. `cvt_color` not `convert_color`).
-- OpenCV reference version: **4.10.0** — pinned links and parity values only; see `CONTRIBUTING.md#opencv-reference-version`. **Before reading, citing or measuring OpenCV, read `cpp_ref/AGENTS.md`.**
+- OpenCV reference version: **4.10.0** — pinned links and parity values only; see `CONTRIBUTING.md#opencv-reference-version`. **Before reading, citing or measuring OpenCV, read `cpp_ref/AGENTS.md`.** Parity audits live in `docs/parity/<version>/` and are frozen: never edit them. Rules in `docs/parity/AGENTS.md`, method in `docs/parity/README.md`; read `docs/adr/0001-opencv-parity-audit.md` before changing the reference version or a parity test.
 - **Error handling:** Use `Result<T, PureCvError>` — never `panic!` in library code.
 
 ## Code Quality — run in this order before every commit
@@ -93,6 +93,8 @@ src/imgproc/    — color conversion, filtering, edge detection, threshold
 crates/wasm/    — wasm-bindgen wrappers and wasm-pack build
 benches/        — Criterion benchmarks
 cpp_ref/        — OpenCV 4.10.0 reference tooling (bootstrap, pins); rules in cpp_ref/AGENTS.md
+docs/parity/    — parity audits per OpenCV version (frozen folders); rules in docs/parity/AGENTS.md
+docs/adr/       — architecture decision records (0001: OpenCV parity audit)
 .agents/        — reference docs, roadmap, skills (shared with other agents)
 ```
 

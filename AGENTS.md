@@ -26,6 +26,7 @@ src/
 ```
 
 - **Reference sources** live in `cpp_ref/src/opencv/` (and `cpp_ref/src/opencv_contrib/`), created by `cpp_ref/bootstrap.py` at 4.10.0 — consult when porting algorithms. **Before reading, citing or measuring OpenCV, read `cpp_ref/AGENTS.md`.**
+- **Parity audits** live in `docs/parity/<version>/` and are frozen: never edit them. Rules in `docs/parity/AGENTS.md` (next to `cpp_ref/AGENTS.md`), method in `docs/parity/README.md`, rationale in `docs/adr/0001-opencv-parity-audit.md`.
 - **Tests** are co-located: `src/core/tests.rs`, `src/imgproc/tests.rs`.
 - **Benchmarks** use Criterion: `benches/arithm_bench.rs`, `benches/imgproc_bench.rs`.
 
@@ -48,6 +49,7 @@ Four feature combinations must be supported: `parallel`, `simd`, both, or none.
 ## Naming & Style Conventions
 
 - **OpenCV parity**: Mirror OpenCV function names in snake_case (`cvt_color`, `box_filter`, `copy_make_border`).
+- **Parity audits**: per reference version in `docs/parity/<version>/`, frozen once complete; read `docs/parity/AGENTS.md` and the ADR (`docs/adr/0001-opencv-parity-audit.md`) before changing the reference version or a parity test.
 - **Generics**: All operations take `Matrix<T>` with trait bounds like `T: Default + Clone + ToPrimitive + FromPrimitive + Send + Sync`.
 - **Module re-exports**: Each module file (`core.rs`, `imgproc.rs`) re-exports public symbols so users write `purecv::core::Matrix`, `purecv::imgproc::cvt_color`.
 - **Comments & docs in English**.
