@@ -119,21 +119,23 @@ Each row says which of these were checked (`Dims checked`, e.g. `D1-D4, D7`).
 
 ## Table template
 
-Every audit document uses this table, one row per public item (the links name the folder's
-version; the example is from the 4.10.0 series):
+Every audit document uses this table, one row per public item (`<version>` is the folder's
+version; the series folders hold real examples, for instance
+[`4.10.0/imgproc.md`](4.10.0/imgproc.md)):
 
 ```markdown
-| purecv item | OpenCV 4.10.0 counterpart (pinned link) | Status | Dims checked | Direction / notes | Issue |
+| purecv item | OpenCV <version> counterpart (pinned link) | Status | Dims checked | Direction / notes | Issue |
 |---|---|---|---|---|---|
-| `gaussian_blur` | [`GaussianBlur`](https://docs.opencv.org/4.10.0/d4/d86/group__imgproc__filter.html) | `measured` | D1-D5, D7 | u8 and f32, 3x3 to 7x7; IPP off | |
+| `gaussian_blur` | [`GaussianBlur`](<the reference's doc page for the imgproc filter group>) | `measured` | D1-D5, D7 | u8 and f32, 3x3 to 7x7; IPP off | |
 ```
 
 - **purecv item:** the Rust path as exported (`module::item`, or `Type::method`).
-- **OpenCV counterpart:** a link pinned to the folder's version, either to the doc page
-  (`https://docs.opencv.org/4.10.0/...` in the 4.10.0 series) or to the source
-  (`https://github.com/opencv/opencv/blob/4.10.0/<path>#L<a>-L<b>`; `opencv_contrib`
-  likewise), with the folder's version in place of `4.10.0` in a later series. `—` for
-  `purecv-only` rows.
+- **OpenCV counterpart:** a link pinned to the folder's version: the OpenCV documentation
+  site with the version as the first path segment, or the source file on GitHub at the
+  version's tag (the `blob/<version>/` form, with a `#L<a>-L<b>` line range; opencv_contrib
+  likewise). `—` for `purecv-only` rows. This file deliberately contains no such URL: the
+  guard checks it against the current reference, so a pinned example would break at every
+  bump.
 - **Issue:** required for `diverges`; the issue that tracks the gap for `missing` when one
   exists.
 
@@ -147,7 +149,7 @@ fail the build.
 A `measured` row has **one** of:
 
 - a passing in-tree test whose comment names the tool and version
-  (for example `// OpenCV 4.10.0 (opencv-contrib-python 4.10.0.84), IPP off`);
+  (for example `// OpenCV <version> (opencv-contrib-python <pin>), IPP off`);
 - a script under `scripts/opencv_ref/` that runs in `cpp_ref/.venv` (Python: checks
   `cv2.__version__` against the pin in `cpp_ref/requirements.txt` and calls
   `cv2.ipp.setUseIPP(False)`) or with the pinned or a self-built opencv.js of the same version
@@ -182,7 +184,10 @@ script or an `#[ignore]`d test, and S7 passes.
    `REFERENCE` constants of `tests/opencv_reference_links.rs`, and the re-measured live
    tooling (`tests/parity_*.rs`, `scripts/opencv_ref/`, which read the version from the pin).
    The decision itself is taken on the roadmap
-   ([#128](https://github.com/webarkit/purecv/issues/128)).
+   ([#128](https://github.com/webarkit/purecv/issues/128)). The same PR checks that the
+   live, version-independent files (this README, [`AGENTS.md`](AGENTS.md), the ADRs) still
+   contain no OpenCV URL pinned to the old version: the guard checks them against the new
+   `REFERENCE` and fails the bump PR otherwise.
 2. **The next series goes in `docs/parity/<version>/` as a delta.** Start from a copy of the
    previous folder's documents, then, module by module:
    - re-audit (S1–S7) every row whose OpenCV counterpart changed between the two tags, per
