@@ -51,6 +51,10 @@
 //! the executable form of the measurement; the issue in each reason tracks the fix. RANSAC
 //! rows compare inlier sets and model quality, never sample sequences: OpenCV draws with
 //! `cv::RNG` (#225) and purecv with its own generator.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::calib3d::*;
 use purecv::core::types::{Point2f, Point3f, Size2i};

@@ -161,6 +161,14 @@ Evidence for a `diverges` row is such a script, or a test marked
 A value measured with any other OpenCV version can only support `inspected`, and the test
 comment must name that version (see `CONTRIBUTING.md`).
 
+### After the audit: fixing a divergence
+
+A fix for issue #N removes the `#[ignore]` of every test in `tests/parity_*.rs` that cites #N
+(the test must pass with the default features, `simd`, `parallel` and
+`--no-default-features --features std`), deletes the paired current-behaviour pin if there is
+one, and closes #N. The frozen series folder is not edited: the live status of the row is the
+closed issue plus the passing test ([`AGENTS.md`](AGENTS.md), rule 11).
+
 ## Procedure
 
 | Step | What to do |

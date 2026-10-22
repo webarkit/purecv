@@ -52,6 +52,10 @@
 //! document a `diverges` row; they fail when run
 //! (`cargo test --test parity_video -- --ignored`) and are the executable form of the
 //! measurement; the issue in each reason tracks the fix.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use purecv::core::Matrix;

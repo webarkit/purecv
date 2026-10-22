@@ -39,3 +39,10 @@ rule, S1–S7) is in [`README.md`](README.md); the rationale is
    "update" a frozen map when an issue closes.
 10. **Merge commits only** for PRs between an integration branch and `dev`, in either
     direction; never squash or rebase them.
+11. **Fixing a parity issue #N.** The fix PR removes the `#[ignore]` of every test in
+    `tests/parity_*.rs` that cites #N; each such test must then pass under the default
+    features, `--features simd`, `--features parallel` and
+    `--no-default-features --features std`. It deletes the paired current-behaviour pin test
+    if there is one, re-runs the row's script in `scripts/opencv_ref/` only if new inputs are
+    needed, closes #N, and never edits `docs/parity/<version>/`. The live status of the row is
+    the closed issue plus the passing test.

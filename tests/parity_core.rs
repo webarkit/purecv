@@ -44,6 +44,10 @@
 //! Tests that pass pin rows that already match OpenCV. Tests marked `#[ignore]` document a
 //! `diverges` row; they fail when run (`cargo test --test parity_core -- --ignored`) and are
 //! the executable form of the measurement.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 // The literals below are OpenCV's outputs as the scripts printed them (f32 values such as
 // 1.4142135 or 0.031622779), so they are kept verbatim instead of being replaced by constants
