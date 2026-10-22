@@ -118,9 +118,13 @@ fn convert_to_f32_to_u8_current_behaviour_truncates_and_errors() {
 const A_U8: [u8; 12] = [0, 1, 100, 127, 128, 200, 250, 255, 7, 5, 1, 9];
 const B_U8: [u8; 12] = [0, 1, 3, 100, 128, 255, 7, 2, 2, 2, 3, 4];
 
-/// OpenCV: `saturate_cast<uchar>(a + b)`.
+/// OpenCV: `saturate_cast<uchar>(a + b)`. The `simd` u8 kernel already saturates (#208), so
+/// this test runs and passes with that feature and is an expected failure without it.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #208"]
+#[cfg_attr(
+    not(feature = "simd"),
+    ignore = "diverges from OpenCV 4.10.0, see #208"
+)]
 fn add_u8_saturates() {
     let dst = add(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(
@@ -129,9 +133,13 @@ fn add_u8_saturates() {
     );
 }
 
-/// OpenCV: `saturate_cast<uchar>(a - b)` clamps at 0.
+/// OpenCV: `saturate_cast<uchar>(a - b)` clamps at 0. The `simd` u8 kernel already saturates
+/// (#208), so this test runs and passes with that feature and is an expected failure without it.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #208"]
+#[cfg_attr(
+    not(feature = "simd"),
+    ignore = "diverges from OpenCV 4.10.0, see #208"
+)]
 fn subtract_u8_saturates_at_zero() {
     let dst = subtract(&row(&B_U8), &row(&A_U8)).unwrap();
     assert_eq!(dst.data, vec![0u8, 0, 0, 0, 0, 55, 0, 0, 0, 0, 2, 0]);
@@ -194,7 +202,8 @@ fn divide_f32_by_zero_is_ieee() {
     );
 }
 
-/// The current behaviour, pinned so that a fix shows up: x/0 is 0 for f32 as well.
+/// The current behaviour, pinned so that a fix shows up: x/0 is 0 for f32 as well (the fact
+/// recorded in #209; the fix deletes this test).
 #[test]
 fn divide_f32_by_zero_current_behaviour_is_zero() {
     let a = row(&[1.0f32, -1.0, 0.0, 4.0]);

@@ -37,6 +37,11 @@ jobs:
     - name: Run tests
       run: cargo test --workspace
 
+    # The ignored parity tests assert OpenCV 4.10.0's output and must keep failing until
+    # their issue is fixed; a passing one means a fix landed without flipping its test.
+    - name: Run ignored parity tests as expected failures
+      run: python3 scripts/parity_xfail.py
+
     - name: Run tests (sequential, parallel disabled)
       run: cargo test --workspace --no-default-features --features std
 
@@ -45,6 +50,9 @@ jobs:
 
     - name: Run tests (with simd feature)
       run: cargo test --workspace --features simd
+
+    - name: Run ignored parity tests as expected failures (with simd feature)
+      run: python3 scripts/parity_xfail.py --features simd
 
     - name: Run tests (with ndarray feature)
       run: cargo test --workspace --features ndarray

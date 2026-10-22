@@ -54,6 +54,17 @@ If you add a new feature, make sure to include appropriate tests in `src/**/test
 
 OpenCV is only used out of tree to produce reference numbers. It is never a build, dev or runtime dependency of the crate.
 
+## Fixing a parity issue
+
+The parity audit (`docs/parity/<version>/`, [ADR 0001](docs/adr/0001-opencv-parity-audit.md)) left one issue per divergence from OpenCV 4.10.0 and, for each, one or more tests in `tests/parity_*.rs` marked `#[ignore = "diverges from OpenCV 4.10.0, see #N"]`. Those tests assert OpenCV's measured output and fail today; CI runs them as expected failures (`python3 scripts/parity_xfail.py`, default features and `--features simd`) and fails when one of them passes, so a fix cannot land without flipping its test. The fix phase is tracked by #268. A PR that fixes parity issue #N:
+
+1. **Removes the `#[ignore]`** of every test in `tests/parity_*.rs` that cites #N, and of no other test. The reference guard (`cargo test --test opencv_reference_links`) requires every remaining `#[ignore]`, also inside `#[cfg_attr(...)]`, to read `diverges from OpenCV 4.10.0[ <build qualifier>], see #N` with exactly one issue. A test that already passes in one build only (for example a `simd` kernel that saturates where the scalar path wraps) keeps the ignore for the other builds as `#[cfg_attr(not(feature = "simd"), ignore = "diverges from OpenCV 4.10.0, see #N")]`.
+2. **Deletes the paired current-behaviour pin**, the `*_current_behaviour_*` test whose doc comment names #N, if there is one.
+3. **Passes under every feature set CI runs**: `cargo test`, `cargo test --features simd`, `cargo test --features parallel` and `cargo test --no-default-features --features std`, plus `python3 scripts/parity_xfail.py` (and with `--features simd`) to confirm that every other ignored test still fails.
+4. **Re-runs the row's measurement script** in `scripts/opencv_ref/` only when the fix needs new inputs or expected values; new values follow the [OpenCV Reference Version](#opencv-reference-version) rules and name the script that produced them.
+5. **Never edits `docs/parity/<version>/`.** The series folder is frozen; the live status of the row is the closed issue plus the passing test (rule 11 of [`docs/parity/AGENTS.md`](docs/parity/AGENTS.md)).
+6. **Closes #N** (`Closes #N` in the PR body; close it by hand after the merge when the PR targets a non-default branch).
+
 ## Commit Message Conventions
 
 To maintain a clean and automated release history, this project strictly adheres to the [Conventional Commits](https://www.conventionalcommits.org/) specification.

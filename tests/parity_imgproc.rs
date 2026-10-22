@@ -198,8 +198,9 @@ fn gaussian_blur_f32_explicit_sigma_matches_opencv() {
 }
 
 /// OpenCV 4.10.0: 8U input runs the bit-exact `ufixedpoint16` path and uses the sigma-0 tables.
+/// Flipped by the fix for #229; the integer truncation it also hits is #157.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #157 and #229"]
+#[ignore = "diverges from OpenCV 4.10.0, see #229"]
 fn gaussian_blur_u8_matches_opencv_bit_exact_path() {
     let src = pattern_u8(8, 8, 1);
     let k3 = gaussian_blur(&src, Size2i::new(3, 3), 0.0, 0.0, B101).unwrap();
@@ -319,8 +320,9 @@ fn median_blur_uses_replicate_border() {
 }
 
 /// OpenCV: circular window, L1 colour distance over the channels, rounded output.
+/// Flipped by the fix for #231; the integer truncation it also hits is #157.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #231 and #157"]
+#[ignore = "diverges from OpenCV 4.10.0, see #231"]
 fn bilateral_filter_matches_opencv() {
     let src = pattern_u8(8, 8, 1);
     let d = bilateral_filter(&src, 5, 50.0, 50.0, B101).unwrap();
@@ -815,9 +817,10 @@ fn threshold_u8_negative_thresh_matches_opencv() {
 }
 
 /// OpenCV, integer depths: `thresh = cvFloor(thresh)` (and that value is returned),
-/// `maxval = saturate_cast(cvRound(maxval))`.
+/// `maxval = saturate_cast(cvRound(maxval))`. Flipped by the fix for #235; the integer
+/// truncation it also hits is #157.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #235 and #157"]
+#[ignore = "diverges from OpenCV 4.10.0, see #235"]
 fn threshold_integer_floors_thresh_and_rounds_maxval() {
     let src = pattern_u8(8, 8, 1);
     let (ret, _) = threshold(&src, 127.5, 200.0, ThresholdTypes::THRESH_BINARY).unwrap();
