@@ -712,3 +712,279 @@ fn opencv_references_are_pinned_to_reference_version() {
         v.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Parity suites: every `#[ignore]` cites the issue that fixes it, every current-behaviour pin
+// names the issue it is deleted with (docs/parity/AGENTS.md, rule 11).
+
+/// The shape every `#[ignore]` attribute in `tests/parity_*.rs` must have.
+const IGNORE_SHAPE: &str = "#[ignore = \"diverges from OpenCV <version>, see #N\"]";
+
+/// Byte offsets of each `#N` issue reference in `text` (a `#` followed by digits, not part
+/// of a longer token such as `C#1` or `##1`).
+fn issue_references(text: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    text.match_indices('#')
+        .filter(|&(at, _)| {
+            let after_digit = bytes.get(at + 1).is_some_and(u8::is_ascii_digit);
+            let before = at.checked_sub(1).map(|i| bytes[i]);
+            after_digit && !before.is_some_and(|b| b.is_ascii_alphanumeric() || b == b'#')
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// One `(line, message)` per `#[ignore]` attribute in a parity suite that does not read
+/// `#[ignore = "diverges from OpenCV <version>, see #N"]` with exactly one issue number.
+/// The same reason inside `#[cfg_attr(<predicate>, ignore = "...")]` is accepted for a
+/// divergence of one build only (for example a `simd` kernel that already matches).
+fn ignore_citation_violations(src: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, line) in src.lines().enumerate() {
+        let attr = line.trim();
+        let reason = if attr.starts_with("#[ignore") {
+            attr.strip_prefix("#[ignore = \"")
+                .and_then(|r| r.strip_suffix("\"]"))
+        } else if is_cfg_attr_ignore(attr) {
+            attr.strip_suffix("\")]")
+                .and_then(|r| r.split_once(", ignore = \""))
+                .map(|(_, reason)| reason)
+        } else {
+            continue;
+        };
+        let parts = reason
+            .and_then(|r| r.strip_prefix("diverges from OpenCV "))
+            .and_then(|r| r.split_once(", see #"));
+        let well_formed = match parts {
+            Some((version, number)) => {
+                is_version(version)
+                    && !number.is_empty()
+                    && number.bytes().all(|b| b.is_ascii_digit())
+            }
+            None => false,
+        };
+        if !well_formed {
+            let what = match issue_references(attr).len() {
+                0 => "cites no issue",
+                1 => "is malformed",
+                _ => "cites more than one issue",
+            };
+            out.push((i + 1, format!("`{attr}` {what}: expected `{IGNORE_SHAPE}`")));
+        }
+    }
+    out
+}
+
+/// True for `#[cfg_attr(<predicate>, ignore ...)]`: an ignore that applies to one build only.
+fn is_cfg_attr_ignore(attr: &str) -> bool {
+    attr.starts_with("#[cfg_attr(")
+        && (attr.contains(", ignore = \"") || attr.ends_with(", ignore)]"))
+}
+
+/// One `(line, message)` per `current_behaviour` test whose doc comment does not name
+/// exactly one issue, the one whose fix deletes the test.
+fn pin_test_violations(src: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut doc = String::new();
+    for (i, line) in src.lines().enumerate() {
+        let t = line.trim();
+        if let Some(d) = t.strip_prefix("///") {
+            doc.push_str(d);
+            doc.push('\n');
+            continue;
+        }
+        if t.starts_with("#[") {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("fn ") {
+            let name = rest.split(['(', '<']).next().unwrap_or(rest);
+            if name.contains("current_behaviour") {
+                let what = match issue_references(&doc).len() {
+                    1 => None,
+                    0 => Some("names no issue"),
+                    _ => Some("names more than one issue"),
+                };
+                if let Some(what) = what {
+                    out.push((
+                        i + 1,
+                        format!(
+                            "pin test `{name}` {what} in its doc comment: name the issue (#N) \
+                             whose fix deletes it"
+                        ),
+                    ));
+                }
+            }
+        }
+        doc.clear();
+    }
+    out
+}
+
+/// The parity suites of the checkout, `tests/parity_*.rs`, sorted by name.
+fn parity_suites() -> Vec<PathBuf> {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut out: Vec<PathBuf> = fs::read_dir(&tests)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests.display()))
+        .map(|entry| entry.expect("readable tests/ entry").path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("parity_") && n.ends_with(".rs"))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn issue_references_finds_bare_numbers_only() {
+    assert_eq!(issue_references("see #12 and #3").len(), 2);
+    assert_eq!(issue_references("C#1, ##2, #x, a#3, #").len(), 0);
+    assert_eq!(issue_references("(#192)").len(), 1);
+}
+
+#[test]
+fn ignore_citation_violations_require_exactly_one_issue() {
+    let ok = "#[test]\n#[ignore = \"diverges from OpenCV 4.10.0, see #229\"]\nfn a() {}\n";
+    assert_eq!(ignore_citation_violations(ok), Vec::new());
+    let gated = "#[cfg_attr(not(feature = \"simd\"), ignore = \"diverges from OpenCV 4.10.0, \
+                 see #208\")]\nfn a() {}\n";
+    assert_eq!(ignore_citation_violations(gated), Vec::new());
+    // Other cfg_attr attributes are not ignores.
+    let cfg = "#[cfg_attr(feature = \"simd\", allow(dead_code))]\nfn a() {}\n";
+    assert_eq!(ignore_citation_violations(cfg), Vec::new());
+    // Module docs that mention the attribute are not attributes.
+    let doc = "//! Tests marked `#[ignore]` document a `diverges` row.\n";
+    assert_eq!(ignore_citation_violations(doc), Vec::new());
+
+    let rows = [
+        ("#[ignore]", "cites no issue"),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0\"]",
+            "cites no issue",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see 229\"]",
+            "cites no issue",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see #\"]",
+            "cites no issue",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see #229 and #157\"]",
+            "cites more than one issue",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see #229, #157\"]",
+            "cites more than one issue",
+        ),
+        ("#[ignore = \"see #229\"]", "is malformed"),
+        (
+            "#[ignore = \"diverges from OpenCV 4.x, see #229\"]",
+            "is malformed",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see #229 (ORB)\"]",
+            "is malformed",
+        ),
+        (
+            "#[ignore = \"diverges from OpenCV 4.10.0, see #229\"] // x",
+            "is malformed",
+        ),
+        ("#[cfg_attr(not(feature = \"simd\"), ignore)]", "cites no issue"),
+        (
+            "#[cfg_attr(not(feature = \"simd\"), ignore = \"see #208\")]",
+            "is malformed",
+        ),
+        (
+            "#[cfg_attr(not(feature = \"simd\"), ignore = \"diverges from OpenCV 4.10.0, see #208 and #189\")]",
+            "cites more than one issue",
+        ),
+    ];
+    for (attr, what) in rows {
+        let src = format!("fn before() {{}}\n\n#[test]\n{attr}\nfn t() {{}}\n");
+        let v = ignore_citation_violations(&src);
+        assert_eq!(v.len(), 1, "{attr}: {v:?}");
+        assert_eq!(v[0].0, 4, "{attr}");
+        assert!(v[0].1.contains(what), "{attr}: {}", v[0].1);
+    }
+}
+
+#[test]
+fn pin_test_violations_require_the_issue_in_the_doc_comment() {
+    let ok = "/// Pins today's output (the fact recorded in #192) so that a fix is visible.\n\
+              #[test]\nfn convert_to_current_behaviour_truncates() {\n}\n";
+    assert_eq!(pin_test_violations(ok), Vec::new());
+    // Tests without `current_behaviour` in their name are not pins.
+    let other = "/// No issue here.\n#[test]\nfn convert_to_matches_opencv() {}\n";
+    assert_eq!(pin_test_violations(other), Vec::new());
+
+    let rows = [
+        (
+            "#[test]\nfn x_current_behaviour_is_zero() {}\n",
+            2,
+            "names no issue",
+        ),
+        (
+            "/// The current behaviour.\n#[test]\nfn x_current_behaviour() {}\n",
+            3,
+            "names no issue",
+        ),
+        // A doc comment that belongs to the previous item does not carry over.
+        (
+            "/// See #209.\nfn helper() {}\n\n#[test]\nfn x_current_behaviour() {}\n",
+            5,
+            "names no issue",
+        ),
+        (
+            "/// See #209 and #189.\n#[test]\nfn x_current_behaviour() {}\n",
+            3,
+            "more than one",
+        ),
+    ];
+    for (src, line, what) in rows {
+        let v = pin_test_violations(src);
+        assert_eq!(v.len(), 1, "{src}: {v:?}");
+        assert_eq!(v[0].0, line, "{src}");
+        assert!(v[0].1.contains(what), "{src}: {}", v[0].1);
+    }
+}
+
+#[test]
+fn parity_ignores_cite_one_issue_and_pins_name_theirs() {
+    let suites = parity_suites();
+    assert!(
+        !suites.is_empty(),
+        "no tests/parity_*.rs found under {}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut ignored = 0usize;
+    let mut violations = Vec::new();
+    for path in &suites {
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        ignored += src
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("#[ignore") || is_cfg_attr_ignore(t)
+            })
+            .count();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        for (line, msg) in ignore_citation_violations(&src)
+            .into_iter()
+            .chain(pin_test_violations(&src))
+        {
+            violations.push(format!("tests/{name}:{line}: {msg}"));
+        }
+    }
+    assert!(ignored > 0, "no #[ignore] in the parity suites");
+    assert!(
+        violations.is_empty(),
+        "every parity `#[ignore]` cites exactly one issue and every current-behaviour pin \
+         names the issue it is deleted with (docs/parity/AGENTS.md, rule 11; \
+         scripts/parity_xfail.py runs the ignored tests):\n{}",
+        violations.join("\n")
+    );
+}

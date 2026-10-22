@@ -45,4 +45,6 @@ rule, S1–S7) is in [`README.md`](README.md); the rationale is
     `--no-default-features --features std`. It deletes the paired current-behaviour pin test
     if there is one, re-runs the row's script in `scripts/opencv_ref/` only if new inputs are
     needed, closes #N, and never edits `docs/parity/<version>/`. The live status of the row is
-    the closed issue plus the passing test.
+    the closed issue plus the passing test. CI runs the ignored tests as expected failures
+    (`scripts/parity_xfail.py`) and the reference guard requires every `#[ignore]` to cite
+    exactly one issue; the checklist is "Fixing a parity issue" in `CONTRIBUTING.md`.

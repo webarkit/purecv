@@ -665,9 +665,9 @@ fn orb_compute_fixture_descriptors_within_3_bits_of_opencv() {
 /// 7x7/sigma2 Gaussian; purecv's `gaussian_blur` truncates and differs by 1 on about half of the
 /// pixels (#229, #157). On the hash-textured fixture that flips 1.20 bits per descriptor; on
 /// the flat-rectangle image, with OpenCV's own octave-0 keypoints and angles, 19.1 bits
-/// (max 42).
+/// (max 42). Flipped by the fix for #229; the truncation half of the difference is #157.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #229 and #157"]
+#[ignore = "diverges from OpenCV 4.10.0, see #229"]
 fn orb_compute_descriptors_match_opencv_exactly() {
     let desc = Orb::default()
         .compute(&orb_ref_image(), &fixture_keypoints())
@@ -748,9 +748,10 @@ fn orb_octave0_keypoint_selection_matches_opencv() {
 
 /// Octaves >= 1 are detected on a pyramid that OpenCV builds with `INTER_LINEAR_EXACT`,
 /// `cvRound` sizes and reflect-101 padding; purecv's levels differ by +/-1 on many pixels, so
-/// the per-octave counts below quota differ (textured: 89/56/25 vs 87/55/26).
+/// the per-octave counts below quota differ (textured: 89/56/25 vs 87/55/26). Flipped by the
+/// fix for #193; the resize half of the difference is #236.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #193 and #236"]
+#[ignore = "diverges from OpenCV 4.10.0, see #193"]
 fn orb_per_octave_counts_match_opencv_above_octave_0() {
     let orb = Orb::default();
     let kps = orb.detect(&textured_u8(240, 320, 5)).unwrap();
