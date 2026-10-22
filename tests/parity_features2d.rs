@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `features2d` module (`docs/parity/features2d.md`).
+//! OpenCV 4.10.0 parity pins for the `features2d` module (`docs/parity/4.10.0/features2d.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`features2d_fast.py`, `features2d_orb.py`, `features2d_matcher.py`, `features2d_draw.py`,
@@ -47,6 +47,10 @@
 //! Tests that pass pin rows that already match OpenCV. Tests marked `#[ignore]` document a
 //! `diverges` row; they fail when run (`cargo test --test parity_features2d -- --ignored`)
 //! and are the executable form of the measurement; the issue in each reason tracks the fix.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::core::types::{Point2f, Scalar};
 use purecv::core::Matrix;
@@ -1202,7 +1206,7 @@ fn keypoint_overlap_and_convert_match_opencv() {
         let got = KeyPoint::overlap(a, b);
         if expected.is_nan() {
             // OpenCV returns 0/0 = NaN for two zero-size concentric keypoints; purecv's
-            // `max_s_2 > 0` guard returns 0 (`intentional`, see docs/parity/features2d.md).
+            // `max_s_2 > 0` guard returns 0 (`intentional`, see docs/parity/4.10.0/features2d.md).
             assert_eq!(got, 0.0, "{name}");
         } else {
             assert!(

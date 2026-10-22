@@ -1,9 +1,12 @@
+> **Frozen snapshot:** purecv at `4558848` audited against OpenCV 4.10.0. Do not edit; a later reference version gets its own folder.
+> See [`docs/adr/0001-opencv-parity-audit.md`](../../adr/0001-opencv-parity-audit.md).
+
 # Parity audit: `core` ↔ OpenCV 4.10.0
 
 Task B1 of [#172](https://github.com/webarkit/purecv/issues/172), sub-issue
 [#173](https://github.com/webarkit/purecv/issues/173). Method, statuses (`measured`,
 `inspected`, `diverges`, `intentional`, `purecv-only`, `missing`) and dimensions D1–D7:
-[`README.md`](README.md). Inventory taken at the branch base `4558848` (`parity-audit`,
+[`README.md`](../README.md). Inventory taken at the branch base `4558848` (`parity-audit`,
 v0.11.0): every `pub` item of `src/core`, the re-exports of `src/core.rs`, and `src/version.rs`.
 
 ## D7: reference and measurement record

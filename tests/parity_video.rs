@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `video` module (`docs/parity/video.md`).
+//! OpenCV 4.10.0 parity pins for the `video` module (`docs/parity/4.10.0/video.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`video_pyramid.py`, `video_lk.py`; helpers `_core_common.py`, `_features2d_common.py`,
@@ -52,6 +52,10 @@
 //! document a `diverges` row; they fail when run
 //! (`cargo test --test parity_video -- --ignored`) and are the executable form of the
 //! measurement; the issue in each reason tracks the fix.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::core::types::{BorderTypes, Point2f, Size2i, TermCriteria, TermType};
 use purecv::core::Matrix;

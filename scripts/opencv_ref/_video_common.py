@@ -1,11 +1,11 @@
-"""Shared inputs and digests for the video parity scripts (docs/parity/video.md).
+"""Shared inputs and digests for the video parity scripts (docs/parity/4.10.0/video.md).
 
 Every image is built from integer arithmetic only, so tests/parity_video.rs rebuilds it
 byte for byte. Flow results are reported in full (one `[x, y, status, err]` row per point)
 plus an FNV-1a digest of the status bytes, so the Rust tests can check the accept set
 exactly and the coordinates within a tolerance.
 
-Imported *after* the script's own ``assert cv2.__version__ == "4.10.0"`` and
+Imported *after* the script's own ``assert cv2.__version__ == REFERENCE_VERSION`` and
 ``cv2.ipp.setUseIPP(False)`` lines (see _core_common.py).
 """
 

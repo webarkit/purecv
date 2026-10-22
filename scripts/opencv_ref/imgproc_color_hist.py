@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the imgproc colour and histogram rows
-(docs/parity/imgproc.md).
+(docs/parity/4.10.0/imgproc.md).
 
 Rows: cvt_color (RGB/BGR/RGBA/BGRA -> GRAY, GRAY -> RGB/BGR/RGBA/BGRA), calc_hist,
 calc_back_project, compare_hist, equalize_hist, Clahe.
@@ -14,17 +14,19 @@ Run from the repository root:
     cpp_ref/.venv/bin/python scripts/opencv_ref/imgproc_color_hist.py       # Linux/macOS
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import numpy as np
+
 from _core_common import dump, tolist  # noqa: E402
 
 

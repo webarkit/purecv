@@ -1,7 +1,7 @@
 """OpenCV 4.10.0 reference values for the core conversion and u8 arithmetic rows.
 
 Rows: Matrix::convert_to, add/subtract/multiply/divide (+ _scalar), add_weighted,
-convert_scale_abs. See docs/parity/core.md.
+convert_scale_abs. See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_convert_arith.py   # Windows
@@ -14,17 +14,19 @@ writes the destination through the same saturating convert kernel as convertTo
 convertTo oracle; scripts/opencv_ref/core_convert_to.js measures Mat.convertTo itself.
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import numpy as np
+
 from _core_common import dump, tolist  # noqa: E402
 
 NAN, INF = float("nan"), float("inf")

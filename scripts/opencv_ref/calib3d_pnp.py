@@ -1,5 +1,5 @@
 """OpenCV 4.10.0 reference values for the solve_pnp / solve_pnp_ransac rows
-(docs/parity/calib3d.md).
+(docs/parity/4.10.0/calib3d.md).
 
 `cv2.solvePnP` with every `SOLVEPNP_*` flag, with and without `useExtrinsicGuess`, on seeded
 object points (24 non-planar, 16 planar, 4-point and 5-point subsets) projected through a
@@ -13,17 +13,19 @@ Run from the repository root:
     cpp_ref/.venv/bin/python scripts/opencv_ref/calib3d_pnp.py       # Linux/macOS
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import numpy as np
+
 from _calib3d_common import (  # noqa: E402
     add_noise,
     as_f32_points,

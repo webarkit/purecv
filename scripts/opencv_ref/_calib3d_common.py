@@ -1,4 +1,4 @@
-"""Shared inputs and digests for the calib3d parity scripts (docs/parity/calib3d.md).
+"""Shared inputs and digests for the calib3d parity scripts (docs/parity/4.10.0/calib3d.md).
 
 Every input is built from integer LCG draws turned into dyadic fractions (k / 1024, k / 64),
 from exact rational rotations (Pythagorean triples) and from plain IEEE double arithmetic in
@@ -6,7 +6,7 @@ a fixed operation order, so tests/parity_calib3d.rs rebuilds every point bit for
 committing a data file. Results are reported in full (3x3 matrices, pose vectors, inlier
 masks) plus FNV-1a digests of the long outputs (undistortion maps).
 
-Imported *after* the script's own ``assert cv2.__version__ == "4.10.0"`` and
+Imported *after* the script's own ``assert cv2.__version__ == REFERENCE_VERSION`` and
 ``cv2.ipp.setUseIPP(False)`` lines (see _core_common.py).
 """
 

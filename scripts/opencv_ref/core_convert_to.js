@@ -34,7 +34,7 @@
  *
  */
 
-// OpenCV 4.10.0 (opencv.js) reference values for Matrix::convert_to (docs/parity/core.md).
+// OpenCV 4.10.0 (opencv.js) reference values for Matrix::convert_to (docs/parity/4.10.0/core.md).
 //
 // Python's cv2 does not bind Mat::convertTo, so the direct measurement of convertTo comes
 // from the pinned opencv.js build: the same cvt kernels (saturate_cast) compiled to WASM.

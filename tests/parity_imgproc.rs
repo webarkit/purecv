@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `imgproc` module (`docs/parity/imgproc.md`).
+//! OpenCV 4.10.0 parity pins for the `imgproc` module (`docs/parity/4.10.0/imgproc.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`imgproc_filter.py`, `imgproc_geom.py`, `imgproc_color_hist.py`, `imgproc_feature.py`)
@@ -45,6 +45,10 @@
 //! Tests that pass pin rows that already match OpenCV. Tests marked `#[ignore]` document a
 //! `diverges` row; they fail when run (`cargo test --test parity_imgproc -- --ignored`) and
 //! are the executable form of the measurement; the issue in each reason tracks the fix.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::core::types::{BorderTypes, Point2i, Scalar, Size, Size2i, TermCriteria, TermType};
 use purecv::core::{Matrix, Point2f};

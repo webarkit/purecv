@@ -1,9 +1,12 @@
+> **Frozen snapshot:** purecv at `ecc29ad` audited against OpenCV 4.10.0. Do not edit; a later reference version gets its own folder.
+> See [`docs/adr/0001-opencv-parity-audit.md`](../../adr/0001-opencv-parity-audit.md).
+
 # Parity audit: `calib3d` ↔ OpenCV 4.10.0
 
 Task B5 of [#172](https://github.com/webarkit/purecv/issues/172), sub-issue
 [#177](https://github.com/webarkit/purecv/issues/177). Method, statuses (`measured`,
 `inspected`, `diverges`, `intentional`, `purecv-only`, `missing`) and dimensions D1–D7:
-[`README.md`](README.md). Inventory taken at the branch base `ecc29ad` (`parity-audit` after
+[`README.md`](../README.md). Inventory taken at the branch base `ecc29ad` (`parity-audit` after
 the video audit, PR #255): every `pub` item of `src/calib3d` (`src/calib3d.rs` and the public
 submodules `fundamental`, `geometry`, `homography`, `pose`, `undistort`), the variants of the
 three public enums, and the re-exports of `src/calib3d.rs` and of the crate prelude. The

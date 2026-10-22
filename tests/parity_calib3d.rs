@@ -34,7 +34,7 @@
  *
  */
 
-//! OpenCV 4.10.0 parity pins for the `calib3d` module (`docs/parity/calib3d.md`).
+//! OpenCV 4.10.0 parity pins for the `calib3d` module (`docs/parity/4.10.0/calib3d.md`).
 //!
 //! Every expected value in this file was produced by a script under `scripts/opencv_ref/`
 //! (`calib3d_homography.py`, `calib3d_rodrigues.py`, `calib3d_pnp.py`, `calib3d_undistort.py`,
@@ -51,6 +51,10 @@
 //! the executable form of the measurement; the issue in each reason tracks the fix. RANSAC
 //! rows compare inlier sets and model quality, never sample sequences: OpenCV draws with
 //! `cv::RNG` (#225) and purecv with its own generator.
+//!
+//! A fix for #N removes the `#[ignore]` of the tests that cite it and deletes the matching
+//! current-behaviour pin, if any; the test then guards the row (rule 11 of
+//! `docs/parity/AGENTS.md`).
 
 use purecv::calib3d::*;
 use purecv::core::types::{Point2f, Point3f, Size2i};

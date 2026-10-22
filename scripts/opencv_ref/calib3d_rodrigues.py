@@ -1,4 +1,4 @@
-"""OpenCV 4.10.0 reference values for the rodrigues rows (docs/parity/calib3d.md).
+"""OpenCV 4.10.0 reference values for the rodrigues rows (docs/parity/4.10.0/calib3d.md).
 
 `cv2.Rodrigues` in both directions on literal rotation vectors (zero, tiny, small, general,
 the pi edge in several axes, just below pi, beyond pi), on the 1x3 row form, on matrices
@@ -11,18 +11,20 @@ Run from the repository root:
     cpp_ref/.venv/bin/python scripts/opencv_ref/calib3d_rodrigues.py       # Linux/macOS
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
-import math
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import math
+import numpy as np
+
 from _calib3d_common import rational_rotation  # noqa: E402
 from _core_common import dump, tolist  # noqa: E402
 

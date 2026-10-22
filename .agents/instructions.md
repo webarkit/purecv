@@ -19,6 +19,7 @@ You are an expert Rust systems engineer porting OpenCV (C++) to Pure Rust. The g
 ## 📝 Documentation & Style
 - All comments, docstrings, and commit messages must be in **English**.
 - OpenCV reference version: **4.10.0** — pinned links and parity values only; see `CONTRIBUTING.md#opencv-reference-version`.
+- Parity audits live in `docs/parity/<version>/` and are frozen: never edit them. Rules in `docs/parity/AGENTS.md`, method in `docs/parity/README.md`; read `docs/adr/0001-opencv-parity-audit.md` before changing the reference version or a parity test.
 - Use `Result<T, PureCvError>` for error handling instead of `panic!`.
 - Follow the structure defined in `src/core/` and `src/imgproc/`.
 - **Module structure convention:** Each top-level module (`core/`, `imgproc/`, `features2d/`, etc.) must contain its own `tests.rs` (unit tests) and `simd.rs` (SIMD helpers specific to that module). Keep SIMD kernels co-located with the module that uses them. The core `SimdElement` trait stays in `src/core/simd.rs`; domain-specific kernels belong in their respective module's `simd.rs`.

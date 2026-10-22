@@ -1,24 +1,26 @@
 """OpenCV 4.10.0 reference values for the core statistics rows.
 
 Rows: norm, normalize, mean, sum, mean_std_dev, min_max_loc, reduce, count_non_zero,
-has_no_zero. See docs/parity/core.md.
+has_no_zero. See docs/parity/4.10.0/core.md.
 
 Run from the repository root:
     cpp_ref/.venv/Scripts/python scripts/opencv_ref/core_stats.py   # Windows
     cpp_ref/.venv/bin/python scripts/opencv_ref/core_stats.py       # Linux/macOS
 """
 
-import cv2
-
-assert cv2.__version__ == "4.10.0"
-cv2.ipp.setUseIPP(False)  # measure the generic CPU path
-
 import os
 import sys
 
-import numpy as np
+import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _reference import REFERENCE_VERSION  # noqa: E402
+
+assert cv2.__version__ == REFERENCE_VERSION, f"cv2 {cv2.__version__} is not the pinned {REFERENCE_VERSION}"
+cv2.ipp.setUseIPP(False)  # measure the generic CPU path
+
+import numpy as np
+
 from _core_common import dump, tolist  # noqa: E402
 
 
