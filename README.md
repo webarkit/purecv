@@ -14,6 +14,20 @@ A high-performance, **pure Rust** computer vision library reimplementing the `co
 
 > This project is currently a **Work in Progress**. While most features across the core, imgproc, features2d, video, and calib3d modules have been implemented, the library is not yet stable, and bugs may occur. We are actively optimizing and expanding the feature set.
 
+## 🔬 OpenCV parity
+
+PureCV measures itself against one pinned OpenCV release, currently **OpenCV 4.10.0**
+(see [`CONTRIBUTING.md`](CONTRIBUTING.md#opencv-reference-version)). The
+[parity audit](docs/parity/README.md) compared every public item of `core`, `imgproc`,
+`features2d`, `video` and `calib3d` with that release: the C++ source was read side by side
+with the Rust, and the same inputs were run through both libraries with reproducible
+scripts. The results are recorded per module in [`docs/parity/4.10.0/`](docs/parity/4.10.0/README.md).
+
+Every difference found is an issue in the
+[parity milestone](https://github.com/webarkit/purecv/milestone/8), and the
+[roadmap](#-roadmap) below orders the fixes by module. The goal is the same output as OpenCV
+for the same input, or a written reason where purecv deliberately differs.
+
 ## 🎯 Philosophy
 
 Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
@@ -409,8 +423,19 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features parallel
 
 ## 🗺 Roadmap
 
-- [x] [**Milestone 7: Geometric Rectification & Calibration**](https://github.com/webarkit/purecv/milestone/7) - Expand purecv to support camera intrinsic correction and geometric transformation, essential for robust 3D pose estimation and AR surface tracking.
-- [x] **Embedded / `no_std` support** - The `core`, `imgproc`, `calib3d`, and `video` modules compile without the standard library for microcontrollers such as the ESP32. See [`purecv-esp32-examples`](https://github.com/webarkit/purecv-esp32-examples).
+The next releases close the differences found by the
+[OpenCV 4.10.0 parity audit](docs/parity/4.10.0/README.md), one fix per pull request.
+Progress is tracked in [#268](https://github.com/webarkit/purecv/issues/268) (part of
+[#172](https://github.com/webarkit/purecv/issues/172)) and in the
+[parity milestone](https://github.com/webarkit/purecv/milestone/8).
+
+- [ ] **Shared foundations:** OpenCV-style saturation and rounding, the `cv::RNG` generator, a Levenberg-Marquardt solver
+- [ ] **core:** integer arithmetic and conversions, flags and edge cases, DFT output
+- [ ] **imgproc:** panics first, then rounding and fixed-point paths, filters, geometry, histograms, feature detection
+- [ ] **features2d:** ORB pyramid and keypoint selection, ORB options, FAST, matching and drawing
+- [ ] **video:** input validation, pyramid storage
+- [ ] **calib3d:** wrong `solve_pnp` results first, then extrinsic guess, homography and RANSAC refinement, undistortion
+- [ ] **1.0.0 plan** ([#128](https://github.com/webarkit/purecv/issues/128)), once the parity backlog is closed
 
 ## 📄 License
 
