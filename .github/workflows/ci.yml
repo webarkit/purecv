@@ -135,11 +135,15 @@ jobs:
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
 
+    # Keep Criterion's reports out of target/ so rust-cache never restores them: it
+    # restores emptied base/ directories and Criterion then fails to read base/sample.json.
     - name: Run benchmarks
       run: cargo bench
+      env:
+        CRITERION_HOME: ${{ github.workspace }}/criterion-reports
 
     - name: Upload benchmark reports
       uses: actions/upload-artifact@v7
       with:
         name: benchmark-reports
-        path: target/criterion
+        path: criterion-reports
