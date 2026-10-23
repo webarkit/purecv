@@ -100,7 +100,7 @@ async function start() {
         document.getElementById('loader').classList.add('hidden');
 
         // Initial default image (OpenCV butterfly sample)
-        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/master/samples/data/butterfly.jpg');
+        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/4.10.0/samples/data/butterfly.jpg');
         processImage();
     } catch (err) {
         console.error("WASM Initialization failed:", err);

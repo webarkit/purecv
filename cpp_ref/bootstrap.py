@@ -22,7 +22,7 @@
 # purecv: P6 -- provenance. Vendored from https://github.com/webarkit/WebARKitLib-rs,
 # benchmarks/bootstrap.py at commit a099326efc2edcf5b1ebcdb69e6d3d9adfe4bbfc
 # (blob b22bd1d8d1fdb1095a37f3b9ea9c374e68f6b03a), patched for purecv, see `# purecv:` markers.
-# Patches P1-P6 are listed in cpp_ref/README.md.
+# Patches P1-P8 are listed in cpp_ref/README.md.
 
 from __future__ import annotations # purecv: P4 (type hints of the purecv helpers)
 from __future__ import print_function
@@ -35,6 +35,7 @@ import io
 import shutil
 import subprocess
 import tempfile # purecv: P6
+import time # purecv: P8
 import zipfile
 import tarfile
 import hashlib
@@ -57,13 +58,14 @@ except ImportError:
     from urllib import URLopener
     from urllib import quote
 
+# purecv: P7 -- no warning at import: scp only serves the fallback and snapshot download paths,
+# which purecv rejects (P6). downloadSCP still reports the missing packages if ever reached.
 try:
     import paramiko
     import scp
     scp_available = True
 except:
     scp_available = False
-    print("WARNING: Please install the Python packages [paramiko, scp] for full script operation.")
 
 try:
     import lzma
@@ -77,7 +79,7 @@ except:
     print("> pip install pyliblzma")
     lzma_available = False
 
-BOOTSTRAP_VERSION = "1.0.7 (2025) purecv-1" # purecv: P6
+BOOTSTRAP_VERSION = "1.0.7 (2025) purecv-2" # purecv: P6, P7, P8
 
 class Colors:
     GREEN = '\033[92m'
@@ -207,16 +209,33 @@ def _rmtree(path: str) -> None:
 _GIT_EXECUTABLE = None
 _GIT_LOCAL_ENV_VARS = []
 
-def _git(args: list[str], cwd: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
+# purecv: P7, P8 -- settings every bootstrap git command runs with, whatever the user's or the
+# checkout's config says. P7: no detached-HEAD advice block on `checkout --detach`. P8: an
+# fsmonitor hook could report "nothing changed" for an edited file; a global core.ignoreStat
+# would mark every entry of a fresh clone assume-unchanged, and a global core.sparseCheckout
+# would make every fresh clone sparse, so each checkout would then be refused as dirty. The
+# checkout's own sparse setting is still read with `git config --local` (_hidden_edit_flags).
+_GIT_FORCED_CONFIG = [
+    "advice.detachedHead=false",
+    "core.fsmonitor=false",
+    "core.ignoreStat=false",
+    "core.sparseCheckout=false",
+]
+
+def _git(args: list[str], cwd: str | None = None, check: bool = True,
+         input: str | None = None) -> subprocess.CompletedProcess:
     """Runs git with an argument list and no shell, so paths with spaces and hostile values
     stay single arguments.
 
     The environment drops every variable `git rev-parse --local-env-vars` names (GIT_DIR,
     GIT_WORK_TREE, GIT_INDEX_FILE, ...) and sets GIT_CEILING_DIRECTORIES to SRC_DIR, so a
     command for one library can never act on an enclosing repository such as purecv.
+    `--no-replace-objects` (P8) makes HEAD's tree the real tree of the pinned commit, so a
+    replace ref cannot pass an edited tree off as that commit; _GIT_FORCED_CONFIG applies.
 
     Probes (check=False) run quietly and return their output; failing is their answer.
     Actions (check=True) show git's own progress and errors, and raise on failure.
+    `input`, when given, is written to git's stdin.
     """
     global _GIT_EXECUTABLE, _GIT_LOCAL_ENV_VARS
     if _GIT_EXECUTABLE is None:
@@ -228,15 +247,17 @@ def _git(args: list[str], cwd: str | None = None, check: bool = True) -> subproc
         _GIT_EXECUTABLE = git
     env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCAL_ENV_VARS}
     env["GIT_CEILING_DIRECTORIES"] = os.path.realpath(SRC_DIR)
-    command = [_GIT_EXECUTABLE]
+    command = [_GIT_EXECUTABLE, "--no-replace-objects"] # purecv: P8
     if platform.system() == "Windows":
         command += ["-c", "core.longpaths=true"]
+    for setting in _GIT_FORCED_CONFIG: # purecv: P7, P8
+        command += ["-c", setting]
     command += args
     dlog(">>> " + " ".join(command))
     sys.stdout.flush() # keep our log lines ahead of git's own output
     capture = None if check else subprocess.PIPE
     return subprocess.run(command, cwd=cwd, env=env, shell=False, check=check, stdout=capture, stderr=capture,
-                          encoding="utf-8", errors="replace")
+                          input=input, encoding="utf-8", errors="replace")
 
 def _status_paths(lib_dir: str) -> list[str] | None:
     """Modified, untracked and ignored paths in lib_dir, or None when git cannot tell."""
@@ -265,7 +286,7 @@ def _hidden_edit_flags(lib_dir: str) -> list[tuple[str, str]] | None:
     or None when git cannot tell.
 
     Call it only on a checkout of its own (see _checkout_state): its git directory is then
-    lib_dir/.git, where the sparse-checkout file is looked for.
+    lib_dir/.git, whose config is the --local one read here.
     """
     flags = []
     listed = _git(["ls-files", "-v", "-z"], cwd=lib_dir, check=False)
@@ -280,17 +301,106 @@ def _hidden_edit_flags(lib_dir: str) -> list[tuple[str, str]] | None:
             flags.append(("assume-unchanged", path))
         if tag in ("S", "s"):
             flags.append(("skip-worktree", path))
-    sparse = _git(["config", "--bool", "core.sparseCheckout"], cwd=lib_dir, check=False)
+    # purecv: P8 -- only the checkout's own config turns sparse checkout on for it: a global
+    # setting is overridden by _git, and a .git/info/sparse-checkout file left behind by
+    # `git sparse-checkout disable` does nothing while core.sparseCheckout is false.
+    sparse = _git(["config", "--local", "--bool", "core.sparseCheckout"], cwd=lib_dir, check=False)
     if sparse.returncode not in (0, 1): # 1: not set
         return None
     if sparse.returncode == 0 and sparse.stdout.strip() == "true":
         flags.append(("sparse checkout", "core.sparseCheckout is true"))
-    if os.path.lexists(os.path.join(lib_dir, ".git", "info", "sparse-checkout")):
-        flags.append(("sparse checkout", ".git/info/sparse-checkout exists"))
+    filtered = _filtered_paths(lib_dir) # purecv: P8
+    if filtered is None:
+        return None
+    flags += [("filter", detail) for detail in filtered]
+    file_mode = _ignored_file_mode(lib_dir) # purecv: P8
+    if file_mode is None:
+        return None
+    if file_mode:
+        flags.append(("core.fileMode", file_mode))
     return flags
+
+# purecv: P8 -- a clean/smudge (or process) filter rewrites files between the worktree and the
+# index, so `git status` compares filtered content. It matters only for a path whose `filter`
+# attribute names a driver that is configured somewhere; OpenCV sets none.
+def _filtered_paths(lib_dir: str) -> list[str] | None:
+    """"<path> (filter <driver>)" for every tracked path a configured filter driver applies
+    to, or None when git cannot tell."""
+    listed = _git(["ls-files", "-z"], cwd=lib_dir, check=False)
+    if listed.returncode != 0:
+        return None
+    if not listed.stdout:
+        return []
+    attrs = _git(["check-attr", "-z", "--stdin", "filter"], cwd=lib_dir, check=False, input=listed.stdout)
+    if attrs.returncode != 0:
+        return None
+    fields = attrs.stdout.split("\0")
+    drivers = {}
+    found = []
+    for i in range(0, len(fields) - 2, 3): # "<path>\0filter\0<value>\0" per path
+        path, value = fields[i], fields[i + 2]
+        if value in ("unspecified", "unset", "set", ""):
+            continue # `set` names no driver, so git applies none
+        if value not in drivers:
+            configured = _git(["config", "-z", "--get-regexp", r"^filter\." + re.escape(value) +
+                               r"\.(clean|smudge|process)$"], cwd=lib_dir, check=False)
+            if configured.returncode not in (0, 1): # 1: none configured
+                return None
+            drivers[value] = configured.returncode == 0
+        if drivers[value]:
+            found.append(path + " (filter " + value + ")")
+    return found
+
+# purecv: P8 -- with core.fileMode false, `git status` ignores the executable bit. Git sets it
+# false itself on filesystems that do not keep the bit (Windows, some mounts), where nothing
+# can hide there; it hides a chmod only where the filesystem does keep the bit.
+def _ignored_file_mode(lib_dir: str) -> str | None:
+    """A description when core.fileMode is false on a filesystem that keeps the executable
+    bit, "" when there is nothing to report, or None when git cannot tell."""
+    if platform.system() == "Windows":
+        return ""
+    mode = _git(["config", "--bool", "core.fileMode"], cwd=lib_dir, check=False)
+    if mode.returncode not in (0, 1): # 1: not set, git's default is true
+        return None
+    if mode.returncode == 1 or mode.stdout.strip() != "false":
+        return ""
+    try:
+        fd, probe = tempfile.mkstemp(prefix="filemode-probe.", dir=os.path.join(lib_dir, ".git"))
+    except OSError:
+        return None
+    try:
+        os.close(fd)
+        os.chmod(probe, 0o755)
+        keeps_bit = bool(os.stat(probe).st_mode & stat.S_IXUSR)
+        os.chmod(probe, 0o644)
+        keeps_bit = keeps_bit and not os.stat(probe).st_mode & stat.S_IXUSR
+    except OSError:
+        return None
+    finally:
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
+    return "core.fileMode is false on a filesystem that keeps the executable bit" if keeps_bit else ""
 
 def _flag_names(flags: list[tuple[str, str]]) -> str: # purecv: P4
     return ", ".join(dict.fromkeys(flag for flag, _detail in flags))
+
+# purecv: P8 -- the bootstrap's own git commands override core.ignoreStat, but a git command
+# the user runs in the checkout does not: with the setting on in their global or system config,
+# that command marks entries assume-unchanged and every later run refuses the checkout.
+def _user_setting_hint(lib_dir: str, flags: list[tuple[str, str]]) -> str:
+    """A sentence naming a global or system core.ignoreStat that explains assume-unchanged
+    flags, or ""."""
+    if not any(flag == "assume-unchanged" for flag, _detail in flags):
+        return ""
+    for scope in ("--global", "--system"):
+        value = _git(["config", scope, "--bool", "core.ignoreStat"], cwd=lib_dir, check=False)
+        if value.returncode == 0 and value.stdout.strip() == "true":
+            return (" core.ignoreStat is true in your " + scope[2:] + " git config, so git commands you run in"
+                    " the checkout mark its files assume-unchanged; unset it there, or leave the checkout"
+                    " to this script.")
+    return ""
 
 def _log_first(lines: list[str], limit: int = 20) -> None: # purecv: P4
     for line in lines[:limit]:
@@ -352,7 +462,8 @@ def _checkout_state(lib_dir: str, commit: str) -> str:
 def cloneRepository(type, url, target_name, revision, try_only_local_operations = False, recursive = True, branch = None):
     target_dir = escapifyPath(os.path.join(SRC_DIR, target_name))
     target_dir_exists = os.path.exists(target_dir)
-    log("Cloning " + url + " to " + target_dir)
+    if type != "git": # purecv: P7 -- for git, "Cloning" is logged only when a clone happens
+        log("Cloning " + url + " to " + target_dir)
 
     if type == "hg":
         repo_exists = os.path.exists(os.path.join(target_dir, ".hg"))
@@ -397,7 +508,8 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
             if not paths: # purecv: P4 -- only hidden edits: there is nothing to move out
                 raise RuntimeError("refusing to trust the checkout " + lib_dir + ": git status cannot see every"
                                    " edit there (" + _flag_names(hidden) + "); rerun with --clean -n " +
-                                   target_name + " to delete the checkout and clone it again")
+                                   target_name + " to delete the checkout and clone it again." +
+                                   _user_setting_hint(lib_dir, hidden)) # purecv: P8
             raise RuntimeError("refusing to touch the dirty checkout " + lib_dir + "; move those files out, or rerun"
                                " with --clean -n " + target_name + " to delete the checkout (and them) and clone it"
                                " again")
@@ -417,12 +529,13 @@ def cloneRepository(type, url, target_name, revision, try_only_local_operations 
         if state == "missing":
             if try_only_local_operations:
                 raise RuntimeError("Repository for " + target_name + " not found; cannot execute local operations only")
-            clone = ["clone"]
-            if recursive:
-                clone.append("--recursive")
-            if branch:
-                clone += ["--branch", branch]
-            _git(clone + ["--", url, lib_dir])
+            # purecv: P7 -- clone without checking anything out, then check out the pinned commit
+            # below. `clone --branch <annotated tag>` warned "refs/tags/<tag> <object> is not a
+            # commit!" (opencv_contrib's 4.10.0). The clone fetches every branch and the tags
+            # that point into them, so the pinned commit is normally there already; otherwise
+            # the fetch below still asks for `branch`. Submodules follow the checkout.
+            log("Cloning " + url + " to " + lib_dir)
+            _git(["clone", "--no-checkout", "--", url, lib_dir])
         else:
             log(target_name + " is " + state + "; moving it to " + revision)
 
@@ -736,16 +849,44 @@ def readJSONData(filename):
     return data
 
 
+_REPLACE_ATTEMPTS = 6 # purecv: P8 -- sleeps of 0.1+0.2+0.4+0.8+1.6 s: about 3 s in all
+_REPLACE_FIRST_DELAY = 0.1 # seconds, doubled after each failed attempt
+
 def writeJSONData(data, filename):
+    """Writes the state cache. Returns True when written, False when the cache file stayed
+    locked (P8); raises on any other failure."""
     # purecv: P6 -- write a new file next to the state cache, then os.replace() it. The rename
     # swaps the directory entry, so the file behind a hard link (or a link planted after main
     # checked) is never written, and a crash never leaves a truncated cache.
     fd, temp_filename = tempfile.mkstemp(prefix=os.path.basename(filename) + ".", suffix=".tmp",
                                          dir=os.path.dirname(os.path.abspath(filename)))
     try:
+        if platform.system() != "Windows": # purecv: P8 -- mkstemp gives 0600; follow the umask
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(temp_filename, 0o666 & ~umask)
         with os.fdopen(fd, 'w') as outfile:
             json.dump(data, outfile)
-        os.replace(temp_filename, filename)
+        # purecv: P8 -- on Windows another process holding the cache open without
+        # FILE_SHARE_DELETE (an editor, an antivirus, an indexer) makes os.replace fail with
+        # WinError 5. Retry briefly; if it stays locked, keep the old cache and carry on: the
+        # cache is an optimisation and is never trusted for git entries (P4).
+        delay = _REPLACE_FIRST_DELAY
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                os.replace(temp_filename, filename)
+                return True
+            except PermissionError as e:
+                if attempt == _REPLACE_ATTEMPTS - 1:
+                    warning("WARNING: could not update the state cache " + filename + " (" + str(e) + "); another"
+                            " program holds it open. Carrying on: the cache is never trusted for git libraries.")
+                    try:
+                        os.remove(temp_filename)
+                    except OSError:
+                        pass
+                    return False
+                time.sleep(delay)
+                delay *= 2
     except BaseException:
         try:
             os.remove(temp_filename)
@@ -883,6 +1024,14 @@ def main(argv):
         printOptions()
         warning("ERROR: unexpected argument(s): " + " ".join(args))
         return 2
+    # purecv: P8 -- -h and --version answer first, even next to an option rejected below.
+    for opt, _arg in opts:
+        if opt in ("-h", "--help"):
+            printOptions()
+            return 0
+        if opt == "--version":
+            print(BOOTSTRAP_VERSION)
+            return 0
     # purecv: P6 -- upstream's fallback and archive options are rejected here, before any write.
     # With --fallback-url (or --force-fallback), a git library that fails, a dirty checkout for
     # example, goes to downloadAndExtractFile, which deletes src/<name> without --clean.
@@ -1015,9 +1164,11 @@ def main(argv):
         paths_to_search = os.environ["PATH"].split(":") + ["/usr/local/bin", "/opt/local/bin", "/usr/bin"]
         TOOL_COMMAND_PYTHON = findToolCommand(TOOL_COMMAND_PYTHON, paths_to_search, required = True)
         TOOL_COMMAND_GIT = findToolCommand(TOOL_COMMAND_GIT, paths_to_search, required = True)
-        TOOL_COMMAND_HG = findToolCommand(TOOL_COMMAND_HG, paths_to_search, required = True)
-        TOOL_COMMAND_SVN = findToolCommand(TOOL_COMMAND_SVN, paths_to_search, required = True)
-        TOOL_COMMAND_PATCH = findToolCommand(TOOL_COMMAND_PATCH, paths_to_search, required = True)
+        # purecv: P7 -- P5 admits pinned git sources only and rejects postprocess patches, so
+        # hg, svn and patch are never run: a missing one is not worth a warning.
+        TOOL_COMMAND_HG = findToolCommand(TOOL_COMMAND_HG, paths_to_search, required = False)
+        TOOL_COMMAND_SVN = findToolCommand(TOOL_COMMAND_SVN, paths_to_search, required = False)
+        TOOL_COMMAND_PATCH = findToolCommand(TOOL_COMMAND_PATCH, paths_to_search, required = False)
         TOOL_COMMAND_TAR = findToolCommand(TOOL_COMMAND_TAR, paths_to_search, required = USE_TAR)
         TOOL_COMMAND_UNZIP = findToolCommand(TOOL_COMMAND_UNZIP, paths_to_search, required = USE_UNZIP)
 
@@ -1113,19 +1264,24 @@ def main(argv):
     sdata = []
     if os.path.exists(state_filename):
         sdata = readJSONData(state_filename)
+        # purecv: P8 -- an unreadable or malformed cache made upstream crash with a TypeError on
+        # sdata=None. It is only an optimisation (never trusted for git, P4): start a new one.
+        if not isinstance(sdata, list) or not all(isinstance(s, dict) for s in sdata):
+            warning("WARNING: ignoring the state cache " + state_filename + ": it is not a JSON array of"
+                    " library entries. It is rewritten after the next library that succeeds.")
+            sdata = []
 
     # create source directory
     if not os.path.isdir(SRC_DIR):
         log("Creating directory " + SRC_DIR)
         os.mkdir(SRC_DIR)
 
-    # create archive files directory
-    if not os.path.isdir(ARCHIVE_DIR):
-        log("Creating directory " + ARCHIVE_DIR)
-        os.mkdir(ARCHIVE_DIR)
+    # purecv: P7 -- archives/ is no longer created up front: P5 admits git sources only, so
+    # nothing is ever archived. downloadFile still creates it on the unreachable archive paths.
 
     failed_libraries = []
     selected_libraries = [] # purecv: P6
+    cache_locked = False # purecv: P8 -- set when a cache write was skipped because of a lock
 
     for library in data:
         name = library.get('name', None)
@@ -1306,7 +1462,8 @@ def main(argv):
             sdata.append(library)
 
             # write out cached state
-            writeJSONData(sdata, state_filename)
+            if not writeJSONData(sdata, state_filename): # purecv: P8 -- the cache stayed locked
+                cache_locked = True
         except urllib.error.URLError as e:
             warning("ERROR: Failure to bootstrap library '" + name + "' (urllib.error.URLError: reason " + str(e.reason) + ")")
             if break_on_first_error:
@@ -1329,7 +1486,13 @@ def main(argv):
         log("Finished")
 
         # touch the state cache file
-        os.utime(state_filename, None);
+        # purecv: P8 -- not when no library wrote it, nor when it stayed locked: the lock that
+        # refused the replacement can refuse the timestamp too, and the run must go on.
+        if os.path.exists(state_filename) and not cache_locked:
+            try:
+                os.utime(state_filename, None);
+            except OSError as e:
+                warning("WARNING: could not touch the state cache " + state_filename + " (" + str(e) + ")")
 
     # purecv: P6 -- verify every selected library; these lines end the output
     verified = [_verify(library, library['name'] in failed_libraries) for library in selected_libraries]

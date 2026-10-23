@@ -90,7 +90,7 @@ async function start() {
         document.getElementById('loader').classList.add('hidden');
 
         // Load the default butterfly image
-        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/master/samples/data/butterfly.jpg');
+        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/4.10.0/samples/data/butterfly.jpg');
 
         setupEventListeners();
         updateSliderLabels();

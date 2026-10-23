@@ -53,10 +53,13 @@ const SCANNED: &[(&str, &str)] = &[
     ("examples", "rs"),
     ("benches", "rs"),
     ("crates/wasm/src", "rs"),
+    ("crates/wasm/www", "js"),
     ("docs/parity", "md"),
 ];
 
-/// URL prefixes after which the next path segment names an OpenCV version.
+/// URL prefixes after which the next path segment names an OpenCV version. Lowercase: a line
+/// is matched case-insensitively, since GitHub and the docs site ignore case in these parts.
+/// `commit/<sha>` links are not listed: a commit is immutable, so it cannot drift.
 const VERSIONED_URLS: &[&str] = &[
     "docs.opencv.org/",
     "github.com/opencv/opencv/blob/",
@@ -67,9 +70,18 @@ const VERSIONED_URLS: &[&str] = &[
     "github.com/opencv/opencv_contrib/tree/",
     "github.com/opencv/opencv_contrib/raw/",
     "github.com/opencv/opencv_contrib/blame/",
+    "github.com/opencv/opencv_extra/blob/",
+    "github.com/opencv/opencv_extra/tree/",
+    "github.com/opencv/opencv_extra/raw/",
+    "github.com/opencv/opencv_extra/blame/",
     "raw.githubusercontent.com/opencv/opencv/",
     "raw.githubusercontent.com/opencv/opencv_contrib/",
+    "raw.githubusercontent.com/opencv/opencv_extra/",
 ];
+
+/// Ref namespaces GitHub accepts in front of a version: `refs/tags/4.10.0` names the same
+/// tree as `4.10.0`. The version is read after them; `refs/heads/4.x` still names `4.x`.
+const REF_PREFIXES: &[&str] = &["refs/tags/", "refs/heads/"];
 
 /// Source-file suffixes that, followed by a digit, form a bare `file.cpp:NN` citation.
 const LINE_CITATIONS: &[&str] = &[".cpp:", ".hpp:", ".h:"];
@@ -78,6 +90,7 @@ const LINE_CITATIONS: &[&str] = &[".cpp:", ".hpp:", ".h:"];
 const CITATION_TARGETS: &[&str] = &[
     "https://github.com/opencv/opencv/blob/",
     "https://github.com/opencv/opencv_contrib/blob/",
+    "https://github.com/opencv/opencv_extra/blob/",
 ];
 
 fn is_segment_byte(b: u8) -> bool {
@@ -107,11 +120,19 @@ fn line_violations(line: &str) -> Vec<String> {
 /// One message per offending OpenCV reference on `line`, which must name `reference`.
 fn line_violations_for(line: &str, reference: &str) -> Vec<String> {
     let bytes = line.as_bytes();
+    // ASCII lowercasing keeps every byte offset, so offsets in `lower` index `line` too.
+    let lower = line.to_ascii_lowercase();
     let mut out = Vec::new();
 
     for prefix in VERSIONED_URLS {
-        for (at, _) in line.match_indices(prefix) {
-            let start = at + prefix.len();
+        for (at, _) in lower.match_indices(prefix) {
+            let mut start = at + prefix.len();
+            if let Some(ns) = REF_PREFIXES
+                .iter()
+                .find(|ns| lower[start..].starts_with(*ns))
+            {
+                start += ns.len();
+            }
             let len = bytes[start..]
                 .iter()
                 .take_while(|&&b| is_segment_byte(b))
@@ -119,7 +140,8 @@ fn line_violations_for(line: &str, reference: &str) -> Vec<String> {
             let segment = &line[start..start + len];
             if segment != reference {
                 out.push(format!(
-                    "`{prefix}{segment}` names `{segment}`, expected `{reference}`"
+                    "`{}` names `{segment}`, expected `{reference}`",
+                    &line[at..start + len]
                 ));
             }
         }
@@ -257,9 +279,13 @@ enum Json {
     Other,
 }
 
-/// A small recursive-descent JSON parser, so the guard needs no crate dependency. Any JSON
-/// that Python's `json` module accepts parses to the same values, except that a `\u` escape
-/// naming a surrogate is an error. It does not reject every input that Python rejects.
+/// A small recursive-descent JSON parser, so the guard needs no crate dependency. It accepts
+/// what Python's `json.loads` accepts (strict mode, the default) and parses it to the same
+/// values: RFC 8259 numbers and literals plus Python's `NaN`, `Infinity` and `-Infinity`; no
+/// raw control characters in strings; `\u` with exactly four hex digits, surrogate pairs
+/// decoded. One difference remains: a lone surrogate escape is an error here, since a Rust
+/// `String` cannot hold it; `bootstrap.py` would load such a file, but no library name, branch
+/// or commit can contain one.
 struct Parser<'a> {
     text: &'a str,
     at: usize,
@@ -303,14 +329,59 @@ impl Parser<'_> {
                 .map(Json::Obj)
             }
             Some(b) if b == b'-' || b.is_ascii_alphanumeric() => {
-                self.at += self.text[self.at..]
-                    .bytes()
-                    .take_while(|&b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
-                    .count();
-                Ok(Json::Other)
+                self.scalar().map(|()| Json::Other)
             }
             _ => Err(format!("expected a value at byte {}", self.at)),
         }
+    }
+
+    /// A number, `true`, `false`, `null`, or Python's `NaN`, `Infinity`, `-Infinity`.
+    fn scalar(&mut self) -> Result<(), String> {
+        let rest = &self.text[self.at..];
+        for literal in ["true", "false", "null", "NaN", "Infinity", "-Infinity"] {
+            if rest.starts_with(literal) {
+                self.at += literal.len();
+                return Ok(());
+            }
+        }
+        // -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+        let b = rest.as_bytes();
+        let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let mut i = usize::from(b.first() == Some(&b'-'));
+        match b.get(i) {
+            Some(b'0') => i += 1,
+            Some(c) if c.is_ascii_digit() => i += digits(i),
+            _ => return Err(format!("invalid number at byte {}", self.at)),
+        }
+        if b.get(i) == Some(&b'.') {
+            let n = digits(i + 1);
+            if n == 0 {
+                return Err(format!("invalid number at byte {}", self.at));
+            }
+            i += 1 + n;
+        }
+        if matches!(b.get(i), Some(b'e' | b'E')) {
+            i += 1;
+            if matches!(b.get(i), Some(b'+' | b'-')) {
+                i += 1;
+            }
+            let n = digits(i);
+            if n == 0 {
+                return Err(format!("invalid number at byte {}", self.at));
+            }
+            i += n;
+        }
+        self.at += i;
+        Ok(())
+    }
+
+    /// The four hex digits of a `\u` escape, from `chars`.
+    fn hex4(chars: &mut std::str::CharIndices<'_>) -> Result<u32, String> {
+        let hex: String = chars.by_ref().take(4).map(|(_, h)| h).collect();
+        if hex.len() != 4 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(format!("invalid escape `\\u{hex}`"));
+        }
+        u32::from_str_radix(&hex, 16).map_err(|e| e.to_string())
     }
 
     /// The comma-separated items after an opening bracket, through the closing `close`.
@@ -369,14 +440,26 @@ impl Parser<'_> {
                         'r' => '\r',
                         't' => '\t',
                         'u' => {
-                            let hex: String = chars.by_ref().take(4).map(|(_, h)| h).collect();
-                            u32::from_str_radix(&hex, 16)
-                                .ok()
-                                .and_then(char::from_u32)
-                                .ok_or_else(|| format!("unsupported escape `\\u{hex}`"))?
+                            let mut code = Self::hex4(&mut chars)?;
+                            if (0xD800..0xDC00).contains(&code) {
+                                // a high surrogate: decode the pair, as Python does
+                                let low = match (chars.next(), chars.next()) {
+                                    (Some((_, '\\')), Some((_, 'u'))) => Self::hex4(&mut chars)?,
+                                    _ => return Err(format!("lone surrogate `\\u{code:04x}`")),
+                                };
+                                if !(0xDC00..0xE000).contains(&low) {
+                                    return Err(format!("lone surrogate `\\u{code:04x}`"));
+                                }
+                                code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                            }
+                            char::from_u32(code)
+                                .ok_or_else(|| format!("lone surrogate `\\u{code:04x}`"))?
                         }
                         _ => return Err(format!("invalid escape `\\{e}`")),
                     });
+                }
+                c if c < ' ' => {
+                    return Err(format!("raw control character {c:?} in a string"));
                 }
                 _ => out.push(c),
             }
@@ -512,9 +595,65 @@ fn line_violations_detects_drift() {
         ("https://raw.githubusercontent.com/opencv/opencv/4.x/modules/imgproc/src/color.cpp", 1),
         ("https://raw.githubusercontent.com/opencv/opencv_contrib/4.10.0/modules/xfeatures2d/src/sift.cpp", 0),
         ("https://raw.githubusercontent.com/opencv/opencv_contrib/master/modules/xfeatures2d/src/sift.cpp", 1),
+        // #171, item 6: the refs/tags form names the same tree; refs/heads/<branch> drifts.
+        ("https://raw.githubusercontent.com/opencv/opencv/refs/tags/4.10.0/samples/data/butterfly.jpg", 0),
+        ("https://github.com/opencv/opencv/raw/refs/tags/4.10.0/samples/data/butterfly.jpg", 0),
+        ("https://github.com/opencv/opencv/blob/refs/tags/4.13.0/modules/core/src/arithm.cpp", 1),
+        ("https://raw.githubusercontent.com/opencv/opencv/refs/heads/4.x/samples/data/butterfly.jpg", 1),
+        // #171, item 7: host and owner match whatever their case; opencv_extra is covered.
+        ("https://GitHub.com/OpenCV/opencv/blob/master/modules/core/src/arithm.cpp", 1),
+        ("https://Docs.OpenCV.org/4.x/d4/dee/tutorial_optical_flow.html", 1),
+        ("https://GitHub.com/OpenCV/opencv/blob/4.10.0/modules/core/src/arithm.cpp", 0),
+        ("https://github.com/opencv/opencv_extra/blob/4.10.0/testdata/cv/shared/lena.png", 0),
+        ("https://raw.githubusercontent.com/opencv/opencv_extra/master/testdata/cv/shared/lena.png", 1),
+        ("[`gen_data.cpp:12`](https://github.com/opencv/opencv_extra/blob/4.10.0/testdata/gen_data.cpp#L12)", 0),
+        // commit links are immutable, so they are not version-checked
+        ("https://github.com/opencv/opencv/commit/71d3237a093b60a27601c20e9ee6c3e52154e8b1", 0),
     ];
     for (line, expected) in cases {
         assert_eq!(line_violations(line).len(), *expected, "line: {line}");
+    }
+}
+
+#[test]
+fn parse_json_matches_python_strict_mode() {
+    // #171, item 9: what Python's json.loads accepts, and with the same values.
+    let accepted: &[(&str, &str)] = &[
+        (
+            r#"[0, -0, 12, 1.5, -2e3, 1E+2, 3.25e-1, true, false, null, NaN, Infinity, -Infinity]"#,
+            "",
+        ),
+        (r#""a\"b\\c\/d\b\f\n\r\t""#, "a\"b\\c/d\u{8}\u{c}\n\r\t"),
+        (r#""\u0041\u00e9""#, "A\u{e9}"),
+        (r#""\ud83d\ude00""#, "\u{1F600}"), // a surrogate pair, as Python decodes it
+    ];
+    for (text, decoded) in accepted {
+        match parse_json(text) {
+            Ok(Json::Str(s)) => assert_eq!(s, *decoded, "{text}"),
+            Ok(_) => assert!(decoded.is_empty(), "{text}"),
+            Err(e) => panic!("{text}: {e}"),
+        }
+    }
+    let rejected: &[&str] = &[
+        "01",
+        "[01]",
+        "1.",
+        ".5",
+        "1e",
+        "+1",
+        "tru",
+        "nan",
+        "[1,]",
+        "\"a\nb\"",      // raw control character
+        "\"tab\there\"", // raw tab
+        r#""\u+041""#,   // not four hex digits
+        r#""\u004""#,
+        r#""\ud83d""#,       // lone high surrogate
+        r#""\ude00""#,       // lone low surrogate
+        r#""\ud83d\u0041""#, // a high surrogate followed by a non-surrogate
+    ];
+    for text in rejected {
+        assert!(parse_json(text).is_err(), "accepted: {text}");
     }
 }
 

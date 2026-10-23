@@ -54,7 +54,7 @@ async function start() {
         cv = await initWasm();
         document.getElementById('loader').classList.add('hidden');
 
-        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/master/samples/data/smarties.png');
+        sourceImage = await loadImage('https://raw.githubusercontent.com/opencv/opencv/4.10.0/samples/data/smarties.png');
         processImage();
     } catch (err) {
         console.error("WASM Initialization failed:", err);

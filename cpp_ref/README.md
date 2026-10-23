@@ -81,10 +81,10 @@ What a run does with each checkout:
 
 | State | Meaning | Action |
 |---|---|---|
-| `missing` | absent or empty | `git clone --branch 4.10.0`, then `git checkout --detach <commit>` |
+| `missing` | absent or empty | `git clone --no-checkout`, then `git checkout --detach <commit>` |
 | `ok` | at the pinned commit, clean | nothing |
 | `drifted` | clean, at another commit | fetch if the commit is not present, then `git checkout --detach <commit>` |
-| `dirty` | modified, untracked or ignored files, or index flags or a sparse checkout that hide edits from `git status` | **refuses** and lists them |
+| `dirty` | modified, untracked or ignored files, or index flags, a sparse checkout, a configured filter or an ignored executable bit that hide edits from `git status` | **refuses** and lists them |
 | `corrupt` | not empty, but not a git checkout of its own: a symlink or junction, a checkout whose `.git` is a file (a `git worktree` of another repository), or a broken repository | **refuses** |
 
 A checkout is "its own" only when `cpp_ref/src/<name>` is a real directory (not a link) at
@@ -96,16 +96,36 @@ git directory.
 before writing anything (exit code 2), with or without `--clean`. Remove the link by hand.
 
 A clean `git status` proves nothing while git is told not to look. So a checkout is also
-`dirty` when an index entry is marked assume-unchanged or skip-worktree
-(`git update-index --assume-unchanged` / `--skip-worktree`, shown by `git ls-files -v` as a
-lowercase tag or `S`), or when sparse checkout is on (`core.sparseCheckout` is true, or
-`.git/info/sparse-checkout` exists). The refusal names the flag; rerun with
-`--clean -n <name>` to clone the library again.
+`dirty` when:
+
+- an index entry is marked assume-unchanged or skip-worktree
+  (`git update-index --assume-unchanged` / `--skip-worktree`, shown by `git ls-files -v` as a
+  lowercase tag or `S`);
+- sparse checkout is on: `core.sparseCheckout` is true in the checkout's own config. A
+  `.git/info/sparse-checkout` file left behind by `git sparse-checkout disable` does nothing
+  and is accepted;
+- a tracked file has a `filter` attribute whose driver (`filter.<name>.clean`, `.smudge` or
+  `.process`) is configured, so `git status` compares filtered content;
+- on Linux and macOS, `core.fileMode` is false on a filesystem that keeps the executable bit.
+
+The refusal names the flag; rerun with `--clean -n <name>` to clone the library again.
+
+The bootstrap's own git commands also ignore settings that would hide an edit or spoil a fresh
+clone: they run with `--no-replace-objects` (a replace ref cannot pass an edited tree off as
+the pinned commit) and with `core.fsmonitor`, `core.ignoreStat` and `core.sparseCheckout`
+forced off, so an fsmonitor hook cannot report "nothing changed", and a `core.ignoreStat` or
+`core.sparseCheckout` in your global config no longer makes every clone `dirty`. Git commands
+you run yourself in the checkout do use your config: with `core.ignoreStat` on globally they
+mark files assume-unchanged, and the refusal then names that setting.
 
 The state cache `cpp_ref/.libraries.json` must be a regular file. If it is a symlink or
 junction, the run refuses before reading it or writing anything (exit code 2); remove the link
 by hand, and the next run rebuilds the cache. The cache is written to a new file that then
-replaces it, so if the old cache was a hard link, the file it shared keeps its bytes.
+replaces it, so if the old cache was a hard link, the file it shared keeps its bytes. If
+another program holds the cache open on Windows (an editor, an antivirus), the replacement is
+retried for about three seconds (six attempts) and then skipped with a warning; the run goes on, since the
+cache is never trusted for git libraries. A cache that is not a JSON array of entries is
+ignored with a warning and rewritten.
 
 "Clean" includes ignored files: a build inside `src/opencv` makes it dirty. `--clean` deletes
 the checkout (and everything in it) and clones it again; use it only on purpose, and name the
@@ -243,9 +263,11 @@ follow, each hunk tagged `# purecv: Pn`:
 | P3 | `_rmtree` deletes read-only files too (Git for Windows object files), so `--clean` works on Windows. It never deletes or chmods through a symlink or junction, and `--clean` on a link fails. |
 | P4 | git runs without a shell, with `GIT_DIR` and the other repository-local variables removed and discovery stopped at `cpp_ref/src`. A checkout is classified (table above) instead of being reset and cleaned; links and gitfile checkouts are `corrupt`; assume-unchanged or skip-worktree entries and sparse checkouts make it `dirty`; the state cache is never trusted for git entries. |
 | P5 | Every entry is validated before any action: safe `name` (letters, digits, `_`, `.`, `-`; no leading or trailing `.`), a `git` source (archive, hg, svn and source-less entries are rejected) with a 40-hex `commit`, a safe `branch`; `predicate` and `postprocess` are rejected. |
-| P6 | Bad options and unknown `-n` names exit 2. The upstream fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots`, and the archive options `--use-tar` and `--use-unzip`, are rejected with exit code 2 before any write; their code paths stay but are unreachable. A later `-b` no longer replaces an explicit `--bootstrap-file`. A linked state cache is refused with exit code 2 before it is read, and the cache is written atomically (new file, then rename). Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. Version `1.0.7 (2025) purecv-1`. |
+| P6 | Bad options and unknown `-n` names exit 2. The upstream fallback options `--fallback-url`, `--force-fallback` and `--repo-snapshots`, and the archive options `--use-tar` and `--use-unzip`, are rejected with exit code 2 before any write; their code paths stay but are unreachable. A later `-b` no longer replaces an explicit `--bootstrap-file`. A linked state cache is refused with exit code 2 before it is read, and the cache is written atomically (new file, then rename). Ctrl-C aborts the run; a final verify pass prints the `verify` lines and sets the exit code. |
+| P7 | Quiet successful runs (#170): no scp warning at import, "Cloning" only when a clone happens, `git clone --no-checkout` instead of `--branch <annotated tag>` (which warned "is not a commit"), no detached-HEAD advice, no `archives/` created up front, and on Linux/macOS no warning for hg, svn or patch, which a git-only run never uses. |
+| P8 | Robustness (#171): git runs with `--no-replace-objects` and `core.fsmonitor`, `core.ignoreStat` and `core.sparseCheckout` forced off; sparse checkout is read from the checkout's own config only; configured filters and an ignored executable bit make a checkout `dirty`; a locked state cache is retried, then skipped with a warning; the cache follows the umask; an unreadable cache is ignored; `-h` and `--version` answer even next to a rejected option; no crash when no library writes the cache. Version `1.0.7 (2025) purecv-2`. |
 
-P1 to P4 are generic and can be offered upstream.
+P1 to P4, P7 and P8 are generic and can be offered upstream.
 
 Tests: `python -m unittest discover -s cpp_ref -p "test_*.py" -v` (`py -3 -m unittest …` on
 Windows). They build throwaway repositories in a temporary directory and never touch
