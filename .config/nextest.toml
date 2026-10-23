@@ -1,0 +1,12 @@
+# nextest configuration. Only the Miri profile is customised: nextest selects
+# `default-miri` automatically when it runs under `cargo miri nextest run`
+# (.github/workflows/miri.yml), and plain `cargo nextest run` is unaffected.
+
+[profile.default-miri]
+# Under interpretation a single pathological test can eat the whole CI budget
+# (#182: test_clahe_u16 alone took ~16 min). Report a test as slow after 2 min
+# and kill it after 5 such periods (10 min), so the job fails naming the test
+# instead of being cancelled at the job timeout with no culprit. Anything that
+# legitimately needs this long belongs in the exclusion table of
+# .agents/MIRI_PLAN.md §4.
+slow-timeout = { period = "120s", terminate-after = 5 }

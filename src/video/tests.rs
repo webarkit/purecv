@@ -454,10 +454,13 @@ mod video_tests {
     /// it against `err[0]` (min eigenvalue) reported via
     /// OPTFLOW_LK_GET_MIN_EIGENVALS. purecv#130: pins the Scharr operator;
     /// this test failed against the pre-fix Sobel implementation.
-    // Not Miri-ignored: measured at ~18s under Miri (std,simd), under the
-    // >30s exclusion threshold in .agents/MIRI_PLAN.md §4, despite
-    // exercising the same unsafe Scharr fast path as
-    // test_build_pyramid_with_derivatives.
+    // miri: Lucas-Kanade pyramidal iteration (#182) on three 64x64 runs: ~55s (std) /
+    // ~17s (std,simd) under interpretation, over the >30s threshold in
+    // .agents/MIRI_PLAN.md §4 since #167.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_calc_optical_flow_pyramid_lk_uses_scharr_derivatives() {
         // Same textured frame as the module's doc example: an 8x8 bright
@@ -808,6 +811,12 @@ mod video_tests {
     /// `minEig < minEigThreshold || D < FLT_EPSILON` branch) only clears
     /// `status` when the failing level is 0; at coarser levels it skips
     /// refinement for that level and continues to the finer ones.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~51s (std) / ~17s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_coarse_level_degeneracy_does_not_lose_point() {
         let img = full_resolution_only_texture();
@@ -849,6 +858,12 @@ mod video_tests {
     /// starts at u = 3 and returns x = 35; if the estimate is dropped or
     /// reset, it starts at u = 0 and returns x = 32. This doesn't depend on
     /// the Newton step size or iteration count.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~51s (std) / ~17s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_coarse_level_degeneracy_keeps_propagated_flow() {
         let img = full_resolution_only_texture();
@@ -918,6 +933,12 @@ mod video_tests {
     ///
     /// The old integer half-window sampled `2*(n/2)+1` pixels, i.e. 11 for
     /// n = 10 and 7 for n = 6, giving 120/3072 and 48/3072 instead.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~36s (std) / ~16s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_min_eigen_uses_exact_win_size_samples() {
         let img = quadratic_bowl();
@@ -961,6 +982,12 @@ mod video_tests {
     /// `10 * mean(|dx|)`: `(W^2 - 1) / (4W)` for odd W, `W / 4` for even W
     /// (bilinear interpolation of `|x - 16|` is exact at half-integers).
     /// The old 11-sample window for W = 10 gave 300/11 = 27.27 instead of 25.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~37s (std) / ~17s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_tracking_error_uses_exact_win_size_samples() {
         let prev = quadratic_bowl();
@@ -1114,6 +1141,12 @@ mod video_tests {
     /// 1e-4), a known sub-pixel translation of a smooth texture must be
     /// recovered to within 0.02 px. Before the fix each Newton step was
     /// 1/32 of the true step, so a 1 px shift came out as ~0.7 px.
+    // miri: Lucas-Kanade pyramidal iteration (#182) on a 21x21 window at OpenCV
+    // defaults: ~245s (std) / ~87s (std,simd) under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_recovers_subpixel_shift_with_opencv_defaults() {
         let (sx, sy) = (0.6f32, -0.4f32);
@@ -1343,6 +1376,12 @@ mod video_tests {
 
     /// Extreme caller coordinates must be marked lost before any window samples
     /// are read, including the SIMD path that gathers intensities eagerly.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~49s (std) / ~19s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_extreme_template_coordinates_are_lost() {
         let image = quadratic_bowl();
@@ -1382,6 +1421,12 @@ mod video_tests {
     }
 
     /// An invalid initial estimate must not reach sampling or report success.
+    // miri: Lucas-Kanade pyramidal iteration (#182): ~65s (std) / ~33s (std,simd)
+    // under interpretation.
+    // No `unsafe` under std; under simd the Scharr fast path it reaches
+    // (fast_deriv_3x3) stays covered by imgproc::tests::test_scharr and
+    // test_lk_min_eigen_matches_opencv_scale.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_extreme_initial_flow_coordinates_are_lost() {
         let image = quadratic_bowl();
@@ -1534,7 +1579,9 @@ mod video_tests {
         }
     }
 
-    // Many combinations of pyramid construction and tracking; too slow under Miri.
+    // miri: many combinations of pyramid construction and tracking; too slow
+    // under interpretation (#167). No `unsafe` under std; the simd Scharr fast
+    // path stays covered by imgproc::tests::test_scharr.
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lk_prebuilt_matches_raw_borders_small_images_and_flags() {
@@ -1593,7 +1640,7 @@ mod video_tests {
         }
     }
 
-    // Miri: Repeated raw/prebuilt tracking rebuilds pyramids across depth combinations.
+    // miri: Repeated raw/prebuilt tracking rebuilds pyramids across depth combinations.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -1948,7 +1995,7 @@ mod video_tests {
     // allowed padding. Thus these fixtures do not depend on extra gradients
     // or the enlarged search bounds of the explicitly padded reference images.
 
-    // Miri: Twelve border/derivative combinations repeatedly build and sample pyramids.
+    // miri: Twelve border/derivative combinations repeatedly build and sample pyramids.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -2009,7 +2056,7 @@ mod video_tests {
         }
     }
 
-    // Miri: Multiple border fixtures exercise full preprocessing and numerical LK steps.
+    // miri: Multiple border fixtures exercise full preprocessing and numerical LK steps.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -2089,7 +2136,7 @@ mod video_tests {
         }
     }
 
-    // Miri: Ten border combinations rebuild image and Scharr pyramids for numeric comparisons.
+    // miri: Ten border combinations rebuild image and Scharr pyramids for numeric comparisons.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -2344,7 +2391,7 @@ mod video_tests {
     // (17*x + 13*y + 3*x*y) % 251, shifted right by one with replicated x=0.
     // Source: https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L183-L722
     // and https://github.com/opencv/opencv/blob/4.10.0/modules/video/src/lkpyramid.cpp#L1364-L1372
-    // Miri: Many termination fixtures run raw, image-only, and derivative-pyramid LK paths.
+    // miri: Many termination fixtures run raw, image-only, and derivative-pyramid LK paths.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -2516,7 +2563,7 @@ mod video_tests {
         }
     }
 
-    // Miri: Window, depth, iteration, and error-mode combinations repeat numerical tracking.
+    // miri: Window, depth, iteration, and error-mode combinations repeat numerical tracking.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]
@@ -2690,7 +2737,7 @@ mod video_tests {
     /// derivatives as short before mismatch accumulation. A residual weight
     /// of -1 can put a custom i16 derivative just beyond the short limit.
     /// Measured with the same C++ build as the other numeric references.
-    // Miri: Six numerical fixtures exercise custom derivatives and repeated LK iterations.
+    // miri: Six numerical fixtures exercise custom derivatives and repeated LK iterations.
     // Keep this numeric regression in ordinary tests; small validation, borrowing,
     // sampler-boundary tests and imgproc::test_scharr retain Miri coverage.
     #[cfg_attr(miri, ignore)]

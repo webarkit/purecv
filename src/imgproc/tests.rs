@@ -1718,6 +1718,11 @@ mod imgproc_tests {
         assert_eq!(dst.data.len(), 256);
     }
 
+    // miri: CLAHE on u16 builds 65536-bin histograms and LUTs per tile: ~707s (std)
+    // and ~952s (std,simd) under interpretation, over half of each Miri leg
+    // (#182). No `unsafe` on either leg: histogram.rs calls neither arithm
+    // nor the derivative kernels, and its only simd path is compare_hist.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_clahe_u16() {
         let data: Vec<u16> = (0..=1023).collect();
