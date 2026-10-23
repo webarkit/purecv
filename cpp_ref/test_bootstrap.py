@@ -571,6 +571,45 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assertEqual(self.read(readme), b"edited reference code\n")
         self.assertIn("README.txt", result.stdout, _output(result))
 
+    @unittest.skipIf(os.name == "nt", "the executable bit is POSIX-only")
+    def test_ignored_executable_bit_is_refused(self) -> None:
+        # With core.fileMode false, `git status` ignores a chmod. On a filesystem that keeps
+        # the bit, that hides an edit (#171, item 4).
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        readme = os.path.join(self.managed, "README.txt")
+        os.chmod(readme, 0o755)
+        if not os.stat(readme).st_mode & stat.S_IXUSR:
+            self.skipTest("this filesystem does not keep the executable bit")
+        self.assertIn("README.txt", self.git(self.managed, "status", "--porcelain"))
+        self.git(self.managed, "config", "core.fileMode", "false")
+        self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+        before = self.repo_snapshot(self.managed)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_hidden_edits_refused(result, "core.fileMode", before)
+        self.assertTrue(os.stat(readme).st_mode & stat.S_IXUSR)
+
+    @unittest.skipUnless(os.name == "nt", "a reader that blocks os.replace is a Windows lock")
+    def test_locked_state_cache_does_not_fail_the_run(self) -> None:
+        # Another program holding the cache open makes os.replace fail with WinError 5 on every
+        # attempt; the run keeps the old cache and still succeeds (#171, item 1). The final
+        # touch of the cache is skipped too, since the same lock can refuse it.
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+        cache = self.read(state_cache)
+
+        with open(state_cache, "rb"):
+            result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assertIn("could not update the state cache", result.stdout, _output(result))
+        self.assertTrue(result.stdout.rstrip().endswith(f"verify opencv @ {self.c1} OK"), _output(result))
+        self.assertEqual(self.read(state_cache), cache)
+        self.assertEqual(
+            sorted(os.listdir(self.cpp_ref)), [".libraries.json", "bootstrap.py", "libraries.json", "src"]
+        )
+
     def test_configured_filter_is_refused(self) -> None:
         # A clean filter makes `git status` compare filtered content: with this one, any edit
         # to README.txt looks clean (#171, item 4). An attribute without a driver is harmless.
@@ -857,6 +896,32 @@ class BootstrapModuleTest(unittest.TestCase):
         _module, printed = self.load()
 
         self.assertNotIn("paramiko", printed)
+
+    def test_only_git_is_a_required_tool(self) -> None:
+        # On Linux and macOS, main looks the tools up; hg, svn and patch are never used by a
+        # git-only run, so a missing one must not warn (#170, item 6). Deterministic whatever
+        # the runner has installed: the lookups are recorded, not performed.
+        module, _ = self.load()
+        directory = tempfile.mkdtemp(prefix="purecv-bootstrap-tools-")
+        self.addCleanup(_force_rmtree, directory)
+        libraries = os.path.join(directory, "libraries.json")
+        with open(libraries, "w") as f:
+            json.dump([{"name": "opencv", "source": {"type": "git", "url": "x", "commit": "a" * 40}}], f)
+        lookups = {}
+
+        def record(command, _paths, required=False):
+            lookups[os.path.basename(str(command)).strip('"')] = required
+            return command
+
+        with mock.patch.object(module, "findToolCommand", record), \
+                mock.patch.object(module.platform, "system", return_value="Linux"), \
+                mock.patch.dict(os.environ, {"PATH": "/nonexistent"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(module.main(["--list", "--bootstrap-file", libraries]), 0)
+
+        self.assertEqual(lookups.get("git"), True, lookups)
+        for tool in ("hg", "svn", "patch"):
+            self.assertIs(lookups.get(tool), False, lookups)
 
     def cache_path(self) -> str:
         directory = tempfile.mkdtemp(prefix="purecv-bootstrap-cache-")

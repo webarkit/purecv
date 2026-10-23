@@ -90,6 +90,7 @@ const LINE_CITATIONS: &[&str] = &[".cpp:", ".hpp:", ".h:"];
 const CITATION_TARGETS: &[&str] = &[
     "https://github.com/opencv/opencv/blob/",
     "https://github.com/opencv/opencv_contrib/blob/",
+    "https://github.com/opencv/opencv_extra/blob/",
 ];
 
 fn is_segment_byte(b: u8) -> bool {
@@ -605,6 +606,7 @@ fn line_violations_detects_drift() {
         ("https://GitHub.com/OpenCV/opencv/blob/4.10.0/modules/core/src/arithm.cpp", 0),
         ("https://github.com/opencv/opencv_extra/blob/4.10.0/testdata/cv/shared/lena.png", 0),
         ("https://raw.githubusercontent.com/opencv/opencv_extra/master/testdata/cv/shared/lena.png", 1),
+        ("[`gen_data.cpp:12`](https://github.com/opencv/opencv_extra/blob/4.10.0/testdata/gen_data.cpp#L12)", 0),
         // commit links are immutable, so they are not version-checked
         ("https://github.com/opencv/opencv/commit/71d3237a093b60a27601c20e9ee6c3e52154e8b1", 0),
     ];

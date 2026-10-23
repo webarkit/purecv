@@ -849,7 +849,7 @@ def readJSONData(filename):
     return data
 
 
-_REPLACE_ATTEMPTS = 5 # purecv: P8
+_REPLACE_ATTEMPTS = 6 # purecv: P8 -- sleeps of 0.1+0.2+0.4+0.8+1.6 s: about 3 s in all
 _REPLACE_FIRST_DELAY = 0.1 # seconds, doubled after each failed attempt
 
 def writeJSONData(data, filename):
@@ -1281,6 +1281,7 @@ def main(argv):
 
     failed_libraries = []
     selected_libraries = [] # purecv: P6
+    cache_locked = False # purecv: P8 -- set when a cache write was skipped because of a lock
 
     for library in data:
         name = library.get('name', None)
@@ -1461,7 +1462,8 @@ def main(argv):
             sdata.append(library)
 
             # write out cached state
-            writeJSONData(sdata, state_filename)
+            if not writeJSONData(sdata, state_filename): # purecv: P8 -- the cache stayed locked
+                cache_locked = True
         except urllib.error.URLError as e:
             warning("ERROR: Failure to bootstrap library '" + name + "' (urllib.error.URLError: reason " + str(e.reason) + ")")
             if break_on_first_error:
@@ -1484,8 +1486,13 @@ def main(argv):
         log("Finished")
 
         # touch the state cache file
-        if os.path.exists(state_filename): # purecv: P8 -- absent when no library was written
-            os.utime(state_filename, None);
+        # purecv: P8 -- not when no library wrote it, nor when it stayed locked: the lock that
+        # refused the replacement can refuse the timestamp too, and the run must go on.
+        if os.path.exists(state_filename) and not cache_locked:
+            try:
+                os.utime(state_filename, None);
+            except OSError as e:
+                warning("WARNING: could not touch the state cache " + state_filename + " (" + str(e) + ")")
 
     # purecv: P6 -- verify every selected library; these lines end the output
     verified = [_verify(library, library['name'] in failed_libraries) for library in selected_libraries]

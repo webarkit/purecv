@@ -123,7 +123,7 @@ junction, the run refuses before reading it or writing anything (exit code 2); r
 by hand, and the next run rebuilds the cache. The cache is written to a new file that then
 replaces it, so if the old cache was a hard link, the file it shared keeps its bytes. If
 another program holds the cache open on Windows (an editor, an antivirus), the replacement is
-retried for about three seconds and then skipped with a warning; the run goes on, since the
+retried for about three seconds (six attempts) and then skipped with a warning; the run goes on, since the
 cache is never trusted for git libraries. A cache that is not a JSON array of entries is
 ignored with a warning and rewritten.
 
