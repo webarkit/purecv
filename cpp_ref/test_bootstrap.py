@@ -363,6 +363,71 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assert_ok(result)
         self.assertEqual(self.head(self.managed), c3)
 
+    # The lines #170 removed from a successful run; none of them reports a problem.
+    NOISE = (
+        "paramiko",  # module-level scp warning
+        "is not a commit",  # `clone --branch <annotated tag>`
+        "detached HEAD",  # git's advice block on `checkout --detach`
+        "archives",  # an archives/ directory created on every run
+        "not found, but required",  # hg/svn/patch looked up on Linux
+    )
+
+    def assert_no_noise(self, result: subprocess.CompletedProcess) -> None:
+        for noise in self.NOISE:
+            with self.subTest(noise=noise):
+                self.assertNotIn(noise, result.stdout + result.stderr, _output(result))
+
+    def test_successful_runs_print_no_noise(self) -> None:
+        # A fresh clone: "Cloning" once, then the verify line, and none of the noise.
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assert_no_noise(result)
+        self.assertEqual(result.stdout.count("Cloning "), 1, _output(result))
+        self.assertTrue(result.stdout.rstrip().endswith(f"verify opencv @ {self.c1} OK"), _output(result))
+        self.assertFalse(os.path.exists(os.path.join(self.cpp_ref, "archives")))
+
+        # A drifted checkout is moved, not cloned: no "Cloning" line (#170, item 2).
+        self.git(self.managed, "checkout", "-q", self.c2)
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assert_no_noise(result)
+        self.assertNotIn("Cloning", result.stdout, _output(result))
+        self.assertIn("opencv is drifted; moving it to " + self.c1, result.stdout, _output(result))
+        self.assertEqual(self.head(self.managed), self.c1)
+
+    def test_help_and_version_win_over_rejected_options(self) -> None:
+        # -h and --version answer even next to an option that is otherwise rejected (#171, 5).
+        for answer, expected in (("-h", "Options:"), ("--version", "purecv-2")):
+            with self.subTest(answer=answer):
+                result = self.run_bootstrap("--use-tar", answer, cwd=self.cpp_ref)
+
+                self.assert_ok(result)
+                self.assertIn(expected, result.stdout, _output(result))
+                self.assertFalse(os.path.exists(os.path.join(self.cpp_ref, "src")))
+
+    def test_unreadable_state_cache_is_replaced(self) -> None:
+        # Upstream crashed with a TypeError on a cache that is not a JSON array (#171, 5).
+        state_cache = os.path.join(self.cpp_ref, ".libraries.json")
+        for content in (b"{not json", b'{"name": "opencv"}\n', b"[1, 2]\n"):
+            with self.subTest(content=content):
+                self.write(state_cache, content)
+
+                result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+                self.assert_ok(result)
+                self.assertIn(f"verify opencv @ {self.c1} OK", result.stdout, _output(result))
+                self.assertIn(self.entry(), json.loads(self.read(state_cache)))
+
+    def test_run_that_writes_no_cache_does_not_crash(self) -> None:
+        # Upstream touched the state cache at the end even when no library wrote it (#171, 5).
+        result = self.run_bootstrap("--skip", "opencv", *FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assertNotIn("Traceback", result.stdout + result.stderr, _output(result))
+        self.assertFalse(os.path.exists(os.path.join(self.cpp_ref, ".libraries.json")))
+
     def test_dirty_checkout_is_refused(self) -> None:
         self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
         build = os.path.join(self.managed, "out", "build.bin")
@@ -418,29 +483,108 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assertEqual(self.git(self.managed, "ls-files", "-v", "README.txt"), "S README.txt")
 
     def test_sparse_checkout_is_refused(self) -> None:
-        # A sparse checkout leaves files out of the worktree and out of `git status`. Either
-        # sign of one is refused: the config switch, or a sparse-checkout file left behind.
-        for switch in ("core.sparseCheckout", "info/sparse-checkout"):
-            with self.subTest(switch=switch):
+        # A sparse checkout leaves files out of the worktree and out of `git status`. The
+        # checkout's own core.sparseCheckout turns it on.
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        self.git(self.managed, "config", "core.sparseCheckout", "true")
+        self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+        before = self.repo_snapshot(self.managed)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_hidden_edits_refused(result, "sparse checkout", before)
+        self.assertIn("core.sparseCheckout", result.stdout, _output(result))
+        self.assertEqual(self.read(os.path.join(self.managed, "README.txt")), b"C1\n")
+        self.assertEqual(self.git(self.managed, "config", "core.sparseCheckout"), "true")
+
+    def test_leftover_sparse_checkout_file_is_accepted(self) -> None:
+        # `git sparse-checkout disable` sets core.sparseCheckout to false and leaves
+        # .git/info/sparse-checkout behind. The full tree is there and clean (#171, item 2).
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        sparse_file = os.path.join(self.managed, ".git", "info", "sparse-checkout")
+        self.write(sparse_file, "/*\n")
+        self.git(self.managed, "config", "core.sparseCheckout", "false")
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_ok(result)
+        self.assertIn(f"verify opencv @ {self.c1} OK", result.stdout, _output(result))
+        self.assertEqual(self.read(sparse_file), b"/*\n")
+
+    def test_user_config_does_not_make_fresh_clones_dirty(self) -> None:
+        # core.sparseCheckout or core.ignoreStat in the user's global config made every fresh
+        # clone sparse or assume-unchanged, so every run was refused and --clean looped
+        # (#171, item 3). The bootstrap's own git commands override both.
+        for setting in ("core.sparseCheckout", "core.ignoreStat"):
+            with self.subTest(setting=setting):
                 self.make_sandbox()
-                self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
-                sparse_file = os.path.join(self.managed, ".git", "info", "sparse-checkout")
-                if switch == "core.sparseCheckout":
-                    self.git(self.managed, "config", "core.sparseCheckout", "true")
-                else:
-                    self.write(sparse_file, "/*\n")
-                self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
-                before = self.repo_snapshot(self.managed)
+                global_config = os.path.join(self.root, "user.gitconfig")
+                self.write(global_config, f"[core]\n\t{setting.split('.')[1]} = true\n")
 
-                result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+                result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref,
+                                            extra_env={"GIT_CONFIG_GLOBAL": global_config})
 
-                self.assert_hidden_edits_refused(result, "sparse checkout", before)
-                self.assertIn(switch, result.stdout, _output(result))
+                self.assert_ok(result)
+                self.assertIn(f"verify opencv @ {self.c1} OK", result.stdout, _output(result))
                 self.assertEqual(self.read(os.path.join(self.managed, "README.txt")), b"C1\n")
-                if switch == "core.sparseCheckout":
-                    self.assertEqual(self.git(self.managed, "config", "core.sparseCheckout"), "true")
-                else:
-                    self.assertEqual(self.read(sparse_file), b"/*\n")
+                self.assertEqual(self.git(self.managed, "ls-files", "-v", "README.txt"), "H README.txt")
+
+    def test_replace_ref_cannot_pass_an_edit_off_as_the_pin(self) -> None:
+        # `git replace <pin> <edited commit>` keeps HEAD's SHA equal to the pin while the tree
+        # is the edited one, so `git status` is clean (#171, item 4).
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        readme = os.path.join(self.managed, "README.txt")
+        self.write(readme, "edited reference code\n")
+        self.git(self.managed, "commit", "-q", "-am", "edited")
+        edited = self.git(self.managed, "rev-parse", "HEAD")
+        self.git(self.managed, "replace", self.c1, edited)
+        self.git(self.managed, "checkout", "-q", "--detach", self.c1)
+        self.assertEqual(self.head(self.managed), self.c1)
+        self.assertEqual(self.git(self.managed, "status", "--porcelain", "--ignored"), "")
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_refused(result)
+        self.assertEqual(self.read(readme), b"edited reference code\n")
+        verify = [line for line in result.stdout.splitlines() if line.startswith("--- verify opencv")]
+        self.assertEqual(len(verify), 1, _output(result))
+        self.assertIn("MISMATCH: dirty", verify[0], _output(result))
+
+    def test_lying_fsmonitor_cannot_hide_an_edit(self) -> None:
+        # An fsmonitor hook that always answers "nothing changed" hides an edit from
+        # `git status` (#171, item 4).
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        hook = os.path.join(self.root, "liar.sh")
+        self.write(hook, "#!/bin/sh\nprintf 'token\\000'\n")
+        os.chmod(hook, 0o755)
+        self.git(self.managed, "config", "core.fsmonitor", hook.replace(os.sep, "/"))
+        self.git(self.managed, "update-index", "--fsmonitor")
+        self.git(self.managed, "status", "--porcelain")
+        readme = os.path.join(self.managed, "README.txt")
+        self.write(readme, "edited reference code\n")
+        if self.git(self.managed, "status", "--porcelain", "--ignored") != "":
+            self.skipTest("this git does not trust the fsmonitor hook here")
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_refused(result)
+        self.assertEqual(self.read(readme), b"edited reference code\n")
+        self.assertIn("README.txt", result.stdout, _output(result))
+
+    def test_configured_filter_is_refused(self) -> None:
+        # A clean filter makes `git status` compare filtered content: with this one, any edit
+        # to README.txt looks clean (#171, item 4). An attribute without a driver is harmless.
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+        self.write(os.path.join(self.managed, ".git", "info", "attributes"), "README.txt filter=hide\n")
+        self.assert_ok(self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref))
+
+        self.git(self.managed, "config", "filter.hide.clean", "cat")
+        before = self.repo_snapshot(self.managed)
+
+        result = self.run_bootstrap(*FROM_CPP_REF, cwd=self.cpp_ref)
+
+        self.assert_hidden_edits_refused(result, "filter", before)
+        self.assertIn("README.txt (filter hide)", result.stdout, _output(result))
 
     def test_corrupt_nested_git_does_not_touch_outer_repo(self) -> None:
         for git_dir in (False, True):
@@ -593,12 +737,11 @@ class BootstrapSandboxTest(unittest.TestCase):
         untracked = os.path.join(self.managed, "precious.txt")
         data = b"untracked and irreplaceable\n"
         self.write(untracked, data)
-        archives = os.path.join(self.cpp_ref, "archives")
         state_cache = os.path.join(self.cpp_ref, ".libraries.json")
         before = self.repo_snapshot(self.managed)
         layout = sorted(os.listdir(self.cpp_ref))
         self.assertNotIn("snapshots", layout)
-        self.assertEqual(os.listdir(archives), [])
+        self.assertNotIn("archives", layout)
         cache = self.read(state_cache)
 
         result = self.run_bootstrap(*args, *FROM_CPP_REF, cwd=self.cpp_ref)
@@ -606,9 +749,8 @@ class BootstrapSandboxTest(unittest.TestCase):
         self.assertEqual(self.repo_snapshot(self.managed), before, _output(result))
         self.assertEqual(self.read(untracked), data)
         self.assertEqual(self.head(self.managed), self.c1)
-        # Nothing written: no snapshots/ dir, nothing in archives/, the same state cache.
+        # Nothing written: no snapshots/ or archives/ dir, the same state cache.
         self.assertEqual(sorted(os.listdir(self.cpp_ref)), layout, _output(result))
-        self.assertEqual(os.listdir(archives), [], _output(result))
         self.assertEqual(self.read(state_cache), cache, _output(result))
         self.assertEqual(result.returncode, 2, _output(result))
         self.assertIn(
@@ -688,21 +830,81 @@ class BootstrapSandboxTest(unittest.TestCase):
         # No temporary file left behind.
         self.assertEqual(
             sorted(os.listdir(self.cpp_ref)),
-            [".libraries.json", "archives", "bootstrap.py", "libraries.json", "src"],
+            [".libraries.json", "bootstrap.py", "libraries.json", "src"],
         )
 
 
 class BootstrapModuleTest(unittest.TestCase):
+    def load(self):
+        """Imports a fresh copy of bootstrap.py; returns the module and what its top level printed."""
+        spec = importlib.util.spec_from_file_location("purecv_bootstrap_under_test", BOOTSTRAP)
+        module = importlib.util.module_from_spec(spec)
+        printed = io.StringIO()
+        # Importing runs the script's top level; keep its env tweaks out of here.
+        with mock.patch.dict(os.environ), contextlib.redirect_stdout(printed):
+            spec.loader.exec_module(module)
+        return module, printed.getvalue()
+
     def test_tls_verification_is_not_disabled(self) -> None:
         original = ssl._create_default_https_context
         self.addCleanup(setattr, ssl, "_create_default_https_context", original)
-        spec = importlib.util.spec_from_file_location("purecv_bootstrap_under_test", BOOTSTRAP)
-        module = importlib.util.module_from_spec(spec)
-        # Importing runs the script's top level; keep its banner and env tweaks out of here.
-        with mock.patch.dict(os.environ), contextlib.redirect_stdout(io.StringIO()):
-            spec.loader.exec_module(module)
+        self.load()
 
         self.assertIsNot(ssl._create_default_https_context, ssl._create_unverified_context)
+
+    def test_import_prints_no_scp_warning(self) -> None:
+        # The scp packages only serve the rejected fallback paths (#170, item 1).
+        _module, printed = self.load()
+
+        self.assertNotIn("paramiko", printed)
+
+    def cache_path(self) -> str:
+        directory = tempfile.mkdtemp(prefix="purecv-bootstrap-cache-")
+        self.addCleanup(_force_rmtree, directory)
+        return os.path.join(directory, ".libraries.json")
+
+    def test_locked_state_cache_is_retried_then_skipped(self) -> None:
+        # On Windows, a cache another process holds open makes os.replace fail with WinError 5.
+        # A short lock is waited out; a lasting one keeps the old cache and the run goes on
+        # (#171, item 1).
+        module, _ = self.load()
+        path = self.cache_path()
+        real_replace = os.replace
+        for failures, written in ((2, True), (module._REPLACE_ATTEMPTS, False)):
+            with self.subTest(failures=failures):
+                with open(path, "w") as f:
+                    f.write("[]")
+                calls = []
+
+                def flaky_replace(src, dst, calls=calls, failures=failures):
+                    calls.append(dst)
+                    if len(calls) <= failures:
+                        raise PermissionError(13, "The process cannot access the file")
+                    real_replace(src, dst)
+
+                printed = io.StringIO()
+                with mock.patch.object(module.os, "replace", flaky_replace), \
+                        mock.patch.object(module.time, "sleep"), contextlib.redirect_stdout(printed):
+                    result = module.writeJSONData([{"name": "opencv"}], path)
+
+                self.assertIs(result, written)
+                self.assertEqual(len(calls), min(failures + 1, module._REPLACE_ATTEMPTS))
+                with open(path) as f:
+                    self.assertEqual(json.load(f), [{"name": "opencv"}] if written else [])
+                self.assertEqual(os.listdir(os.path.dirname(path)), [".libraries.json"], "temp file left behind")
+                self.assertEqual("could not update the state cache" in printed.getvalue(), not written)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions")
+    def test_state_cache_follows_the_umask(self) -> None:
+        # mkstemp creates 0600 files; the cache used to keep that mode (#171, item 5).
+        module, _ = self.load()
+        path = self.cache_path()
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+
+        self.assertTrue(module.writeJSONData([], path))
+
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o644)
 
 
 if __name__ == "__main__":
