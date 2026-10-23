@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1] - 2026-10-23
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Shard the Miri UB check with nextest (#182)
+- *(opencv_ref)* Read the reference version from cpp_ref/requirements.txt
+- *(ci)* Keep Criterion reports out of the rust-cache (#269)
+- *(cpp_ref)* Quiet and harden bootstrap.py and the reference guard (#271)
+
+### 📚 Documentation
+
+- Update the Miri plan for the sharded workflow (#182)
+- Add OpenCV 4.10.0 parity audit method and issue map (#188)
+- Record the issue splits in the parity audit issue map (#205)
+- *(core)* Add OpenCV 4.10.0 parity audit for core (#206)
+- *(imgproc)* Add OpenCV 4.10.0 parity audit for imgproc (#228)
+- *(features2d)* Add OpenCV 4.10.0 parity audit for features2d (#249)
+- *(video)* Add OpenCV 4.10.0 parity audit for video
+- *(video)* Address Qodo findings on PR #255
+- *(video)* Record the filed issues and set the video rows to done
+- *(calib3d)* Add OpenCV 4.10.0 parity audit for calib3d
+- *(calib3d)* Address Qodo findings on PR #258
+- *(calib3d)* Record the filed issues and set the calib3d rows to done
+- *(parity)* Freeze the 4.10.0 audit under docs/parity/4.10.0
+- Add ADR 0001 for the OpenCV parity audit
+- *(parity)* Add agent rules for docs/parity
+- Point the agent instructions at the frozen parity folders and the ADR
+- Point CLAUDE.md at the frozen parity folders and the ADR
+- *(parity)* Address the Qodo review of PR #267
+- Explain the OpenCV parity audit in the README and replace the roadmap
+- *(parity)* Say how a fix PR retires an ignored divergence test
+
+### 🚜 Refactor
+
+- *(core)* Move KeyPoint and DMatch into core (#207)
+
+### 🧪 Testing
+
+- Exclude Miri-slow CLAHE and LK tests (#182)
+- *(video)* Pin build_optical_flow_pyramid and calc_optical_flow_pyramid_lk to OpenCV 4.10.0
+- *(calib3d)* Pin find_homography, rodrigues, solve_pnp, solve_pnp_ransac, init_undistort_rectify_map and find_fundamental_mat to OpenCV 4.10.0
+- *(parity)* Address the Qodo review of PR #266
+- Let the reference guard accept per-version parity folders
+- *(parity)* Run the ignored divergence tests as expected failures (#270)
+
 ## [0.11.0] - 2026-10-17
 
 ### 📚 Documentation
