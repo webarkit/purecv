@@ -569,3 +569,124 @@ mod calib3d_tests {
         assert_eq!(mask[11], 0, "Expected outlier at 11");
     }
 }
+
+#[cfg(test)]
+mod levmarq_tests {
+    use crate::calib3d::geometry::rvec_to_rmat;
+    use crate::calib3d::levmarq::cv_lev_marq;
+    use crate::calib3d::pose::rodrigues_derivatives;
+    use crate::calib3d::LmSolver;
+
+    /// Rosenbrock as least squares: r = (10 (y − x²), 1 − x), minimum at (1, 1).
+    fn rosenbrock(p: &[f64], err: &mut Vec<f64>, jac: Option<&mut Vec<f64>>) -> bool {
+        err.clear();
+        err.extend([10.0 * (p[1] - p[0] * p[0]), 1.0 - p[0]]);
+        if let Some(j) = jac {
+            j.clear();
+            j.extend([-20.0 * p[0], 10.0, -1.0, 0.0]);
+        }
+        true
+    }
+
+    /// cv::LMSolver keeps `D = diag(JᵀJ)` of the start point for the whole run, so on
+    /// Rosenbrock from (-1.2, 1) it crawls along the valley. The positions after 20 and 200
+    /// iterations are those of a line-by-line numpy transcription of `LMSolverImpl::run`
+    /// (cv2 does not bind `LMSolver`).
+    #[test]
+    fn test_lm_solver_rosenbrock_follows_opencv_trajectory() {
+        for (iters, want) in [
+            (20, [-1.0462026798908348, 1.098745209770221]),
+            (200, [-0.666176799712085, 0.44673757701735617]),
+        ] {
+            let mut p = [-1.2, 1.0];
+            assert_eq!(LmSolver::new(iters).run(&mut p, &mut rosenbrock), -iters);
+            assert!(
+                (p[0] - want[0]).abs() < 1e-9 && (p[1] - want[1]).abs() < 1e-9,
+                "{iters} iterations: {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lm_solver_iteration_limit_and_abort() {
+        let mut p = [-1.2, 1.0];
+        assert_eq!(LmSolver::new(2).run(&mut p, &mut rosenbrock), -2);
+
+        let mut p = [3.0, 4.0];
+        let mut fail = |_: &[f64], _: &mut Vec<f64>, _: Option<&mut Vec<f64>>| false;
+        assert_eq!(LmSolver::with_eps(10, 1e-9).run(&mut p, &mut fail), -1);
+        assert_eq!(p, [3.0, 4.0]);
+    }
+
+    /// y = a·exp(b·t) from a poor start.
+    fn exp_model(p: &[f64], err: &mut [f64], jac: Option<&mut [f64]>) {
+        for (i, e) in err.iter_mut().enumerate() {
+            let t = i as f64 * 0.25;
+            *e = p[0] * (p[1] * t).exp() - 3.0 * (-0.75 * t).exp();
+        }
+        if let Some(j) = jac {
+            for i in 0..err.len() {
+                let t = i as f64 * 0.25;
+                let e = (p[1] * t).exp();
+                j[2 * i] = e;
+                j[2 * i + 1] = p[0] * t * e;
+            }
+        }
+    }
+
+    #[test]
+    fn test_cv_lev_marq_exponential_fit() {
+        let mut p = [1.0, 0.5];
+        cv_lev_marq(&mut p, 16, 100, f64::EPSILON, exp_model);
+        assert!(
+            (p[0] - 3.0).abs() < 1e-8 && (p[1] + 0.75).abs() < 1e-8,
+            "{p:?}"
+        );
+    }
+
+    #[test]
+    fn test_cv_lev_marq_leaves_unobservable_parameters_alone() {
+        // The residuals do not depend on p[1]: the pseudo-inverse keeps it fixed.
+        let mut p = [5.0, 7.0];
+        cv_lev_marq(&mut p, 3, 20, f32::EPSILON as f64, |p, err, jac| {
+            for (i, e) in err.iter_mut().enumerate() {
+                *e = p[0] - i as f64;
+            }
+            if let Some(j) = jac {
+                for i in 0..3 {
+                    j[2 * i] = 1.0;
+                }
+            }
+        });
+        assert!((p[0] - 1.0).abs() < 1e-9, "{p:?}");
+        assert_eq!(p[1], 7.0);
+    }
+
+    #[test]
+    fn test_rodrigues_derivatives_match_finite_differences() {
+        for v in [[0.3, -0.2, 0.5], [1.5, 0.4, -2.0], [1e-4, 2e-4, -1e-4]] {
+            let r = rvec_to_rmat(v[0], v[1], v[2]);
+            let d = rodrigues_derivatives(&v, &r);
+            for (a, da) in d.iter().enumerate() {
+                let h = 1e-6;
+                let mut vp = v;
+                let mut vm = v;
+                vp[a] += h;
+                vm[a] -= h;
+                let rp = rvec_to_rmat(vp[0], vp[1], vp[2]);
+                let rm = rvec_to_rmat(vm[0], vm[1], vm[2]);
+                for k in 0..9 {
+                    let fd = (rp[k] - rm[k]) / (2.0 * h);
+                    assert!(
+                        (fd - da[k]).abs() < 1e-6,
+                        "v {v:?}, a {a}, k {k}: analytic {} vs fd {fd}",
+                        da[k]
+                    );
+                }
+            }
+        }
+        // At v = 0 the derivative is the generator [e_a]x.
+        let d = rodrigues_derivatives(&[0.0; 3], &rvec_to_rmat(0.0, 0.0, 0.0));
+        assert_eq!(d[2], [0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
+}

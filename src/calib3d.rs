@@ -57,6 +57,7 @@
 pub mod fundamental;
 pub mod geometry;
 pub mod homography;
+pub mod levmarq;
 pub(crate) mod linalg;
 pub mod pose;
 pub mod undistort;
@@ -74,5 +75,6 @@ mod tests;
 pub use fundamental::{find_fundamental_mat, FundamentalMatMethod};
 pub use geometry::rodrigues;
 pub use homography::{find_homography, HomographyMethod};
+pub use levmarq::{LmCallback, LmSolver};
 pub use pose::{solve_pnp, solve_pnp_ransac, SolvePnPMethod};
 pub use undistort::init_undistort_rectify_map;
