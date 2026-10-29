@@ -1281,10 +1281,9 @@ fn kmeans_random_centers_three_attempts_find_the_global_partition() {
 // RNG (core_rng.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's `theRNG()` is a multiply-with-carry generator (`RNG::next`); purecv seeds a
-/// xoshiro256** generator, so the same seed gives a different sequence.
+/// OpenCV's `theRNG()` is a multiply-with-carry generator (`RNG::next`); purecv's default
+/// thread-local generator is a port of it, so the same seed gives the same sequence.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #225"]
 fn randu_seed_42_reproduces_cv_rng() {
     set_rng_seed(42);
     let mut m = Matrix::<u8>::new(1, 8, 1);
@@ -1297,9 +1296,8 @@ fn randu_seed_42_reproduces_cv_rng() {
 }
 
 /// OpenCV writes integer `randn` samples through `saturate_cast`, so a u8 destination with a
-/// wide distribution holds many 255s and 0s. purecv turns every sample above 255 into 0.
+/// wide distribution holds many 255s and 0s; purecv saturates the same way.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #225"]
 fn randn_u8_saturates_above_255() {
     set_rng_seed(1);
     let mut m = Matrix::<u8>::new(1, 2000, 1);
@@ -1321,6 +1319,374 @@ fn randu_range_semantics_match_opencv() {
     randu(&mut m, Scalar::all(0.0), Scalar::all(10.0)).unwrap();
     assert!(m.data.iter().all(|&v| v < 10));
     assert!(m.data.contains(&0) && m.data.contains(&9));
+}
+
+/// `core_rng.py`, seeds 0, 42 and 12345: every depth of `randu`, per-channel bounds,
+/// `randn` (f32 and u8) and `randShuffle` give OpenCV's values.
+#[test]
+fn rng_sequences_match_cv_rng_for_three_seeds() {
+    #[allow(clippy::type_complexity)]
+    let cases: [(u64, [u8; 8], [u8; 8], [i32; 8], [f32; 8], [f64; 8]); 3] = [
+        (
+            0,
+            [246, 156, 192, 7, 165, 166, 2, 179],
+            [6, 7, 9, 9, 7, 0, 6, 3],
+            [1, 2, 4, 4, 2, -5, 1, -2],
+            [
+                0.530_282_8,
+                0.199_259_19,
+                0.401_059_45,
+                0.814_385_06,
+                0.437_132_98,
+                0.248_789_7,
+                0.773_105,
+                0.762_093_7,
+            ],
+            [
+                0.5302827933267031,
+                0.19925920037305117,
+                0.4010594430561372,
+                0.8143850783523574,
+                0.43713297911567256,
+                0.24878970880730866,
+                0.7731050566598108,
+                0.7620937287027096,
+            ],
+        ),
+        (
+            42,
+            [164, 63, 102, 186, 144, 232, 246, 91],
+            [0, 8, 9, 1, 4, 0, 3, 2],
+            [-5, 3, 4, -4, -1, -5, -2, -3],
+            [
+                0.228_122_68,
+                0.859_236_24,
+                0.014_739_662,
+                0.810_566_37,
+                0.450_981_26,
+                0.001_813_471_3,
+                0.531_401_1,
+                0.523_464_5,
+            ],
+            [
+                0.2281226897612214,
+                0.859236274078971,
+                0.014739665516735445,
+                0.8105663744497933,
+                0.45098125149988605,
+                0.0018134813108907077,
+                0.5314011013802646,
+                0.5234644957888989,
+            ],
+        ),
+        (
+            12345,
+            [58, 237, 174, 40, 7, 225, 216, 205],
+            [4, 3, 3, 1, 9, 4, 2, 5],
+            [-1, -2, -2, -4, 4, -1, -3, 0],
+            [
+                0.658_919_16,
+                0.304_090_56,
+                0.725_266,
+                0.641_473_65,
+                0.734_846_4,
+                0.925_891_1,
+                0.443_966_6,
+                0.896_885_75,
+            ],
+            [
+                0.6589191691018648,
+                0.3040905611482697,
+                0.7252659722649819,
+                0.6414736339865356,
+                0.7348464236448494,
+                0.9258911158488445,
+                0.44396658530761346,
+                0.8968857265811834,
+            ],
+        ),
+    ];
+    for (seed, u8_256, u8_10, i32_m5_5, f32_01, f64_01) in cases {
+        set_rng_seed(seed);
+        let mut m = Matrix::<u8>::new(1, 8, 1);
+        randu(&mut m, Scalar::all(0.0), Scalar::all(256.0)).unwrap();
+        assert_eq!(m.data, u8_256, "seed {seed}: u8 [0, 256)");
+
+        set_rng_seed(seed);
+        randu(&mut m, Scalar::all(0.0), Scalar::all(10.0)).unwrap();
+        assert_eq!(m.data, u8_10, "seed {seed}: u8 [0, 10)");
+
+        set_rng_seed(seed);
+        let mut m = Matrix::<i32>::new(1, 8, 1);
+        randu(&mut m, Scalar::all(-5.0), Scalar::all(5.0)).unwrap();
+        assert_eq!(m.data, i32_m5_5, "seed {seed}: i32 [-5, 5)");
+
+        set_rng_seed(seed);
+        let mut m = Matrix::<f32>::new(1, 8, 1);
+        randu(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+        assert_eq!(m.data, f32_01, "seed {seed}: f32 [0, 1)");
+
+        set_rng_seed(seed);
+        let mut m = Matrix::<f64>::new(1, 8, 1);
+        randu(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+        assert_eq!(m.data, f64_01, "seed {seed}: f64 [0, 1)");
+    }
+
+    // Per-channel bounds (0, 100, 200) .. (10, 110, 210), 2 px.
+    for (seed, want) in [
+        (0u64, [6u8, 107, 209, 9, 107, 200]),
+        (42, [0, 108, 209, 1, 104, 200]),
+        (12345, [4, 103, 203, 1, 109, 204]),
+    ] {
+        set_rng_seed(seed);
+        let mut m = Matrix::<u8>::new(1, 2, 3);
+        randu(
+            &mut m,
+            Scalar::new(0.0, 100.0, 200.0, 0.0),
+            Scalar::new(10.0, 110.0, 210.0, 0.0),
+        )
+        .unwrap();
+        assert_eq!(m.data, want, "seed {seed}: 3-channel bounds");
+    }
+
+    for (seed, f32_01, u8_128_50, shuffled) in [
+        (
+            0u64,
+            [
+                -1.603_094_8e-9,
+                0.158_135_06,
+                -0.700_928,
+                -0.428_596,
+                1.238_742_1,
+                -0.278_008_22,
+                -0.648_398_76,
+                0.305_163_3,
+            ],
+            [128u8, 136, 93, 107, 190, 114, 96, 143],
+            [5, 7, 9, 4, 1, 6, 8, 2, 0, 3],
+        ),
+        (
+            42,
+            [
+                2.416_655_3e-8,
+                -0.625_846_8,
+                0.588_324_07,
+                -0.731_996_5,
+                -0.194_894_58,
+                -1.231_167_8,
+                0.104_871_58,
+                0.113_963_1,
+            ],
+            [128, 97, 157, 91, 118, 66, 133, 134],
+            [5, 3, 7, 1, 4, 2, 8, 9, 6, 0],
+        ),
+        (
+            12345,
+            [
+                8.270_295e-6,
+                0.461_529_43,
+                -0.232_334_06,
+                0.903_827_3,
+                0.399_476_77,
+                0.599_755_64,
+                1.282_757_6,
+                -0.190_607_37,
+            ],
+            [128, 151, 116, 173, 148, 158, 192, 118],
+            [4, 2, 8, 3, 5, 7, 1, 9, 6, 0],
+        ),
+    ] {
+        set_rng_seed(seed);
+        let mut m = Matrix::<f32>::new(1, 8, 1);
+        randn(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+        assert_close_f32(&m.data, &f32_01, 1e-6, &format!("seed {seed}: randn f32"));
+
+        set_rng_seed(seed);
+        let mut m = Matrix::<u8>::new(1, 8, 1);
+        randn(&mut m, Scalar::all(128.0), Scalar::all(50.0)).unwrap();
+        assert_eq!(m.data, u8_128_50, "seed {seed}: randn u8");
+
+        for_each_shuffle_type(seed, shuffled);
+    }
+
+    // setRNGSeed(int) widens with sign extension: -1 is not the default state.
+    set_rng_seed(0);
+    let mut a = Matrix::<i32>::new(1, 4, 1);
+    randu(&mut a, Scalar::all(0.0), Scalar::all(1000.0)).unwrap();
+    assert_eq!(a.data, vec![606, 397, 839, 629]);
+    set_rng_seed(u64::MAX);
+    randu(&mut a, Scalar::all(0.0), Scalar::all(1000.0)).unwrap();
+    assert_eq!(a.data, vec![605, 4, 940, 173]);
+}
+
+fn assert_close_f32(actual: &[f32], expected: &[f32], tol: f64, what: &str) {
+    let a: Vec<f64> = actual.iter().map(|&v| v as f64).collect();
+    let e: Vec<f64> = expected.iter().map(|&v| v as f64).collect();
+    assert_close(&a, &e, tol, what);
+}
+
+fn for_each_shuffle_type(seed: u64, want: [i32; 10]) {
+    set_rng_seed(seed);
+    let mut idx: Vec<i32> = (0..10).collect();
+    rand_shuffle(&mut idx);
+    assert_eq!(idx, want, "seed {seed}: randShuffle i32");
+    set_rng_seed(seed);
+    let mut idx: Vec<u8> = (0..10).collect();
+    rand_shuffle(&mut idx);
+    let want_u8: Vec<u8> = want.iter().map(|&v| v as u8).collect();
+    assert_eq!(idx, want_u8, "seed {seed}: randShuffle u8");
+}
+
+/// `core_rng_fill.py`: the `RNG::fill` paths beyond `core_rng.py` — block boundaries of the
+/// four-per-draw integer loop (3 channels: 1026-element blocks), the fast-bits and division
+/// paths on every integer depth, reversed float bounds, the ziggurat on several depths,
+/// per-channel `randn` and a long `randShuffle`.
+#[test]
+fn rng_fill_paths_match_cv_rng() {
+    set_rng_seed(42);
+    let mut m = Matrix::<u8>::new(1, 400, 3);
+    randu(&mut m, Scalar::all(0.0), Scalar::all(256.0)).unwrap();
+    assert_eq!(m.data.iter().map(|&v| v as u64).sum::<u64>(), 154973);
+    assert_eq!(
+        m.data[1020..1032],
+        [39, 125, 213, 112, 120, 31, 72, 113, 36, 90, 58, 80]
+    );
+    assert_eq!(m.data[1196..], [234, 37, 171, 52]);
+
+    set_rng_seed(7);
+    let mut m = Matrix::<u16>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(0.0), Scalar::all(65536.0)).unwrap();
+    assert_eq!(
+        m.data,
+        [46406, 9922, 21612, 35803, 60154, 9265, 42626, 41169]
+    );
+
+    set_rng_seed(7);
+    let mut m = Matrix::<i16>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(-1000.0), Scalar::all(1000.0)).unwrap();
+    assert_eq!(m.data, [-946, -246, -348, 835, -574, 729, 314, 953]);
+
+    set_rng_seed(7);
+    let mut m = Matrix::<i32>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(-1e9), Scalar::all(1e9)).unwrap();
+    assert_eq!(
+        m.data,
+        [
+            384522054, 836290754, -484051348, 653967835, 544050426, -493304271, -114210686,
+            595935953
+        ]
+    );
+
+    set_rng_seed(7);
+    let mut m = Matrix::<i8>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(-128.0), Scalar::all(128.0)).unwrap();
+    assert_eq!(m.data, [-58, 53, 59, 73, 66, -90, 41, 100]);
+
+    set_rng_seed(7);
+    let mut m = Matrix::<f32>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(-3.0), Scalar::all(7.0)).unwrap();
+    assert_eq!(
+        m.data,
+        [
+            -0.119_795_56,
+            0.932_060_5,
+            -2.142_100_3,
+            5.850_944,
+            0.251_635_43,
+            -2.163_644_3,
+            -1.280_998_2,
+            0.372_440_81
+        ]
+    );
+
+    set_rng_seed(7);
+    let mut m = Matrix::<f64>::new(1, 8, 1);
+    randu(&mut m, Scalar::all(5.0), Scalar::all(-5.0)).unwrap();
+    assert_eq!(
+        m.data,
+        [
+            2.119795517064631,
+            1.06793954324872,
+            4.142100557530864,
+            -3.850943957381068,
+            1.7483645808570258,
+            4.163644197862188,
+            3.2809981644014794,
+            1.6275591737321737
+        ]
+    );
+
+    set_rng_seed(3);
+    let mut m = Matrix::<f64>::new(1, 8, 1);
+    randn(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+    let want = [
+        5.958806226225022e-10,
+        -0.19294486939907074,
+        -0.4868623614311218,
+        0.5748234391212463,
+        0.6561874747276306,
+        0.7934845089912415,
+        0.19608648121356964,
+        0.15683351457118988,
+    ];
+    assert_close(&m.data, &want, 1e-6, "randn f64");
+
+    set_rng_seed(3);
+    let mut m = Matrix::<i16>::new(1, 8, 1);
+    randn(&mut m, Scalar::all(0.0), Scalar::all(1000.0)).unwrap();
+    assert_eq!(m.data, [0, -193, -487, 575, 656, 793, 196, 157]);
+
+    set_rng_seed(3);
+    let mut m = Matrix::<f32>::new(1, 4, 3);
+    randn(
+        &mut m,
+        Scalar::new(0.0, 10.0, 100.0, 0.0),
+        Scalar::new(1.0, 2.0, 3.0, 0.0),
+    )
+    .unwrap();
+    let want = [
+        5.958_806e-10,
+        9.614_11,
+        98.539_41,
+        0.574_823_4,
+        11.312_375,
+        102.380_455,
+        0.196_086_48,
+        10.313_667,
+        100.720_18,
+        1.279_372_8,
+        6.588_620_7,
+        98.167_42,
+    ];
+    assert_close_f32(&m.data, &want, 1e-4, "randn f32 3 channels");
+
+    set_rng_seed(1);
+    let mut m = Matrix::<u8>::new(1, 2000, 1);
+    randn(&mut m, Scalar::all(128.0), Scalar::all(200.0)).unwrap();
+    assert_eq!(m.data.iter().filter(|&&v| v == 0).count(), 524);
+    assert_eq!(m.data.iter().filter(|&&v| v == 255).count(), 545);
+    assert_eq!(m.data[..8], [128, 255, 255, 152, 194, 216, 255, 0]);
+
+    set_rng_seed(11);
+    let mut m = Matrix::<f32>::new(1, 5000, 1);
+    randn(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
+    assert_close_f32(
+        &m.data[1022..1026],
+        &[0.987_078_5, -0.904_932_3, 1.387_338_6, -1.774_771],
+        1e-6,
+        "randn f32 across a block boundary",
+    );
+    assert_close_f32(
+        &m.data[4998..],
+        &[1.829_689_4, 0.581_550_66],
+        1e-6,
+        "randn f32 tail",
+    );
+
+    set_rng_seed(42);
+    let mut idx: Vec<i32> = (0..1000).collect();
+    rand_shuffle(&mut idx);
+    assert_eq!(idx[..10], [471, 48, 5, 421, 374, 959, 703, 142, 503, 915]);
 }
 
 // ---------------------------------------------------------------------------------------
