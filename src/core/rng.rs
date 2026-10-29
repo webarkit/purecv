@@ -45,8 +45,11 @@
 //! With `std`, the free functions [`randu`], [`randn`], [`rand_shuffle`] and
 //! [`set_rng_seed`] work on a thread-local generator like `cv::theRNG()`.
 //! That generator is a [`Rng`] by default; [`set_rng_generator`] switches
-//! the calling thread to the xoshiro256** generator purecv used before, which
-//! keeps its own (non-OpenCV) sequences.
+//! the calling thread to the xoshiro256** generator purecv used before 0.12.
+//! That generator keeps its earlier float sequences (not OpenCV's); integer
+//! outputs changed with it: `randu` now rounds down (it truncated toward
+//! zero) and `randn` rounds half to even and saturates (it truncated and
+//! turned out-of-range samples into 0).
 
 // `num_traits::Float` provides `ln`, `exp`, `sqrt`, ... on `f32`/`f64` via
 // libm when `std` is disabled; with `std` the inherent methods win, so the
@@ -151,13 +154,15 @@ impl Rng {
         (self.next_u32() % (b.wrapping_sub(a) as u32)).wrapping_add(a as u32) as i32
     }
 
-    /// Returns a value in `[0, 1)`, `(float)rng`.
+    /// Returns a value in `[0, 1]`, `(float)rng`: like OpenCV, the largest
+    /// draws round up to exactly `1.0` in `f32`.
     #[inline]
     pub fn next_f32(&mut self) -> f32 {
         self.next_u32() as f32 * 2.328_306_4e-10
     }
 
-    /// Returns a value in `[0, 1)` built from two draws, `(double)rng`.
+    /// Returns a value in `[0, 1]` built from two draws, `(double)rng`; the
+    /// largest draws round up to exactly `1.0`, as in OpenCV.
     #[inline]
     pub fn next_f64(&mut self) -> f64 {
         let hi = self.next_u32() as u64;
@@ -165,13 +170,15 @@ impl Rng {
         ((hi << 32) | lo) as f64 * 5.421_010_862_427_522e-20
     }
 
-    /// Returns a value in `[a, b)`, `RNG::uniform(float, float)`.
+    /// Returns a value in `[a, b)`, `RNG::uniform(float, float)` (`b` itself
+    /// is possible through rounding, see [`next_f32`](Self::next_f32)).
     #[inline]
     pub fn uniform_f32(&mut self, a: f32, b: f32) -> f32 {
         self.next_f32() * (b - a) + a
     }
 
-    /// Returns a value in `[a, b)`, `RNG::uniform(double, double)`.
+    /// Returns a value in `[a, b)`, `RNG::uniform(double, double)` (`b` itself
+    /// is possible through rounding, see [`next_f64`](Self::next_f64)).
     #[inline]
     pub fn uniform_f64(&mut self, a: f64, b: f64) -> f64 {
         self.next_f64() * (b - a) + a
@@ -180,7 +187,9 @@ impl Rng {
     /// Returns a sample of `N(0, sigma²)`, `RNG::gaussian`.
     ///
     /// The sample is drawn in `f32` by the same ziggurat as
-    /// [`fill_normal`](Self::fill_normal) and then scaled in `f64`.
+    /// [`fill_normal`](Self::fill_normal) and then scaled in `f64`. Without
+    /// `std` the ziggurat tables are rebuilt on every call (128 strips), so
+    /// prefer `fill_normal` for many samples there.
     pub fn gaussian(&mut self, sigma: f64) -> f64 {
         let mut z = [0.0f32];
         with_ziggurat(|zig| self.standard_normals(zig, &mut z));
@@ -391,10 +400,12 @@ impl Rng {
     ///
     /// Every element `i` is swapped with element `next() % len`, which is
     /// OpenCV's algorithm (not Fisher–Yates). OpenCV 4.10.0 ignores
-    /// `iterFactor`, so it has no counterpart here.
+    /// `iterFactor`, so it has no counterpart here. Like OpenCV's `unsigned`
+    /// size, the length is taken modulo 2³²: only that many leading elements
+    /// take part.
     pub fn shuffle<T>(&mut self, slice: &mut [T]) {
         let n = slice.len() as u32;
-        for i in 0..slice.len() {
+        for i in 0..n as usize {
             let j = (self.next_u32() % n) as usize;
             slice.swap(j, i);
         }
@@ -468,6 +479,16 @@ fn check_fill_target<T>(dst: &Matrix<T>, what: &str) -> Result<usize> {
             InvalidInput,
             "{}: at most 4 channels are supported, got {}",
             what,
+            dst.channels
+        );
+    }
+    if !dst.data.len().is_multiple_of(dst.channels) {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "{}: {} elements are not a whole number of {}-channel pixels",
+            what,
+            dst.data.len(),
             dst.channels
         );
     }
@@ -654,7 +675,8 @@ pub enum RngGenerator {
     #[default]
     CvRng,
     /// xoshiro256** seeded through SplitMix64, purecv's generator before
-    /// 0.12. Its sequences do not match OpenCV.
+    /// 0.12. Its sequences do not match OpenCV; see the [module docs](crate::core::rng)
+    /// for how its integer outputs changed.
     Xoshiro256StarStar,
 }
 
@@ -714,7 +736,8 @@ pub fn set_rng_seed(seed: u64) {
 /// Selects the generator of the calling thread and resets it to seed `0`.
 ///
 /// The default is [`RngGenerator::CvRng`]; [`RngGenerator::Xoshiro256StarStar`]
-/// keeps purecv's earlier generator for code that relies on its sequences.
+/// keeps purecv's earlier generator (same float sequences; integer outputs
+/// now round down in `randu` and saturate in `randn`).
 /// Later [`set_rng_seed`] calls reseed the selected generator.
 ///
 /// # Example
@@ -975,6 +998,22 @@ mod tests {
         let mut mat = Matrix::<u8>::new(2, 2, 5);
         assert!(randu(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).is_err());
         assert!(randn(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).is_err());
+    }
+
+    #[test]
+    fn test_fill_malformed_matrix_error() {
+        // `data` is public: fewer elements than one pixel must not panic.
+        let mut mat = Matrix::<u8>::new(1, 2, 3);
+        mat.data.truncate(2);
+        assert!(randu(&mut mat, Scalar::all(0.0), Scalar::all(256.0)).is_err());
+        assert!(randn(&mut mat, Scalar::all(0.0), Scalar::all(1.0)).is_err());
+        let mut rng = Rng::default();
+        assert!(rng
+            .fill_uniform(&mut mat, Scalar::all(0.0), Scalar::all(256.0))
+            .is_err());
+        // An empty slice shuffles to itself.
+        let mut empty: [u8; 0] = [];
+        rng.shuffle(&mut empty);
     }
 
     #[test]

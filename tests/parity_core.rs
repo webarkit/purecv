@@ -1483,7 +1483,7 @@ fn rng_sequences_match_cv_rng_for_three_seeds() {
         (
             12345,
             [
-                8.270_295e-6,
+                8.270_294_5e-6,
                 0.461_529_43,
                 -0.232_334_06,
                 0.903_827_3,
@@ -1499,7 +1499,7 @@ fn rng_sequences_match_cv_rng_for_three_seeds() {
         set_rng_seed(seed);
         let mut m = Matrix::<f32>::new(1, 8, 1);
         randn(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
-        assert_close_f32(&m.data, &f32_01, 1e-6, &format!("seed {seed}: randn f32"));
+        assert_close_f32(&m.data, &f32_01, 0.0, &format!("seed {seed}: randn f32"));
 
         set_rng_seed(seed);
         let mut m = Matrix::<u8>::new(1, 8, 1);
@@ -1552,6 +1552,18 @@ fn rng_fill_paths_match_cv_rng() {
         [39, 125, 213, 112, 120, 31, 72, 113, 36, 90, 58, 80]
     );
     assert_eq!(m.data[1196..], [234, 37, 171, 52]);
+
+    set_rng_seed(5);
+    let mut m = Matrix::<u8>::new(1, 700, 2);
+    randu(
+        &mut m,
+        Scalar::new(0.0, 0.0, 0.0, 0.0),
+        Scalar::new(256.0, 10.0, 0.0, 0.0),
+    )
+    .unwrap();
+    assert_eq!(m.data.iter().map(|&v| v as u64).sum::<u64>(), 91752);
+    assert_eq!(m.data[1020..1030], [80, 6, 130, 1, 109, 4, 129, 9, 111, 2]);
+    assert_eq!(m.data[1396..], [156, 0, 187, 6]);
 
     set_rng_seed(7);
     let mut m = Matrix::<u16>::new(1, 8, 1);
@@ -1629,7 +1641,7 @@ fn rng_fill_paths_match_cv_rng() {
         0.19608648121356964,
         0.15683351457118988,
     ];
-    assert_close(&m.data, &want, 1e-6, "randn f64");
+    assert_close(&m.data, &want, 0.0, "randn f64");
 
     set_rng_seed(3);
     let mut m = Matrix::<i16>::new(1, 8, 1);
@@ -1648,7 +1660,7 @@ fn rng_fill_paths_match_cv_rng() {
         5.958_806e-10,
         9.614_11,
         98.539_41,
-        0.574_823_4,
+        0.574_823_44,
         11.312_375,
         102.380_455,
         0.196_086_48,
@@ -1658,7 +1670,7 @@ fn rng_fill_paths_match_cv_rng() {
         6.588_620_7,
         98.167_42,
     ];
-    assert_close_f32(&m.data, &want, 1e-4, "randn f32 3 channels");
+    assert_close_f32(&m.data, &want, 0.0, "randn f32 3 channels");
 
     set_rng_seed(1);
     let mut m = Matrix::<u8>::new(1, 2000, 1);
@@ -1672,14 +1684,14 @@ fn rng_fill_paths_match_cv_rng() {
     randn(&mut m, Scalar::all(0.0), Scalar::all(1.0)).unwrap();
     assert_close_f32(
         &m.data[1022..1026],
-        &[0.987_078_5, -0.904_932_3, 1.387_338_6, -1.774_771],
-        1e-6,
+        &[0.987_078_55, -0.904_932_3, 1.387_338_6, -1.774_771],
+        0.0,
         "randn f32 across a block boundary",
     );
     assert_close_f32(
         &m.data[4998..],
         &[1.829_689_4, 0.581_550_66],
-        1e-6,
+        0.0,
         "randn f32 tail",
     );
 

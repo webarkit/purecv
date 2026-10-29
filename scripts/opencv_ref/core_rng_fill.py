@@ -46,6 +46,16 @@ def main() -> None:
         "last4": tolist(flat[-4:]),
     }
 
+    # 2 channels, [0, 256) and [0, 10): one channel is not a power of two, so both take
+    # the division path (randi_) with per-channel DivStructs, across a block boundary.
+    m = seeded(5, (1, 700, 2), np.uint8, cv2.randu, (0, 0), (256, 10))
+    flat = m.reshape(-1)
+    results["randu_u8_2ch_mixed_700px_seed5"] = {
+        "sum": int(flat.astype(np.int64).sum()),
+        "elems_1020_1030": tolist(flat[1020:1030]),
+        "last4": tolist(flat[-4:]),
+    }
+
     m = seeded(7, (1, 8), np.uint16, cv2.randu, 0, 65536)
     results["randu_u16_0_65536_seed7"] = tolist(m)
 
