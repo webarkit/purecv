@@ -1760,3 +1760,139 @@ mod core_tests {
         assert_eq!(tags::VIDEO, "purecv::video");
     }
 }
+
+#[cfg(test)]
+mod saturate_tests {
+    use crate::core::saturate::round_half_even;
+    use crate::core::{saturate_cast, SaturateCast};
+
+    /// The largest `f64` below 0.5 (0.49999…).
+    const BELOW_HALF: f64 = 0.499_999_999_999_999_94;
+
+    #[test]
+    fn test_round_half_even_ties() {
+        for (v, want) in [
+            (0.5, 0.0),
+            (1.5, 2.0),
+            (2.5, 2.0),
+            (3.5, 4.0),
+            (-0.5, -0.0),
+            (-1.5, -2.0),
+            (-2.5, -2.0),
+            (-3.5, -4.0),
+            (4_503_599_627_370_495.5, 4_503_599_627_370_496.0),
+        ] {
+            assert_eq!(round_half_even(v), want, "round_half_even({v})");
+        }
+        assert_eq!(round_half_even(BELOW_HALF), 0.0);
+        assert_eq!(round_half_even(-BELOW_HALF), 0.0);
+        assert_eq!(round_half_even(0.500_000_000_000_000_1), 1.0);
+        assert_eq!(round_half_even(2.4), 2.0);
+        assert_eq!(round_half_even(2.6), 3.0);
+        assert!(round_half_even(f64::NAN).is_nan());
+        assert_eq!(round_half_even(f64::INFINITY), f64::INFINITY);
+    }
+
+    /// Checks one integer type: ties of both parities, ±0.49999…, the range
+    /// edges from just inside and just outside, and NaN.
+    fn check_int<T>(min: f64, max: f64)
+    where
+        T: SaturateCast + PartialEq + core::fmt::Debug + TryFrom<i64>,
+        <T as TryFrom<i64>>::Error: core::fmt::Debug,
+    {
+        let t = |x: i64| T::try_from(x).unwrap();
+        let c = saturate_cast::<T>;
+
+        // Ties go to the even neighbour.
+        assert_eq!(c(2.5), t(2));
+        assert_eq!(c(3.5), t(4));
+        assert_eq!(c(0.5), t(0));
+        assert_eq!(c(1.5), t(2));
+        assert_eq!(c(BELOW_HALF), t(0));
+        if min < 0.0 {
+            assert_eq!(c(-2.5), t(-2));
+            assert_eq!(c(-3.5), t(-4));
+            assert_eq!(c(-BELOW_HALF), t(0));
+        } else {
+            assert_eq!(c(-BELOW_HALF), t(0));
+            assert_eq!(c(-0.5), t(0));
+            assert_eq!(c(-0.6), t(0));
+        }
+
+        // Range edges.
+        assert_eq!(c(max), t(max as i64));
+        assert_eq!(c(max + 0.4), t(max as i64));
+        assert_eq!(c(max + 0.5), t(max as i64));
+        assert_eq!(c(max + 1.0), t(max as i64));
+        // Every tested maximum is odd, so `max - 0.5` ties down to `max - 1`.
+        assert_eq!(c(max - 0.5), t(max as i64 - 1));
+        assert_eq!(c(1e300), t(max as i64));
+        assert_eq!(c(f64::INFINITY), t(max as i64));
+        assert_eq!(c(min), t(min as i64));
+        assert_eq!(c(min - 0.4), t(min as i64));
+        assert_eq!(c(min - 1.0), t(min as i64));
+        assert_eq!(c(-1e300), t(min as i64));
+        assert_eq!(c(f64::NEG_INFINITY), t(min as i64));
+
+        assert_eq!(c(f64::NAN), t(0));
+        // The f32 entry point agrees with the f64 one.
+        assert_eq!(T::saturate_from_f32(2.5), t(2));
+        assert_eq!(T::saturate_from_f32(f32::NAN), t(0));
+        assert_eq!(T::saturate_from_f32(f32::MAX), t(max as i64));
+    }
+
+    #[test]
+    fn test_saturate_cast_u8() {
+        check_int::<u8>(0.0, 255.0);
+        assert_eq!(saturate_cast::<u8>(254.5), 254);
+        assert_eq!(saturate_cast::<u8>(253.5), 254);
+    }
+
+    #[test]
+    fn test_saturate_cast_i8() {
+        check_int::<i8>(-128.0, 127.0);
+        assert_eq!(saturate_cast::<i8>(-127.5), -128);
+        assert_eq!(saturate_cast::<i8>(126.5), 126);
+    }
+
+    #[test]
+    fn test_saturate_cast_u16() {
+        check_int::<u16>(0.0, 65535.0);
+        assert_eq!(saturate_cast::<u16>(65534.5), 65534);
+    }
+
+    #[test]
+    fn test_saturate_cast_i16() {
+        check_int::<i16>(-32768.0, 32767.0);
+        assert_eq!(saturate_cast::<i16>(-32767.5), -32768);
+    }
+
+    #[test]
+    fn test_saturate_cast_i32() {
+        check_int::<i32>(i32::MIN as f64, i32::MAX as f64);
+        assert_eq!(saturate_cast::<i32>(2_147_483_646.5), 2_147_483_646);
+        assert_eq!(saturate_cast::<i32>(-2_147_483_647.5), i32::MIN);
+    }
+
+    #[test]
+    fn test_saturate_cast_wide_ints() {
+        assert_eq!(saturate_cast::<u32>(4_294_967_296.0), u32::MAX);
+        assert_eq!(saturate_cast::<u32>(-1.0), 0);
+        assert_eq!(saturate_cast::<i64>(1e30), i64::MAX);
+        assert_eq!(saturate_cast::<i64>(-2.5), -2);
+        assert_eq!(saturate_cast::<u64>(-1e30), 0);
+        assert_eq!(saturate_cast::<u64>(f64::NAN), 0);
+    }
+
+    #[test]
+    fn test_saturate_cast_float_identity() {
+        for v in [0.5, -2.5, 1e-300, 255.7, -1e300] {
+            assert_eq!(saturate_cast::<f64>(v), v);
+            assert_eq!(saturate_cast::<f32>(v), v as f32);
+            assert_eq!(f32::saturate_from_f32(v as f32), v as f32);
+            assert_eq!(f64::saturate_from_f32(v as f32), v as f32 as f64);
+        }
+        assert!(saturate_cast::<f64>(f64::NAN).is_nan());
+        assert!(f32::saturate_from_f32(f32::NAN).is_nan());
+    }
+}
