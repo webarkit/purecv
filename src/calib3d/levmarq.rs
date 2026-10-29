@@ -57,6 +57,10 @@ use alloc::{vec, vec::Vec};
 #[allow(unused_imports)]
 use num_traits::Float;
 
+use crate::core::error::Result;
+use crate::core::logging::tags;
+use crate::cv_bail;
+
 use super::linalg::jacobi_eigen;
 
 // ---------------------------------------------------------------------------
@@ -108,7 +112,9 @@ fn sym_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
 
 /// Solves the symmetric system `a x = b` with the pseudo-inverse, like
 /// `cv::solve(a, b, x, DECOMP_SVD | DECOMP_EIG)`: eigen-directions whose
-/// |eigenvalue| is at most `2·ε·Σ|w|` are dropped (`SVBkSb`'s threshold).
+/// |eigenvalue| is at most `2·ε·Σ|w|` are dropped. `SVBkSb` sums the signed
+/// values; the damped normal matrices here are positive semi-definite, so
+/// the two sums agree up to rounding-level negative eigenvalues.
 fn sym_solve(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
     let (w, v) = sym_eigen(a, n);
     let threshold = 2.0 * f64::EPSILON * w.iter().map(|x| x.abs()).sum::<f64>();
@@ -161,6 +167,8 @@ fn norm_inf(v: &[f64]) -> f64 {
 /// The model of an [`LmSolver`] problem, `cv::LMSolver::Callback`.
 ///
 /// Implemented for closures `FnMut(&[f64], &mut Vec<f64>, Option<&mut Vec<f64>>) -> bool`.
+/// Annotate the closure's argument types (as in the [`LmSolver`] example):
+/// they cannot be inferred through the trait bound.
 pub trait LmCallback {
     /// Computes the residuals at `param` into `err` (resized by the callee)
     /// and, when `jac` is `Some`, the Jacobian of the residuals with respect
@@ -208,7 +216,7 @@ where
 ///     true
 /// };
 /// let mut p = [1.0, 0.0];
-/// let iters = LmSolver::new(100).run(&mut p, &mut model);
+/// let iters = LmSolver::new(100).run(&mut p, &mut model).unwrap();
 /// assert!(iters > 0);
 /// assert!((p[0] - 2.0).abs() < 1e-6 && (p[1] + 0.5).abs() < 1e-6);
 /// ```
@@ -244,14 +252,31 @@ impl LmSolver {
     /// Returns the number of iterations, negated when the limit was reached
     /// (`-max_iters`), or `-1` when the callback returned `false` (in which
     /// case `param` is left unchanged).
-    pub fn run<C: LmCallback + ?Sized>(&self, param: &mut [f64], cb: &mut C) -> i32 {
+    ///
+    /// # Errors
+    /// [`PureCvError::InvalidInput`] when `param` is empty, `max_iters` is not
+    /// positive (OpenCV asserts both), or the callback returns a Jacobian
+    /// whose length is not `err.len() × param.len()`.
+    pub fn run<C: LmCallback + ?Sized>(&self, param: &mut [f64], cb: &mut C) -> Result<i32> {
         let lx = param.len();
+        if lx == 0 {
+            cv_bail!(tags::CALIB3D, InvalidInput, "LmSolver::run: param is empty");
+        }
+        if self.max_iters <= 0 {
+            cv_bail!(
+                tags::CALIB3D,
+                InvalidInput,
+                "LmSolver::run: max_iters must be positive, got {}",
+                self.max_iters
+            );
+        }
         let mut x = param.to_vec();
         let mut r = Vec::new();
         let mut jac = Vec::new();
         if !cb.compute(&x, &mut r, Some(&mut jac)) {
-            return -1;
+            return Ok(-1);
         }
+        check_jacobian(&jac, r.len(), lx)?;
         let mut s = r.iter().map(|v| v * v).sum::<f64>();
         let (mut a, mut v) = normal_equations(&jac, &r, lx);
         let d_diag: Vec<f64> = (0..lx).map(|i| a[i * lx + i]).collect();
@@ -270,7 +295,7 @@ impl LmSolver {
             let d = sym_solve(&ap, &v, lx);
             let xd: Vec<f64> = x.iter().zip(&d).map(|(xi, di)| xi - di).collect();
             if !cb.compute(&xd, &mut rd, None) {
-                return -1;
+                return Ok(-1);
             }
             let sd = rd.iter().map(|v| v * v).sum::<f64>();
             // dS = d · (2v − A d), the decrease predicted by the linear model.
@@ -308,8 +333,9 @@ impl LmSolver {
                 s = sd;
                 x = xd;
                 if !cb.compute(&x, &mut r, Some(&mut jac)) {
-                    return -1;
+                    return Ok(-1);
                 }
+                check_jacobian(&jac, r.len(), lx)?;
                 (a, v) = normal_equations(&jac, &r, lx);
             }
 
@@ -321,12 +347,23 @@ impl LmSolver {
             }
         }
         param.copy_from_slice(&x);
-        if iter == self.max_iters {
-            -iter
-        } else {
-            iter
-        }
+        Ok(if iter == self.max_iters { -iter } else { iter })
     }
+}
+
+/// Fails unless `jac` holds a row-major `n_err × n_param` Jacobian.
+fn check_jacobian(jac: &[f64], n_err: usize, n_param: usize) -> Result<()> {
+    if jac.len() != n_err * n_param {
+        cv_bail!(
+            tags::CALIB3D,
+            InvalidInput,
+            "LmSolver::run: the Jacobian has {} elements, expected {} residuals x {} parameters",
+            jac.len(),
+            n_err,
+            n_param
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +382,8 @@ impl LmSolver {
 /// Each step solves `(JᵀJ with its diagonal × (1 + λ)) δ = Jᵀerr` and tries
 /// `param − δ`, with `λ = 10^k`, `k` starting at −3. A step that increases
 /// `‖err‖` is retried with `k + 1` (up to 16); an accepted step lowers `k`
-/// (down to −16). It stops after `max_iter` accepted steps or when
+/// (down to −16). Like OpenCV, when the retries run past `k = 16` the last,
+/// worse step is kept and counted. It stops after `max_iter` steps or when
 /// `‖Δparam‖ / ‖param_prev‖ < epsilon`.
 pub(crate) fn cv_lev_marq<F>(
     param: &mut [f64],
@@ -357,6 +395,9 @@ pub(crate) fn cv_lev_marq<F>(
     F: FnMut(&[f64], &mut [f64], Option<&mut [f64]>),
 {
     let n = param.len();
+    if n == 0 {
+        return;
+    }
     let max_iter = max_iter.clamp(1, 1000);
     let epsilon = epsilon.max(0.0);
     let mut lambda_lg10: i32 = -3;

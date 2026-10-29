@@ -590,8 +590,8 @@ mod levmarq_tests {
 
     /// cv::LMSolver keeps `D = diag(JᵀJ)` of the start point for the whole run, so on
     /// Rosenbrock from (-1.2, 1) it crawls along the valley. The positions after 20 and 200
-    /// iterations are those of a line-by-line numpy transcription of `LMSolverImpl::run`
-    /// (cv2 does not bind `LMSolver`).
+    /// iterations are those of a line-by-line numpy transcription of `LMSolverImpl::run`,
+    /// `scripts/opencv_ref/calib3d_lmsolver_transcription.py` (cv2 does not bind `LMSolver`).
     #[test]
     fn test_lm_solver_rosenbrock_follows_opencv_trajectory() {
         for (iters, want) in [
@@ -599,7 +599,10 @@ mod levmarq_tests {
             (200, [-0.666176799712085, 0.44673757701735617]),
         ] {
             let mut p = [-1.2, 1.0];
-            assert_eq!(LmSolver::new(iters).run(&mut p, &mut rosenbrock), -iters);
+            assert_eq!(
+                LmSolver::new(iters).run(&mut p, &mut rosenbrock).unwrap(),
+                -iters
+            );
             assert!(
                 (p[0] - want[0]).abs() < 1e-9 && (p[1] - want[1]).abs() < 1e-9,
                 "{iters} iterations: {p:?}"
@@ -610,12 +613,36 @@ mod levmarq_tests {
     #[test]
     fn test_lm_solver_iteration_limit_and_abort() {
         let mut p = [-1.2, 1.0];
-        assert_eq!(LmSolver::new(2).run(&mut p, &mut rosenbrock), -2);
+        assert_eq!(LmSolver::new(2).run(&mut p, &mut rosenbrock).unwrap(), -2);
 
         let mut p = [3.0, 4.0];
         let mut fail = |_: &[f64], _: &mut Vec<f64>, _: Option<&mut Vec<f64>>| false;
-        assert_eq!(LmSolver::with_eps(10, 1e-9).run(&mut p, &mut fail), -1);
+        assert_eq!(
+            LmSolver::with_eps(10, 1e-9).run(&mut p, &mut fail).unwrap(),
+            -1
+        );
         assert_eq!(p, [3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_lm_solver_rejects_bad_inputs() {
+        let mut empty: [f64; 0] = [];
+        assert!(LmSolver::new(10).run(&mut empty, &mut rosenbrock).is_err());
+
+        let mut p = [-1.2, 1.0];
+        assert!(LmSolver::new(0).run(&mut p, &mut rosenbrock).is_err());
+
+        // A Jacobian with one row too few is an error, not a silently wrong JᵀJ.
+        let mut wrong = |p: &[f64], err: &mut Vec<f64>, jac: Option<&mut Vec<f64>>| {
+            rosenbrock(p, err, None);
+            if let Some(j) = jac {
+                j.clear();
+                j.extend([1.0, 0.0]);
+            }
+            true
+        };
+        assert!(LmSolver::new(10).run(&mut p, &mut wrong).is_err());
+        assert_eq!(p, [-1.2, 1.0]);
     }
 
     /// y = a·exp(b·t) from a poor start.
