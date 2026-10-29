@@ -75,8 +75,15 @@ pub(crate) fn round_half_even(v: f64) -> f64 {
 ///   `T::MIN..=T::MAX`; NaN becomes `0`;
 /// - `f32` / `f64` targets are not rounded (a plain cast).
 ///
-/// OpenCV leaves an out-of-range `saturate_cast<int>(float)` and the 64-bit
-/// targets to the hardware conversion; here every integer target clamps.
+/// Where OpenCV's result for an out-of-range input comes from the hardware
+/// conversion, every integer target clamps here instead:
+///
+/// - `saturate_cast<int>(float)`, `saturate_cast<unsigned>(double)` (a plain
+///   cast of `cvRound`, so `-1.0` gives `u32::MAX` in OpenCV, `0` here) and
+///   the 64-bit targets;
+/// - the 8- and 16-bit targets for `|v| ≥ 2³¹`: OpenCV rounds to `int`
+///   first, which gives `INT_MIN` on x86 and so `0` for `u8`, where purecv
+///   gives `255`.
 ///
 /// # Example
 /// ```
