@@ -166,8 +166,8 @@ pub fn hough_lines(
 /// A vector of `[i32; 4]` representing `(x1, y1, x2, y2)` for each segment.
 ///
 /// Requires the `std` feature: the probabilistic transform shuffles edge points
-/// with the thread-local RNG ([`crate::core::rand_shuffle`]), which is std-only
-/// until a no_std seedable RNG lands (see issue #82). The deterministic
+/// with the std-only thread-local RNG ([`crate::core::rand_shuffle`]). Seeding a
+/// local `Rng` like OpenCV (`RNG((uint64)-1)`) is #247. The deterministic
 /// [`hough_lines`] is available under `no_std`.
 #[cfg(feature = "std")]
 pub fn hough_lines_p(
