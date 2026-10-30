@@ -51,6 +51,7 @@ use crate::core::Matrix;
 use crate::cv_log_warning;
 
 use super::geometry::rvec_to_rmat;
+use super::levmarq::cv_lev_marq;
 use super::linalg::{mat3_inv, mat3_mul, nearest_rotation, null_space_vector, Lcg};
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ use super::linalg::{mat3_inv, mat3_mul, nearest_rotation, null_space_vector, Lcg
 #[repr(i32)]
 pub enum SolvePnPMethod {
     /// Iterative method based on DLT initialisation followed by
-    /// Gauss-Newton reprojection-error minimisation.
+    /// Levenberg-Marquardt minimisation of the reprojection error in pixels.
     Iterative = 0,
     /// P3P (Gao et al. 2003).  Requires exactly 4 point pairs.
     P3P = 2,
@@ -171,7 +172,7 @@ pub fn solve_pnp(
     // DLT initial estimate.
     let (r_init, t_init) = dlt_pnp(&norm_pts, object_points)?;
 
-    // Gauss-Newton refinement.
+    // Levenberg-Marquardt refinement on the pixel reprojection error.
     let (r_ref, t_ref) = if use_extrinsic_guess
         && rvec.rows == 3
         && rvec.cols == 1
@@ -181,9 +182,9 @@ pub fn solve_pnp(
         let rv = [rvec.data[0], rvec.data[1], rvec.data[2]];
         let r_guess = rvec_to_rmat(rv[0], rv[1], rv[2]);
         let t_guess = [tvec.data[0], tvec.data[1], tvec.data[2]];
-        gauss_newton_refine(&norm_pts, object_points, &r_guess, &t_guess)
+        lm_refine(image_points, object_points, &k, &r_guess, &t_guess)
     } else {
-        gauss_newton_refine(&norm_pts, object_points, &r_init, &t_init)
+        lm_refine(image_points, object_points, &k, &r_init, &t_init)
     };
 
     // Convert rotation matrix → rotation vector.
@@ -294,12 +295,13 @@ pub fn solve_pnp_ransac(
         let idx = sample_no_replace(&mut rng, n, 6);
         let s_obj: Vec<Point3f> = idx.iter().map(|&i| object_points[i]).collect();
         let s_img: Vec<Point2f> = idx.iter().map(|&i| norm_pts[i]).collect();
+        let s_px: Vec<Point2f> = idx.iter().map(|&i| image_points[i]).collect();
 
         let (r, t) = match dlt_pnp(&s_img, &s_obj) {
             Ok(rt) => rt,
             Err(_) => continue,
         };
-        let (r, t) = gauss_newton_refine(&s_img, &s_obj, &r, &t);
+        let (r, t) = lm_refine(&s_px, &s_obj, &k, &r, &t);
 
         // Count inliers using reprojection error in *normalized* coordinates.
         let (count, mask) = count_pnp_inliers(&norm_pts, object_points, &r, &t, thr2);
@@ -337,9 +339,14 @@ pub fn solve_pnp_ransac(
         .zip(best_inlier_mask.iter())
         .filter_map(|(&p, &ok)| if ok { Some(p) } else { None })
         .collect();
+    let in_px: Vec<Point2f> = image_points
+        .iter()
+        .zip(best_inlier_mask.iter())
+        .filter_map(|(&p, &ok)| if ok { Some(p) } else { None })
+        .collect();
 
     let (r_final, t_final) = match dlt_pnp(&in_img, &in_obj) {
-        Ok(rt) => gauss_newton_refine(&in_img, &in_obj, &rt.0, &rt.1),
+        Ok(rt) => lm_refine(&in_px, &in_obj, &k, &rt.0, &rt.1),
         Err(_) => (best_r, best_t),
     };
 
@@ -465,194 +472,132 @@ fn reproject_sign(r: &[f64; 9], t: &[f64; 3], pts: &[Point3f]) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Gauss-Newton refinement
+// Levenberg-Marquardt refinement
 // ---------------------------------------------------------------------------
 
-/// Refine pose `(R, t)` by minimizing the sum of squared reprojection errors
-/// in normalised image coordinates using the Gauss-Newton method.
-fn gauss_newton_refine(
-    norm_pts: &[Point2f],
+/// Iteration limit of `cvFindExtrinsicCameraParams2` (`max_iter = 20`).
+const PNP_LM_MAX_ITER: usize = 20;
+
+/// Refine pose `(R, t)` like `SOLVEPNP_ITERATIVE`: Levenberg-Marquardt
+/// (OpenCV's `CvLevMarq`, 20 iterations, `ε = FLT_EPSILON`) on the
+/// reprojection error in **pixels**, over the Rodrigues vector and the
+/// translation.
+///
+/// Like `cvProjectPoints2`, the projection uses `fx`, `fy`, `cx`, `cy` of the
+/// camera matrix (no skew).
+fn lm_refine(
+    img_pts: &[Point2f],
     obj_pts: &[Point3f],
+    k: &[f64; 9],
     r_init: &[f64; 9],
     t_init: &[f64; 3],
 ) -> ([f64; 9], [f64; 3]) {
-    // We parameterise the rotation as a Rodriguez vector.
-    let mut rv = rmat_to_rvec_approx(r_init);
-    let mut t = *t_init;
-
-    const MAX_ITER: usize = 20;
-    const EPS: f64 = 1e-8;
-
-    for _ in 0..MAX_ITER {
-        let r = rvec_to_rmat(rv[0], rv[1], rv[2]);
-        let (jtj, jtb, err2) = build_jtj(&r, &rv, &t, norm_pts, obj_pts);
-
-        if err2 < EPS * EPS {
-            break;
-        }
-
-        // Solve the 6×6 normal equations ∂(J^T J) δ = J^T b.
-        let delta = solve_6x6(&jtj, &jtb);
-        if delta.iter().map(|v| v * v).sum::<f64>().sqrt() < EPS {
-            break;
-        }
-
-        rv[0] += delta[0];
-        rv[1] += delta[1];
-        rv[2] += delta[2];
-        t[0] += delta[3];
-        t[1] += delta[4];
-        t[2] += delta[5];
-    }
-
-    let r_final = rvec_to_rmat(rv[0], rv[1], rv[2]);
-    (r_final, t)
+    let rv = rmat_to_rvec_approx(r_init);
+    let mut param = [rv[0], rv[1], rv[2], t_init[0], t_init[1], t_init[2]];
+    cv_lev_marq(
+        &mut param,
+        2 * img_pts.len(),
+        PNP_LM_MAX_ITER,
+        f32::EPSILON as f64,
+        |p, err, jac| pnp_residuals(p, img_pts, obj_pts, k, err, jac),
+    );
+    let r_final = rvec_to_rmat(param[0], param[1], param[2]);
+    (r_final, [param[3], param[4], param[5]])
 }
 
-/// Build J^T J and J^T r for the reprojection-error Gauss-Newton system
-/// (6-parameter: 3 Rodrigues + 3 translation).
-fn build_jtj(
-    r: &[f64; 9],
-    rv: &[f64; 3],
-    t: &[f64; 3],
-    norm_pts: &[Point2f],
+/// Reprojection residuals `(u − x, v − y)` in pixels of the pose
+/// `p = [rvec, tvec]` and, when `jac` is `Some`, their Jacobian
+/// (`2N × 6`, row-major: `∂/∂rvec`, then `∂/∂tvec`).
+fn pnp_residuals(
+    p: &[f64],
+    img_pts: &[Point2f],
     obj_pts: &[Point3f],
-) -> ([f64; 36], [f64; 6], f64) {
-    let mut jtj = [0.0f64; 36];
-    let mut jtb = [0.0f64; 6];
-    let mut total_err2 = 0.0f64;
-    let theta = (rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2]).sqrt();
+    k: &[f64; 9],
+    err: &mut [f64],
+    mut jac: Option<&mut [f64]>,
+) {
+    let (fx, fy, cx, cy) = (k[0], k[4], k[2], k[5]);
+    let r = rvec_to_rmat(p[0], p[1], p[2]);
+    let dr = jac
+        .is_some()
+        .then(|| rodrigues_derivatives(&[p[0], p[1], p[2]], &r));
 
-    for i in 0..norm_pts.len() {
-        let xx = obj_pts[i].x as f64;
-        let yy = obj_pts[i].y as f64;
-        let zz = obj_pts[i].z as f64;
+    for (i, (m, o)) in img_pts.iter().zip(obj_pts).enumerate() {
+        let x = [o.x as f64, o.y as f64, o.z as f64];
+        let pc = [
+            r[0] * x[0] + r[1] * x[1] + r[2] * x[2] + p[3],
+            r[3] * x[0] + r[4] * x[1] + r[5] * x[2] + p[4],
+            r[6] * x[0] + r[7] * x[1] + r[8] * x[2] + p[5],
+        ];
+        // `z = z ? 1/z : 1`, as in cvProjectPoints2.
+        let inv_z = if pc[2] != 0.0 { 1.0 / pc[2] } else { 1.0 };
+        let u = pc[0] * inv_z;
+        let v = pc[1] * inv_z;
+        err[2 * i] = fx * u + cx - m.x as f64;
+        err[2 * i + 1] = fy * v + cy - m.y as f64;
 
-        // Camera-space point.
-        let cx = r[0] * xx + r[1] * yy + r[2] * zz + t[0];
-        let cy = r[3] * xx + r[4] * yy + r[5] * zz + t[1];
-        let cz = r[6] * xx + r[7] * yy + r[8] * zz + t[2];
-
-        if cz.abs() < 1e-12 {
+        let (Some(j), Some(dr)) = (jac.as_deref_mut(), dr.as_ref()) else {
             continue;
-        }
-
-        let inv_cz = 1.0 / cz;
-        let proj_u = cx * inv_cz;
-        let proj_v = cy * inv_cz;
-
-        let eu = proj_u - norm_pts[i].x as f64;
-        let ev = proj_v - norm_pts[i].y as f64;
-        total_err2 += eu * eu + ev * ev;
-
-        // Jacobian of (proj_u, proj_v) w.r.t. (rx, ry, rz, tx, ty, tz).
-        // d(proj) / d(camera_point):
-        let dpdu_dcx = inv_cz;
-        let dpdu_dcz = -cx * inv_cz * inv_cz;
-        let dpdv_dcy = inv_cz;
-        let dpdv_dcz = -cy * inv_cz * inv_cz;
-
-        // d(camera_point) / d(rvec) via Rodrigues derivative (approximate).
-        // We use a finite-difference approximation for the rotation Jacobian.
-        let eps = if theta > 1e-4 { theta * 1e-5 } else { 1e-6 };
-        let mut j = [0.0f64; 12]; // 2 residuals × 6 params
-
-        for k in 0..3 {
-            let mut rv_p = *rv;
-            rv_p[k] += eps;
-            let r_p = rvec_to_rmat(rv_p[0], rv_p[1], rv_p[2]);
-            let cx_p = r_p[0] * xx + r_p[1] * yy + r_p[2] * zz + t[0];
-            let cy_p = r_p[3] * xx + r_p[4] * yy + r_p[5] * zz + t[1];
-            let cz_p = r_p[6] * xx + r_p[7] * yy + r_p[8] * zz + t[2];
-            let inv_czp = if cz_p.abs() > 1e-12 { 1.0 / cz_p } else { 0.0 };
-            j[k] = (cx_p * inv_czp - proj_u) / eps;
-            j[6 + k] = (cy_p * inv_czp - proj_v) / eps;
-        }
-
-        // Translation Jacobian (exact).
-        j[3] = dpdu_dcx;
-        j[4] = 0.0;
-        j[5] = dpdu_dcz;
-        j[9] = 0.0;
-        j[10] = dpdv_dcy;
-        j[11] = dpdv_dcz;
-
-        // Accumulate J^T J and J^T r.
-        for a in 0..6 {
-            jtb[a] += j[a] * eu + j[6 + a] * ev;
-            for b in a..6 {
-                let v = j[a] * j[b] + j[6 + a] * j[6 + b];
-                jtj[a * 6 + b] += v;
-                if b != a {
-                    jtj[b * 6 + a] += v;
-                }
-            }
+        };
+        // d(pixel) / d(camera point); the translation enters the camera point
+        // with identity, so these are also the translation columns.
+        let du = [fx * inv_z, 0.0, -fx * u * inv_z];
+        let dv = [0.0, fy * inv_z, -fy * v * inv_z];
+        let (ru, rv) = (12 * i, 12 * i + 6);
+        for a in 0..3 {
+            // d(camera point) / d(rvec_a) = (dR / d rvec_a) X.
+            let d = &dr[a];
+            let dpc = [
+                d[0] * x[0] + d[1] * x[1] + d[2] * x[2],
+                d[3] * x[0] + d[4] * x[1] + d[5] * x[2],
+                d[6] * x[0] + d[7] * x[1] + d[8] * x[2],
+            ];
+            j[ru + a] = du[0] * dpc[0] + du[2] * dpc[2];
+            j[rv + a] = dv[1] * dpc[1] + dv[2] * dpc[2];
+            j[ru + 3 + a] = du[a];
+            j[rv + 3 + a] = dv[a];
         }
     }
-
-    (jtj, jtb, total_err2)
 }
 
-/// Solve 6×6 symmetric positive-(semi-)definite system via Cholesky decomposition.
-fn solve_6x6(a: &[f64; 36], b: &[f64; 6]) -> [f64; 6] {
-    // Simple Gaussian elimination with partial pivoting.
-    const N: usize = 6;
-    let mut m = [0.0f64; N * N];
-    let mut rhs = [0.0f64; N];
-    for i in 0..N {
-        for j in 0..N {
-            m[i * N + j] = a[i * N + j];
+/// `∂R/∂v_a` (row-major) of the rotation `R = rodrigues(v)` for `a = 0, 1, 2`.
+///
+/// Uses the closed form of Gallego and Yezzi (2015),
+/// `∂R/∂v_a = (v_a [v]× + [v × (I − R) e_a]×) R / ‖v‖²`, and `[e_a]×` (the
+/// derivative at `v = 0`) where `rvec_to_rmat` returns the identity.
+pub(super) fn rodrigues_derivatives(v: &[f64; 3], r: &[f64; 9]) -> [[f64; 9]; 3] {
+    let skew = |w: [f64; 3]| [0.0, -w[2], w[1], w[2], 0.0, -w[0], -w[1], w[0], 0.0];
+    let th2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    let mut out = [[0.0; 9]; 3];
+    if th2.sqrt() < 1e-10 {
+        for (a, o) in out.iter_mut().enumerate() {
+            let mut e = [0.0; 3];
+            e[a] = 1.0;
+            *o = skew(e);
         }
-        rhs[i] = -b[i]; // We want to minimise: ½‖Jδ − r‖², so δ = −(J^TJ)^{-1} J^Tr.
+        return out;
     }
-
-    let mut perm: [usize; N] = [0, 1, 2, 3, 4, 5];
-    for col in 0..N {
-        // Find pivot.
-        let mut max_val = m[col * N + col].abs();
-        let mut max_row = col;
-        for row in (col + 1)..N {
-            let v = m[row * N + col].abs();
-            if v > max_val {
-                max_val = v;
-                max_row = row;
-            }
+    let vx = skew(*v);
+    for (a, o) in out.iter_mut().enumerate() {
+        // (I − R) e_a is column a of I − R.
+        let c = [
+            if a == 0 { 1.0 } else { 0.0 } - r[a],
+            if a == 1 { 1.0 } else { 0.0 } - r[3 + a],
+            if a == 2 { 1.0 } else { 0.0 } - r[6 + a],
+        ];
+        let w = [
+            v[1] * c[2] - v[2] * c[1],
+            v[2] * c[0] - v[0] * c[2],
+            v[0] * c[1] - v[1] * c[0],
+        ];
+        let wx = skew(w);
+        let mut m = [0.0; 9];
+        for (mi, (&a1, &b1)) in m.iter_mut().zip(vx.iter().zip(&wx)) {
+            *mi = (v[a] * a1 + b1) / th2;
         }
-        if max_val < 1e-14 {
-            continue; // Degenerate; skip.
-        }
-        if max_row != col {
-            for j in 0..N {
-                m.swap(col * N + j, max_row * N + j);
-            }
-            rhs.swap(col, max_row);
-            perm.swap(col, max_row);
-        }
-        let pivot = m[col * N + col];
-        for row in (col + 1)..N {
-            let factor = m[row * N + col] / pivot;
-            for j in col..N {
-                let v = m[col * N + j];
-                m[row * N + j] -= factor * v;
-            }
-            rhs[row] -= factor * rhs[col];
-        }
+        *o = mat3_mul(&m, r);
     }
-
-    // Back substitution.
-    let mut x = [0.0f64; N];
-    for i in (0..N).rev() {
-        let mut s = rhs[i];
-        for j in (i + 1)..N {
-            s -= m[i * N + j] * x[j];
-        }
-        x[i] = if m[i * N + i].abs() > 1e-14 {
-            s / m[i * N + i]
-        } else {
-            0.0
-        };
-    }
-    x
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -755,7 +700,7 @@ fn undistort_points(image_points: &[Point2f], k: &[f64; 9]) -> Result<Vec<Point2
         .collect())
 }
 
-/// Convert rotation matrix → Rodrigues vector for use as a Gauss-Newton
+/// Convert rotation matrix → Rodrigues vector for use as a Levenberg-Marquardt
 /// initialiser.  Returns the same result as `geometry::rmat_to_rvec`, but
 /// inlined here to avoid a cross-module call in the hot refinement loop.
 fn rmat_to_rvec_approx(r: &[f64; 9]) -> [f64; 3] {
