@@ -1113,6 +1113,9 @@ mod imgproc_tests {
         }
         let src = Matrix::from_vec(10, 10, 1, data);
 
+        // With threshold 3 the result depends on the order the points are visited in,
+        // which comes from the thread RNG until #247 seeds it like OpenCV; pin the seed.
+        crate::core::set_rng_seed(42);
         let lines = hough_lines_p(&src, 1.0, CV_PI / 180.0, 3, 5.0, 2.0).unwrap();
 
         assert!(

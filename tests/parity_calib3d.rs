@@ -934,8 +934,9 @@ fn rodrigues_accepts_three_channel_vectors() {
 // ---------------------------------------------------------------------------------------
 
 /// `iterative`: 24 non-planar points, exact and with +-0.5 px noise, and the first six
-/// points, agree with OpenCV's Levenberg-Marquardt result to 2e-8 (Gauss-Newton reaches the
-/// same minimum); `dist_none` / a zero vector give the same pose.
+/// points, agree with OpenCV's Levenberg-Marquardt result to 2e-8 (the measurement predates
+/// purecv's LM port: Gauss-Newton reached the same minimum); `dist_none` / a zero vector
+/// give the same pose.
 #[test]
 fn solve_pnp_iterative_matches_opencv() {
     let p = pnp_inputs();
@@ -977,6 +978,79 @@ fn solve_pnp_iterative_matches_opencv() {
         1e-6,
         "dist_none",
     );
+}
+
+/// `calib3d_pnp_lm.py`: OpenCV refines the iterative pose with CvLevMarq on the reprojection
+/// error in pixels. With fx = 800, fy = 400 and +-2 px noise that minimum is not the minimum
+/// of the error in normalised coordinates, so the pose pins the residual's units as well as
+/// the optimiser (12 non-planar points, pose A).
+#[test]
+fn solve_pnp_iterative_minimises_pixel_error_like_opencv() {
+    let obj = object_points(12, 7, false);
+    let k = mat3([800.0, 0.0, 320.0, 0.0, 400.0, 240.0, 0.0, 0.0, 1.0]);
+    let pts =
+        |v: &[(f32, f32)]| -> Vec<Point2f> { v.iter().map(|&(x, y)| Point2f { x, y }).collect() };
+    let cases = [
+        (
+            "noise_0",
+            pts(&[
+                (441.553_22, 179.726_78),
+                (405.356_05, 256.715_15),
+                (346.781_43, 276.979_74),
+                (425.522_83, 139.186_72),
+                (336.972_44, 234.075_88),
+                (464.652_92, 331.609_86),
+                (277.259_52, 161.844_02),
+                (371.35, 269.977_94),
+                (457.762_73, 222.749_97),
+                (333.531_92, 281.624_88),
+                (419.719_67, 220.088_62),
+                (512.918_9, 281.917_6),
+            ]),
+            (
+                [0.5259481653655432, 0.5878246492049526, 0.2165669395606069],
+                [0.2500000215621889, -0.12499999573041491, 4.000000208568621],
+            ),
+        ),
+        (
+            "noise_2",
+            pts(&[
+                (442.301_27, 181.078_34),
+                (404.303_3, 256.316_7),
+                (348.283_4, 275.294_2),
+                (426.415_4, 141.010_94),
+                (336.232_2, 235.421_59),
+                (463.430_27, 332.217_3),
+                (277.228_27, 161.275_66),
+                (371.666_4, 270.087_3),
+                (457.969_76, 222.015_6),
+                (333.051_45, 282.706_9),
+                (417.942_32, 219.844_48),
+                (513.797_8, 280.519_16),
+            ]),
+            (
+                [0.5216974328129943, 0.587891640495466, 0.21734538519476307],
+                [0.25094982686681727, -0.1247108327409887, 4.010624762923598],
+            ),
+        ),
+    ];
+    for (what, img, want) in cases {
+        let mut rvec = Matrix::<f64>::new(3, 1, 1);
+        let mut tvec = Matrix::<f64>::new(3, 1, 1);
+        let ok = solve_pnp(
+            &obj,
+            &img,
+            &k,
+            None,
+            &mut rvec,
+            &mut tvec,
+            false,
+            SolvePnPMethod::Iterative,
+        )
+        .unwrap();
+        assert!(ok, "{what}: solve_pnp returned false");
+        assert_pose(&(rvec.data, tvec.data), &want, 1e-6, what);
+    }
 }
 
 /// `solve_pnp_d2` and the point-count cases: three non-planar points, four and five

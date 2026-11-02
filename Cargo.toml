@@ -1,6 +1,6 @@
 [package]
 name = "purecv"
-version = "0.11.1"
+version = "0.12.0"
 authors = ["Walter Perdan <https://github.com/kalwalt>"]
 edition = "2021"
 rust-version = "1.88"
@@ -70,6 +70,11 @@ name = "video_bench"
 path = "benches/video_bench.rs"
 harness = false
 
+[[bench]]
+name = "calib3d_bench"
+path = "benches/calib3d_bench.rs"
+harness = false
+
 [[example]]
 name = "dft_example"
 required-features = ["fft"]
@@ -88,7 +93,7 @@ members = ["crates/wasm"]
 exclude = ["crates/no-std-smoke"]
 
 [workspace.package]
-version = "0.11.1"
+version = "0.12.0"
 authors = ["Walter Perdan <https://github.com/kalwalt>"]
 edition = "2021"
 description = "A pure Rust, high-performance computer vision library focused on safety and portability."
