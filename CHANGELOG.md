@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-11-02
+
+### ⚙️ Miscellaneous Tasks
+
+- *(calib3d)* Add Criterion benchmarks for LmSolver and solve_pnp
+
+### 🐛 Bug Fixes
+
+- *(core)* [**breaking**] Reject malformed fill targets and pin the RNG exactly
+- *(calib3d)* Validate LmSolver inputs and return Result
+
+### 📚 Documentation
+
+- *(core)* Name every saturate_cast target where OpenCV does not clamp
+
+### 🚀 Features
+
+- *(core)* Add a shared saturate_cast (round half to even, then clamp)
+- *(core)* Make cv::RNG the default generator for randu/randn/rand_shuffle
+- *(calib3d)* Add Levenberg-Marquardt solvers and refine solve_pnp with CvLevMarq
+
 ## [0.11.1] - 2026-10-23
 
 ### ⚙️ Miscellaneous Tasks
