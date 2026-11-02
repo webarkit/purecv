@@ -55,7 +55,8 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 - **Sorting:** `sort`, `sort_idx` with configurable row/column and ascending/descending flags.
 - **Clustering:** `kmeans` with random, k-means++, and user-supplied initialization strategies.
 - **Transforms:** `transform` (per-element matrix transformation), `perspective_transform` (projective / homography mapping).
-- **Random Number Generation:** `randu` (uniform distribution), `randn` (normal/Gaussian distribution), `set_rng_seed`.
+- **Random Number Generation:** `randu` (uniform distribution), `randn` (normal/Gaussian distribution), `rand_shuffle`, `set_rng_seed`, on a port of OpenCV's `cv::RNG` (`Rng`): the same seed gives the same values as OpenCV.
+- **Saturating conversion:** `saturate_cast` / `SaturateCast`, OpenCV's round-half-to-even-then-clamp conversion to every element type.
 - **Channel Management:** `split`, `merge`, `mix_channels`.
 - **Utilities:** `add_weighted`, `check_range`, `absdiff`, `get_tick_count`, `get_tick_frequency`.
 - **Logging** (OpenCV-style): a `cv::utils::logging`-compatible facade over the [`log`](https://crates.io/crates/log) crate — a 7-level `LogLevel` with `set_log_level`/`get_log_level`, per-subsystem `tags`, `cv_log_*!` macros, and `cv_bail!`/`cv_err!` log-and-return helpers used throughout `core` to report invalid input (wrong dimensions, channel mismatches, …). Bring your own backend (`env_logger`, `tracing`, …) or call `init_basic_logger()` for quick stdout output.
@@ -88,7 +89,8 @@ Unlike existing wrappers, **PureCV** is a native rewrite. It aims to provide:
 ### `purecv-calib3d`
 - **Camera Undistortion:** `init_undistort_rectify_map` to compute lens undistortion and rectification maps.
 - **Epipolar Geometry:** `find_fundamental_mat` supporting the normalized 8-Point algorithm and robust RANSAC estimation with Sampson distance.
-- **Pose Estimation:** Camera pose estimation using `solve_pnp` (Iterative) and `solve_pnp_ransac`.
+- **Pose Estimation:** Camera pose estimation using `solve_pnp` (Iterative) and `solve_pnp_ransac`, refined with Levenberg-Marquardt on the pixel reprojection error as in OpenCV.
+- **Levenberg-Marquardt:** `LmSolver`, a port of `cv::LMSolver` for user-defined least-squares problems.
 - **Homography:** Direct Linear Transformation (DLT) and RANSAC-based `find_homography` for robust planar perspective mapping.
 - **Geometry:** `rodrigues` for converting between rotation vectors and 3x3 rotation matrices.
 - **Linear Algebra Utilities:** Jacobi SVD, null-space solver, 3x3 matrix helpers, and an LCG RNG.
@@ -101,7 +103,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-purecv = "0.11"
+purecv = "0.12"
 ```
 
 PureCV's minimum supported Rust version (MSRV) is **1.88**.
@@ -119,7 +121,7 @@ PureCV's minimum supported Rust version (MSRV) is **1.88**.
 ### `no_std` / embedded support
 
 Build with `--no-default-features` to run on bare-metal targets such as the
-ESP32 (`purecv = { version = "0.11", default-features = false }`). Only `core`
+ESP32 (`purecv = { version = "0.12", default-features = false }`). Only `core`
 and `alloc` are required (an allocator must be provided by the target).
 
 | Module | `no_std` | Notes |
@@ -135,7 +137,7 @@ features gives the scalar, single-threaded code paths.
 
 ```toml
 [dependencies]
-purecv = { version = "0.11", default-features = false }
+purecv = { version = "0.12", default-features = false }
 ```
 
 ```rust
@@ -164,14 +166,14 @@ To enable the `ndarray` feature:
 
 ```toml
 [dependencies]
-purecv = { version = "0.11", features = ["ndarray"] }
+purecv = { version = "0.12", features = ["ndarray"] }
 ```
 
 To enable SIMD + Parallel for maximum performance:
 
 ```toml
 [dependencies]
-purecv = { version = "0.11", features = ["parallel", "simd"] }
+purecv = { version = "0.12", features = ["parallel", "simd"] }
 ```
 
 ### Usage Example
@@ -429,7 +431,7 @@ Progress is tracked in [#268](https://github.com/webarkit/purecv/issues/268) (pa
 [#172](https://github.com/webarkit/purecv/issues/172)) and in the
 [parity milestone](https://github.com/webarkit/purecv/milestone/8).
 
-- [ ] **Shared foundations:** OpenCV-style saturation and rounding, the `cv::RNG` generator, a Levenberg-Marquardt solver
+- [x] **Shared foundations** (v0.12.0): OpenCV-style saturation and rounding (`saturate_cast`, [#189](https://github.com/webarkit/purecv/issues/189)), the `cv::RNG` generator ([#225](https://github.com/webarkit/purecv/issues/225)), a Levenberg-Marquardt solver (`LmSolver`, [#135](https://github.com/webarkit/purecv/issues/135))
 - [ ] **core:** integer arithmetic and conversions, flags and edge cases, DFT output
 - [ ] **imgproc:** panics first, then rounding and fixed-point paths, filters, geometry, histograms, feature detection
 - [ ] **features2d:** ORB pyramid and keypoint selection, ORB options, FAST, matching and drawing
