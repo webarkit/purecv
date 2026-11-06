@@ -94,21 +94,273 @@ fn convert_to_u8_to_f32_matches_opencv() {
 /// opencv.js 4.10.0 and cv2 agree: f32 [0.5, 1.5, 2.5, 3.5, 254.5, 254.6, 255.5, 300, -1]
 /// -> u8 [0, 2, 2, 4, 254, 255, 255, 255, 0].
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #192"]
 fn convert_to_f32_to_u8_rounds_half_even_and_saturates() {
     let src = row(&[0.5f32, 1.5, 2.5, 3.5, 254.5, 254.6, 255.5, 300.0, -1.0]);
     let dst = src.convert_to::<u8>().expect("OpenCV never fails on range");
     assert_eq!(dst.data, vec![0u8, 2, 2, 4, 254, 255, 255, 255, 0]);
 }
 
-/// Today the integer conversion truncates and the out-of-range element returns `Err`
-/// (the fact recorded in #192). This pins the current behaviour so that a fix is visible.
+/// Source of the `f32` / `f64` blocks of `core_convert_to.js` (`SRC`), without the last five
+/// entries (+-1e10, NaN, +-inf): OpenCV maps those through `INT_MIN` on x86-64, which purecv
+/// does not port (docs/parity/4.10.0/core.md). `convert_to_nan_and_inf_saturate` covers them.
+const CONVERT_SRC: [f64; 20] = [
+    0.5, 1.5, 2.5, 3.5, -0.5, -1.5, -2.5, 254.5, 254.6, 255.5, 300.0, -1.0, -300.0, 127.5, 128.5,
+    -128.5, -129.0, 65535.5, 32767.5, -32768.5,
+];
+
+/// `core_convert_to.js`, `convert_to_from_f32` and `convert_to_from_f64` (identical): `u8`,
+/// `i8`, `u16`, `i16`, `i32` with `alpha = 1, beta = 0`.
 #[test]
-fn convert_to_f32_to_u8_current_behaviour_truncates_and_errors() {
-    let src = row(&[0.5f32, 1.5, 2.5, 254.6]);
-    assert_eq!(src.convert_to::<u8>().unwrap().data, vec![0u8, 1, 2, 254]);
-    assert!(row(&[300.0f32]).convert_to::<u8>().is_err());
-    assert!(row(&[-1.0f32]).convert_to::<u8>().is_err());
+fn convert_to_matches_opencv() {
+    let f32_src = row(&CONVERT_SRC.map(|v| v as f32));
+    let f64_src = row(&CONVERT_SRC);
+    let u8s = vec![
+        0u8, 2, 2, 4, 0, 0, 0, 254, 255, 255, 255, 0, 0, 128, 128, 0, 0, 255, 255, 0,
+    ];
+    let i8s = vec![
+        0i8, 2, 2, 4, 0, -2, -2, 127, 127, 127, 127, -1, -128, 127, 127, -128, -128, 127, 127, -128,
+    ];
+    let u16s = vec![
+        0u16, 2, 2, 4, 0, 0, 0, 254, 255, 256, 300, 0, 0, 128, 128, 0, 0, 65535, 32768, 0,
+    ];
+    let i16s = vec![
+        0i16, 2, 2, 4, 0, -2, -2, 254, 255, 256, 300, -1, -300, 128, 128, -128, -129, 32767, 32767,
+        -32768,
+    ];
+    let i32s = vec![
+        0i32, 2, 2, 4, 0, -2, -2, 254, 255, 256, 300, -1, -300, 128, 128, -128, -129, 65536, 32768,
+        -32768,
+    ];
+    assert_eq!(f32_src.convert_to::<u8>().unwrap().data, u8s);
+    assert_eq!(f64_src.convert_to::<u8>().unwrap().data, u8s);
+    assert_eq!(f32_src.convert_to::<i8>().unwrap().data, i8s);
+    assert_eq!(f64_src.convert_to::<i8>().unwrap().data, i8s);
+    assert_eq!(f32_src.convert_to::<u16>().unwrap().data, u16s);
+    assert_eq!(f64_src.convert_to::<u16>().unwrap().data, u16s);
+    assert_eq!(f32_src.convert_to::<i16>().unwrap().data, i16s);
+    assert_eq!(f64_src.convert_to::<i16>().unwrap().data, i16s);
+    assert_eq!(f32_src.convert_to::<i32>().unwrap().data, i32s);
+    assert_eq!(f64_src.convert_to::<i32>().unwrap().data, i32s);
+}
+
+/// `core_convert_to.js`: `f32` / `f64` sources with `alpha = 2, beta = 0.5`; `u8` source with
+/// `alpha = 0.5, beta = 0.25` (ties after scaling); `i32` source with `alpha = 0.5, beta = 0`.
+#[test]
+fn convert_to_scaled_matches_opencv() {
+    let f32_src = row(&CONVERT_SRC.map(|v| v as f32));
+    let f64_src = row(&CONVERT_SRC);
+    let u8s = vec![
+        2u8, 4, 6, 8, 0, 0, 0, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0,
+    ];
+    let i8s = vec![
+        2i8, 4, 6, 8, 0, -2, -4, 127, 127, 127, 127, -2, -128, 127, 127, -128, -128, 127, 127, -128,
+    ];
+    let u16s = vec![
+        2u16, 4, 6, 8, 0, 0, 0, 510, 510, 512, 600, 0, 0, 256, 258, 0, 0, 65535, 65535, 0,
+    ];
+    let i16s = vec![
+        2i16, 4, 6, 8, 0, -2, -4, 510, 510, 512, 600, -2, -600, 256, 258, -256, -258, 32767, 32767,
+        -32768,
+    ];
+    let i32s = vec![
+        2i32, 4, 6, 8, 0, -2, -4, 510, 510, 512, 600, -2, -600, 256, 258, -256, -258, 131072,
+        65536, -65536,
+    ];
+    assert_eq!(f32_src.convert_to_scaled::<u8>(2.0, 0.5).unwrap().data, u8s);
+    assert_eq!(f64_src.convert_to_scaled::<u8>(2.0, 0.5).unwrap().data, u8s);
+    assert_eq!(f32_src.convert_to_scaled::<i8>(2.0, 0.5).unwrap().data, i8s);
+    assert_eq!(f64_src.convert_to_scaled::<i8>(2.0, 0.5).unwrap().data, i8s);
+    assert_eq!(
+        f32_src.convert_to_scaled::<u16>(2.0, 0.5).unwrap().data,
+        u16s
+    );
+    assert_eq!(
+        f64_src.convert_to_scaled::<u16>(2.0, 0.5).unwrap().data,
+        u16s
+    );
+    assert_eq!(
+        f32_src.convert_to_scaled::<i16>(2.0, 0.5).unwrap().data,
+        i16s
+    );
+    assert_eq!(
+        f64_src.convert_to_scaled::<i16>(2.0, 0.5).unwrap().data,
+        i16s
+    );
+    assert_eq!(
+        f32_src.convert_to_scaled::<i32>(2.0, 0.5).unwrap().data,
+        i32s
+    );
+    assert_eq!(
+        f64_src.convert_to_scaled::<i32>(2.0, 0.5).unwrap().data,
+        i32s
+    );
+
+    let u8_src = row(&[0u8, 1, 2, 3, 5, 7, 100, 127, 128, 129, 200, 254, 255]);
+    let tail = [0, 1, 1, 2, 3, 4, 50, 64, 64, 65, 100, 127, 128];
+    assert_eq!(
+        u8_src.convert_to_scaled::<u8>(0.5, 0.25).unwrap().data,
+        tail.map(|v| v as u8)
+    );
+    assert_eq!(
+        u8_src.convert_to_scaled::<u16>(0.5, 0.25).unwrap().data,
+        tail.map(|v| v as u16)
+    );
+    assert_eq!(
+        u8_src.convert_to_scaled::<i16>(0.5, 0.25).unwrap().data,
+        tail.map(|v| v as i16)
+    );
+    assert_eq!(
+        u8_src.convert_to_scaled::<i32>(0.5, 0.25).unwrap().data,
+        tail
+    );
+    // The i8 column differs only at 255 * 0.5 + 0.25 = 127.75, which clamps to 127.
+    let mut i8_tail = tail.map(|v| v as i8);
+    i8_tail[12] = 127;
+    assert_eq!(
+        u8_src.convert_to_scaled::<i8>(0.5, 0.25).unwrap().data,
+        i8_tail
+    );
+
+    let i32_src = row(&[
+        0i32,
+        1,
+        3,
+        5,
+        255,
+        256,
+        257,
+        32767,
+        32768,
+        65535,
+        65536,
+        -1,
+        -3,
+        -129,
+        -32769,
+        2147483647,
+        -2147483648,
+    ]);
+    assert_eq!(
+        i32_src.convert_to_scaled::<u8>(0.5, 0.0).unwrap().data,
+        vec![0u8, 0, 2, 2, 128, 128, 128, 255, 255, 255, 255, 0, 0, 0, 0, 255, 0]
+    );
+    assert_eq!(
+        i32_src.convert_to_scaled::<i8>(0.5, 0.0).unwrap().data,
+        vec![0i8, 0, 2, 2, 127, 127, 127, 127, 127, 127, 127, 0, -2, -64, -128, 127, -128]
+    );
+    assert_eq!(
+        i32_src.convert_to_scaled::<u16>(0.5, 0.0).unwrap().data,
+        vec![0u16, 0, 2, 2, 128, 128, 128, 16384, 16384, 32768, 32768, 0, 0, 0, 0, 65535, 0]
+    );
+    assert_eq!(
+        i32_src.convert_to_scaled::<i16>(0.5, 0.0).unwrap().data,
+        vec![
+            0i16, 0, 2, 2, 128, 128, 128, 16384, 16384, 32767, 32767, 0, -2, -64, -16384, 32767,
+            -32768
+        ]
+    );
+    // i32 -> i32 is computed in double: 2147483647 * 0.5 = 1073741823.5 rounds to the even 1073741824.
+    assert_eq!(
+        i32_src.convert_to_scaled::<i32>(0.5, 0.0).unwrap().data,
+        vec![
+            0i32,
+            0,
+            2,
+            2,
+            128,
+            128,
+            128,
+            16384,
+            16384,
+            32768,
+            32768,
+            0,
+            -2,
+            -64,
+            -16384,
+            1073741824,
+            -1073741824
+        ]
+    );
+}
+
+/// `alpha = 1, beta = 0` is the plain conversion in OpenCV (`Mat::convertTo`).
+#[test]
+fn convert_to_scaled_identity_is_convert_to() {
+    let src = row(&[0.5f32, 2.5, 300.0, -1.0]);
+    assert_eq!(
+        src.convert_to_scaled::<u8>(1.0, 0.0).unwrap().data,
+        src.convert_to::<u8>().unwrap().data
+    );
+}
+
+/// NaN becomes 0 and the infinities clamp, for every integer target (no error, no panic).
+/// OpenCV's own values for these inputs are platform-dependent (`INT_MIN` on x86-64), so only
+/// the `u8` NaN agrees with it.
+#[test]
+fn convert_to_nan_and_inf_saturate() {
+    let src = row(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+    assert_eq!(src.convert_to::<u8>().unwrap().data, vec![0u8, 255, 0]);
+    assert_eq!(src.convert_to::<i8>().unwrap().data, vec![0i8, 127, -128]);
+    assert_eq!(src.convert_to::<u16>().unwrap().data, vec![0u16, 65535, 0]);
+    assert_eq!(
+        src.convert_to::<i16>().unwrap().data,
+        vec![0i16, 32767, -32768]
+    );
+    assert_eq!(
+        src.convert_to::<i32>().unwrap().data,
+        vec![0i32, i32::MAX, i32::MIN]
+    );
+    assert_eq!(
+        src.convert_to_scaled::<u8>(2.0, 1.0).unwrap().data,
+        vec![0u8, 255, 0]
+    );
+}
+
+/// Same-type and integer-to-wider conversions never go through `f64`: 2^53 + 1 is not
+/// representable there.
+#[test]
+fn convert_to_i64_identity_is_exact() {
+    let big = [
+        i64::MAX,
+        i64::MIN,
+        (1i64 << 53) + 1,
+        -(1i64 << 53) - 1,
+        0,
+        7,
+    ];
+    assert_eq!(row(&big).convert_to::<i64>().unwrap().data, big.to_vec());
+
+    let ubig = [u64::MAX, (1u64 << 53) + 1, 0, 7];
+    assert_eq!(row(&ubig).convert_to::<u64>().unwrap().data, ubig.to_vec());
+
+    assert_eq!(
+        row(&[i32::MAX, i32::MIN, 1])
+            .convert_to::<i64>()
+            .unwrap()
+            .data,
+        vec![i32::MAX as i64, i32::MIN as i64, 1]
+    );
+    assert_eq!(
+        row(&ubig).convert_to::<i64>().unwrap().data,
+        vec![i64::MAX, (1i64 << 53) + 1, 0, 7]
+    );
+    assert_eq!(
+        row(&[-5i64, 300]).convert_to::<u8>().unwrap().data,
+        vec![0u8, 255]
+    );
+    assert_eq!(
+        row(&[(1i64 << 53) + 1]).convert_to::<u64>().unwrap().data,
+        vec![(1u64 << 53) + 1]
+    );
+}
+
+/// `DynamicMatrix::convert_to` routes through `Matrix::convert_to`.
+#[test]
+fn dynamic_convert_to_saturates() {
+    let src = DynamicMatrix::new_f32(1, 4, 1, vec![0.5, 2.5, 300.0, -1.0]).unwrap();
+    let dst = src.convert_to("u8").expect("OpenCV never fails on range");
+    assert_eq!(dst.data_u8().unwrap(), &[0u8, 2, 255, 0]);
 }
 
 // ---------------------------------------------------------------------------------------

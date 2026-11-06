@@ -41,19 +41,27 @@
 //
 // Run from the repository root after `npm ci --prefix cpp_ref`:
 //     node scripts/opencv_ref/core_convert_to.js
+// Set OPENCV_JS_DIR to the directory of the @techstark/opencv-js package to use another install.
 //
 // The package is a legacy Emscripten build: never `await` the module (see cpp_ref/README.md).
 
 const path = require("path");
-const cv = require(path.join(__dirname, "..", "..", "cpp_ref", "node_modules", "@techstark", "opencv-js"));
+const cv = require(
+  process.env.OPENCV_JS_DIR ||
+    path.join(__dirname, "..", "..", "cpp_ref", "node_modules", "@techstark", "opencv-js")
+);
 
 const SRC = [
   0.5, 1.5, 2.5, 3.5, -0.5, -1.5, -2.5, 254.5, 254.6, 255.5, 300.0, -1.0, -300.0,
   127.5, 128.5, -128.5, -129.0, 65535.5, 32767.5, -32768.5, 1e10, -1e10, NaN, Infinity, -Infinity,
 ];
 
-function convert(srcType, dstType, alpha, beta) {
-  const src = cv.matFromArray(1, SRC.length, srcType, SRC);
+// Integer sources: ties after scaling (x * 0.5), type bounds, values beyond the targets' ranges.
+const SRC_U8 = [0, 1, 2, 3, 5, 7, 100, 127, 128, 129, 200, 254, 255];
+const SRC_I32 = [0, 1, 3, 5, 255, 256, 257, 32767, 32768, 65535, 65536, -1, -3, -129, -32769, 2147483647, -2147483648];
+
+function convert(srcType, dstType, alpha, beta, input = SRC) {
+  const src = cv.matFromArray(1, input.length, srcType, input);
   const dst = new cv.Mat();
   src.convertTo(dst, dstType, alpha, beta);
   let values;
@@ -79,6 +87,15 @@ cv.onRuntimeInitialized = () => {
     for (const [name, type] of Object.entries(targets)) {
       block[name] = convert(srcType, type, 1.0, 0.0);
       block[`${name}_alpha2_beta0.5`] = convert(srcType, type, 2.0, 0.5);
+    }
+    results[`convert_to_from_${srcName}`] = block;
+  }
+  for (const [srcName, srcType, input] of [["u8", cv.CV_8U, SRC_U8], ["i32", cv.CV_32S, SRC_I32]]) {
+    const block = { src: input };
+    for (const [name, type] of Object.entries(targets)) {
+      block[name] = convert(srcType, type, 1.0, 0.0, input);
+      block[`${name}_alpha0.5_beta0`] = convert(srcType, type, 0.5, 0.0, input);
+      block[`${name}_alpha0.5_beta0.25`] = convert(srcType, type, 0.5, 0.25, input);
     }
     results[`convert_to_from_${srcName}`] = block;
   }

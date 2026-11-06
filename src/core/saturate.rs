@@ -109,6 +109,24 @@ pub trait SaturateCast: Copy {
     fn saturate_from_f32(v: f32) -> Self {
         Self::saturate_from_f64(v as f64)
     }
+
+    /// Converts the integer `v` to `Self`: integer targets clamp, float
+    /// targets are a plain cast. Unlike `saturate_from_f64(v as f64)` this is
+    /// exact for `|v| > 2^53`. The default goes through `f64`.
+    #[inline]
+    fn saturate_from_i64(v: i64) -> Self {
+        Self::saturate_from_f64(v as f64)
+    }
+
+    /// Converts the integer `v` to `Self`, like [`SaturateCast::saturate_from_i64`].
+    #[inline]
+    fn saturate_from_u64(v: u64) -> Self {
+        Self::saturate_from_f64(v as f64)
+    }
+
+    /// `true` for the floating-point targets. [`Matrix::convert_to_scaled`](crate::core::Matrix::convert_to_scaled)
+    /// uses it to choose OpenCV's working precision.
+    const IS_FLOAT: bool = false;
 }
 
 macro_rules! impl_saturate_cast_int {
@@ -119,6 +137,16 @@ macro_rules! impl_saturate_cast_int {
                 // Float-to-int `as` saturates at the type bounds and maps NaN
                 // to 0, so rounding first gives OpenCV's round-then-clamp.
                 round_half_even(v) as $t
+            }
+
+            #[inline]
+            fn saturate_from_i64(v: i64) -> Self {
+                (v as i128).clamp(<$t>::MIN as i128, <$t>::MAX as i128) as $t
+            }
+
+            #[inline]
+            fn saturate_from_u64(v: u64) -> Self {
+                (v as i128).clamp(<$t>::MIN as i128, <$t>::MAX as i128) as $t
             }
         }
     )*};
@@ -136,6 +164,18 @@ impl SaturateCast for f32 {
     fn saturate_from_f32(v: f32) -> Self {
         v
     }
+
+    #[inline]
+    fn saturate_from_i64(v: i64) -> Self {
+        v as f32
+    }
+
+    #[inline]
+    fn saturate_from_u64(v: u64) -> Self {
+        v as f32
+    }
+
+    const IS_FLOAT: bool = true;
 }
 
 impl SaturateCast for f64 {
@@ -143,6 +183,18 @@ impl SaturateCast for f64 {
     fn saturate_from_f64(v: f64) -> Self {
         v
     }
+
+    #[inline]
+    fn saturate_from_i64(v: i64) -> Self {
+        v as f64
+    }
+
+    #[inline]
+    fn saturate_from_u64(v: u64) -> Self {
+        v as f64
+    }
+
+    const IS_FLOAT: bool = true;
 }
 
 /// Converts `v` to `T` with OpenCV's `saturate_cast` semantics.
