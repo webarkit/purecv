@@ -268,6 +268,46 @@ def main() -> None:
         "u8_2_-100": tolist(cv2.convertScaleAbs(A_U8, alpha=2.0, beta=-100.0)),
     }
 
+    # The other source depths. convert_scale.simd.hpp:220-226 computes every depth, f64
+    # included, with cvtabs_32f: the source is converted to float, then |x*a + b| is saturated.
+    # The wheel's vector loop fuses the multiply-add (v_fma) and the generic scalar tail does
+    # not, so the scalars below (0.5, 2, 1, -1 with betas 0, 0.25, -3) keep x*a exact in float
+    # and the two agree. Inputs beyond 2**31 after scaling are left out: the x86 conversion of
+    # such a float gives INT_MIN and so 0, which purecv does not port (it clamps to 255).
+    cs = {}
+    for name, dt, vals in (
+        ("i8", np.int8, [-128, -127, -3, -2, -1, 0, 1, 2, 3, 127]),
+        ("u16", np.uint16, [0, 1, 2, 3, 5, 255, 256, 511, 1000, 65535]),
+        ("i16", np.int16, [-32768, -32767, -300, -3, -1, 0, 1, 3, 255, 32767]),
+        ("i32", np.int32, [-2**29, -2**24 - 1, -3, -1, 0, 1, 3, 255, 2**24 + 1, 2**29]),
+        ("f32", np.float32, [-3.5, -2.5, -0.5, 0.5, 1.5, 2.5, 3.5, 254.5, 255.5, 300.0]),
+        ("f64", np.float64, [-2.5, -0.5, 0.5, 1.5, 2.5, 3.5, -1.5, 254.5, 300.0, NAN]),
+    ):
+        arr = np.array(vals, dtype=dt).reshape(1, -1)
+        blk = {"src": tolist(arr)}
+        for label, (al, be) in (("1_0", (1.0, 0.0)), ("0.5_0", (0.5, 0.0)), ("0.5_0.25", (0.5, 0.25)),
+                                ("-1_-3", (-1.0, -3.0)), ("2_0", (2.0, 0.0))):
+            blk[label] = tolist(cv2.convertScaleAbs(arr, alpha=al, beta=be))
+        cs[name] = blk
+    results["convert_scale_abs_other_depths"] = cs
+
+    # 1 x 64 rows of every half step from -10 to 21.5: whole SIMD vectors, ties of both parities.
+    half = (np.arange(64) - 20) * 0.5
+    wide = {}
+    for name, dt in (("f32", np.float32), ("f64", np.float64)):
+        arr = half.astype(dt).reshape(1, -1)
+        wide[name + "_src"] = tolist(arr)
+        wide[name + "_1_0"] = tolist(cv2.convertScaleAbs(arr, alpha=1.0, beta=0.0))
+        wide[name + "_0.5_0.25"] = tolist(cv2.convertScaleAbs(arr, alpha=0.5, beta=0.25))
+    # f64 inputs 1e-10 and 1e-8 above a tie are not f32 values: the vector loop narrows them to
+    # float first (0.5000000001 -> 0.5, a tie, -> 0; 254.50000001 -> 254.5 -> 254). The scalar
+    # tail, used only for rows narrower than one vector, multiplies in double and gives 1 and
+    # 255 instead; a 64-wide row stays on the vector loop.
+    narrow = np.array([0.5000000001, 254.50000001] * 32, dtype=np.float64).reshape(1, -1)
+    wide["f64_narrow_src"] = tolist(narrow)
+    wide["f64_narrow_1_0"] = tolist(cv2.convertScaleAbs(narrow, alpha=1.0, beta=0.0))
+    results["convert_scale_abs_ties_wide"] = wide
+
     dump("core_convert_arith.py", results)
 
 

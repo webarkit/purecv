@@ -2212,11 +2212,9 @@ fn convert_scale_abs_i16_alpha1_matches_opencv() {
     );
 }
 
-/// OpenCV: `saturate_cast<uchar>(|x*alpha + beta|)` rounds half to even: 0.5 -> 0,
-/// 2.5 -> 2, -2.5 -> 2; and 1 * 0.5 = 0.5 -> 0. purecv uses `round()` (half away from
-/// zero): 1, 3, 3 and 1.
+/// `saturate_cast<uchar>(|x*alpha + beta|)` rounds half to even: 0.5 -> 0, 2.5 -> 2,
+/// -2.5 -> 2 (1.5 -> 2, -1.5 -> 2); and the `i16` value 1 times 0.5 = 0.5 -> 0.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #212"]
 fn convert_scale_abs_rounds_half_to_even() {
     let src = row(&[
         0.5f32, 1.5, 2.5, -0.5, -1.5, -2.5, 254.5, 255.5, -255.5, 300.0,
@@ -2227,6 +2225,185 @@ fn convert_scale_abs_rounds_half_to_even() {
     assert_eq!(
         convert_scale_abs(&src, 0.5, 0.0).unwrap().data,
         vec![150u8, 1, 0, 0, 0, 1, 64, 64, 127, 128, 128, 255]
+    );
+}
+
+/// The other source depths. `convert_scale.simd.hpp:220-226` runs every depth through
+/// `cvtabs_32f`: the source is converted to `float`, then `|x*a + b|` is rounded half to even
+/// and clamped to `u8`.
+///
+/// Fixture: `scripts/opencv_ref/core_convert_arith.py`, block
+/// `convert_scale_abs_other_depths`. The wheel's vector loop fuses the multiply-add and the
+/// generic scalar tail does not; the scalars (1, 0.5, -1, 2 with betas 0, 0.25, -3) keep
+/// `x*a` exact in `f32`, so the two agree and so does purecv's unfused product. Inputs whose
+/// scaled value passes 2^31 are left out (see
+/// `convert_scale_abs_large_values_clamp_to_255`).
+#[test]
+fn convert_scale_abs_other_depths_match_opencv() {
+    // (alpha, beta) in the order of the expected rows: 1_0, 0.5_0, 0.5_0.25, -1_-3, 2_0
+    let scalars = [
+        (1.0, 0.0),
+        (0.5, 0.0),
+        (0.5, 0.25),
+        (-1.0, -3.0),
+        (2.0, 0.0),
+    ];
+
+    let src = row(&[-128i8, -127, -3, -2, -1, 0, 1, 2, 3, 127]);
+    let expect: [[u8; 10]; 5] = [
+        [128, 127, 3, 2, 1, 0, 1, 2, 3, 127],
+        [64, 64, 2, 1, 0, 0, 0, 1, 2, 64],
+        [64, 63, 1, 1, 0, 0, 1, 1, 2, 64],
+        [125, 124, 0, 1, 2, 3, 4, 5, 6, 130],
+        [255, 254, 6, 4, 2, 0, 2, 4, 6, 254],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "i8 {al} {be}");
+    }
+
+    let src = row(&[0u16, 1, 2, 3, 5, 255, 256, 511, 1000, 65535]);
+    let expect: [[u8; 10]; 5] = [
+        [0, 1, 2, 3, 5, 255, 255, 255, 255, 255],
+        [0, 0, 1, 2, 2, 128, 128, 255, 255, 255],
+        [0, 1, 1, 2, 3, 128, 128, 255, 255, 255],
+        [3, 4, 5, 6, 8, 255, 255, 255, 255, 255],
+        [0, 2, 4, 6, 10, 255, 255, 255, 255, 255],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "u16 {al} {be}");
+    }
+
+    let src = row(&[-32768i16, -32767, -300, -3, -1, 0, 1, 3, 255, 32767]);
+    let expect: [[u8; 10]; 5] = [
+        [255, 255, 255, 3, 1, 0, 1, 3, 255, 255],
+        [255, 255, 150, 2, 0, 0, 0, 2, 128, 255],
+        [255, 255, 150, 1, 0, 0, 1, 2, 128, 255],
+        [255, 255, 255, 0, 2, 3, 4, 6, 255, 255],
+        [255, 255, 255, 6, 2, 0, 2, 6, 255, 255],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "i16 {al} {be}");
+    }
+
+    let src = row(&[
+        -536870912i32,
+        -16777217,
+        -3,
+        -1,
+        0,
+        1,
+        3,
+        255,
+        16777217,
+        536870912,
+    ]);
+    let expect: [[u8; 10]; 5] = [
+        [255, 255, 3, 1, 0, 1, 3, 255, 255, 255],
+        [255, 255, 2, 0, 0, 0, 2, 128, 255, 255],
+        [255, 255, 1, 0, 0, 1, 2, 128, 255, 255],
+        [255, 255, 0, 2, 3, 4, 6, 255, 255, 255],
+        [255, 255, 6, 2, 0, 2, 6, 255, 255, 255],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "i32 {al} {be}");
+    }
+
+    let src = row(&[-3.5f32, -2.5, -0.5, 0.5, 1.5, 2.5, 3.5, 254.5, 255.5, 300.0]);
+    let expect: [[u8; 10]; 5] = [
+        [4, 2, 0, 0, 2, 2, 4, 254, 255, 255],
+        [2, 1, 0, 0, 1, 1, 2, 127, 128, 150],
+        [2, 1, 0, 0, 1, 2, 2, 128, 128, 150],
+        [0, 0, 2, 4, 4, 6, 6, 255, 255, 255],
+        [7, 5, 1, 1, 3, 5, 7, 255, 255, 255],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "f32 {al} {be}");
+    }
+
+    let src = row(&[
+        -2.5f64,
+        -0.5,
+        0.5,
+        1.5,
+        2.5,
+        3.5,
+        -1.5,
+        254.5,
+        300.0,
+        f64::NAN,
+    ]);
+    let expect: [[u8; 10]; 5] = [
+        [2, 0, 0, 2, 2, 4, 2, 254, 255, 0],
+        [1, 0, 0, 1, 1, 2, 1, 127, 150, 0],
+        [1, 0, 0, 1, 2, 2, 0, 128, 150, 0],
+        [0, 2, 4, 4, 6, 6, 2, 255, 255, 0],
+        [5, 1, 1, 3, 5, 7, 3, 255, 255, 0],
+    ];
+    for ((al, be), want) in scalars.iter().zip(expect) {
+        let got = convert_scale_abs(&src, *al, *be).unwrap().data;
+        assert_eq!(got, want, "f64 {al} {be}");
+    }
+}
+
+/// 1 x 64 rows of every half step from -10 to 21.5, so ties of both parities land in every
+/// SIMD lane and the row fills whole vectors. The expected values are the
+/// `cv2.convertScaleAbs` results of `scripts/opencv_ref/core_convert_arith.py`, block
+/// `convert_scale_abs_ties_wide`; the scalar path and the `simd` kernels must give the same.
+#[test]
+fn convert_scale_abs_ties_across_simd_lanes() {
+    let half: Vec<f64> = (0..64).map(|i| (i as f64 - 20.0) * 0.5).collect();
+    let alpha_1: [u8; 64] = [
+        10, 10, 9, 8, 8, 8, 7, 6, 6, 6, 5, 4, 4, 4, 3, 2, 2, 2, 1, 0, 0, 0, 1, 2, 2, 2, 3, 4, 4, 4,
+        5, 6, 6, 6, 7, 8, 8, 8, 9, 10, 10, 10, 11, 12, 12, 12, 13, 14, 14, 14, 15, 16, 16, 16, 17,
+        18, 18, 18, 19, 20, 20, 20, 21, 22,
+    ];
+    let alpha_half: [u8; 64] = [
+        5, 4, 4, 4, 4, 4, 3, 3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2,
+        3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 8, 8, 9, 9, 9, 10, 10,
+        10, 10, 10, 11, 11,
+    ];
+
+    let f32s: Vec<f32> = half.iter().map(|&v| v as f32).collect();
+    let src = row(&f32s);
+    assert_eq!(convert_scale_abs(&src, 1.0, 0.0).unwrap().data, alpha_1);
+    assert_eq!(convert_scale_abs(&src, 0.5, 0.25).unwrap().data, alpha_half);
+
+    let src = row(&half);
+    assert_eq!(convert_scale_abs(&src, 1.0, 0.0).unwrap().data, alpha_1);
+    assert_eq!(convert_scale_abs(&src, 0.5, 0.25).unwrap().data, alpha_half);
+
+    // 0.5000000001 and 254.50000001 are not `f32` values. The vector loop of `cvtabs_32f`
+    // narrows them to `f32` first: 0.5 -> 0 and 254.5 -> 254, both ties. (The scalar tail,
+    // used only for rows narrower than one vector, multiplies in `double` and gives 1 and
+    // 255; purecv follows the vector loop.) Block `convert_scale_abs_ties_wide`, key
+    // `f64_narrow_1_0`.
+    let narrow: Vec<f64> = [0.5000000001, 254.50000001].repeat(32);
+    let want: Vec<u8> = [0u8, 254].repeat(32);
+    assert_eq!(
+        convert_scale_abs(&row(&narrow), 1.0, 0.0).unwrap().data,
+        want
+    );
+}
+
+/// purecv's own behaviour, not OpenCV's: a scaled value beyond the `i32` range clamps to 255.
+/// OpenCV 4.10.0 on x86 converts it through `int`, gets `INT_MIN` and returns 0
+/// (`cv2.convertScaleAbs` of `1e10` is 0), an artefact that is not ported.
+#[test]
+fn convert_scale_abs_large_values_clamp_to_255() {
+    let src = row(&[1e10f32, -1e10, 3e9]);
+    assert_eq!(
+        convert_scale_abs(&src, 1.0, 0.0).unwrap().data,
+        vec![255u8, 255, 255]
+    );
+    let src = row(&[1e10f64, -1e10, 3e9]);
+    assert_eq!(
+        convert_scale_abs(&src, 1.0, 0.0).unwrap().data,
+        vec![255u8, 255, 255]
     );
 }
 

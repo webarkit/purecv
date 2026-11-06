@@ -415,7 +415,7 @@ mod simd_impls {
             arch.dispatch(|| {
                 for i in 0..dst.len() {
                     let val = (src[i] * alpha_f32 + beta_f32).abs();
-                    dst[i] = val.clamp(0.0, 255.0).round() as u8;
+                    dst[i] = <u8 as crate::core::saturate::SaturateCast>::saturate_from_f32(val);
                 }
             });
             true
@@ -816,11 +816,14 @@ mod simd_impls {
         }
 
         fn simd_convert_scale_abs(dst: &mut [u8], src: &[Self], alpha: f64, beta: f64) -> bool {
+            // cvtabs_32f works in f32 for every depth, f64 included.
+            let alpha_f32 = alpha as f32;
+            let beta_f32 = beta as f32;
             let arch = Arch::new();
             arch.dispatch(|| {
                 for i in 0..dst.len() {
-                    let val = (src[i] * alpha + beta).abs();
-                    dst[i] = val.clamp(0.0, 255.0).round() as u8;
+                    let val = (src[i] as f32 * alpha_f32 + beta_f32).abs();
+                    dst[i] = <u8 as crate::core::saturate::SaturateCast>::saturate_from_f32(val);
                 }
             });
             true

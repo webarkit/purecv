@@ -1836,6 +1836,15 @@ where
 /// Scales, calculates absolute values, and converts the result to 8-bit.
 ///
 /// dst(I) = saturate_cast<u8>(|src(I)*alpha + beta|)
+///
+/// Follows `cvtabs_32f` in `convert_scale.simd.hpp`
+/// ([source](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/convert_scale.simd.hpp#L220-L226)):
+/// every source depth, `f64` included, is converted to `f32`, scaled there, and the
+/// absolute value is rounded half to even and clamped to `u8` (NaN gives `0`). The
+/// product and the sum are not fused, unlike OpenCV's vector loop. OpenCV's scalar tail
+/// (rows narrower than one vector) multiplies `f64` input in `f64`; purecv follows the
+/// vector loop. Where the scaled value passes `i32::MAX`, OpenCV on x86 returns `0` and
+/// purecv clamps to `255`.
 pub fn convert_scale_abs<T>(src: &Matrix<T>, alpha: f64, beta: f64) -> Result<Matrix<u8>>
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + SimdElement + 'static,
@@ -1854,9 +1863,10 @@ where
         }
     }
 
+    let (alpha_f32, beta_f32) = (alpha as f32, beta as f32);
     unary_op!(dst, src, u8, T, |d, s| {
-        let val = (s.to_f64().unwrap_or(0.0) * alpha + beta).abs();
-        *d = val.clamp(0.0, 255.0).round() as u8;
+        let val = (s.to_f64().unwrap_or(0.0) as f32 * alpha_f32 + beta_f32).abs();
+        *d = u8::saturate_from_f32(val);
     });
 
     Ok(dst)
