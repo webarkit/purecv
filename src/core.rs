@@ -120,7 +120,7 @@ pub use self::metrics::{mahalanobis, psnr};
 #[cfg(feature = "std")]
 pub use self::rng::{rand_shuffle, randn, randu, rng_generator, set_rng_generator, set_rng_seed};
 pub use self::rng::{Rng, RngGenerator};
-pub use self::saturate::{saturate_cast, SaturateCast, SaturatingOps};
+pub use self::saturate::{saturate_cast, SaturateCast, SaturatingOps, ScalarOps};
 pub use self::solvers::{solve_cubic, solve_quadratic};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,

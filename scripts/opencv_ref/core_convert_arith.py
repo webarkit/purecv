@@ -144,6 +144,46 @@ def main() -> None:
         "divide_0.4": tolist(cv2.divide(A_U8, (0.4, 0, 0, 0))),
     }
 
+    # --- matrix (+ - * /) scalar on the other depths (arithm_op: with a scalar operand the
+    # working type is CV_32S for the add/subtract of every integer depth below 32F, and
+    # CV_64F for multiply/divide of every depth below 64F)
+    scal_src = {
+        "i8": np.array([-128, -100, -1, 0, 1, 50, 100, 127], dtype=np.int8),
+        "u16": np.array([0, 1, 100, 1000, 32768, 60000, 65534, 65535], dtype=np.uint16),
+        "i16": np.array([-32768, -30000, -1, 0, 1, 1000, 30000, 32767], dtype=np.int16),
+        "i32": np.array([-2147483648, -2147483647, -100000, -1, 0, 1, 100000, 2147483646, 2147483647], dtype=np.int32),
+        "f32": np.array([-1e10, -300.5, -1.5, -0.25, 0.0, 0.1, 1.0, 2.5, 255.5, 1e10], dtype=np.float32),
+    }
+    results["other_depths_scalar"] = {}
+    for name, a in scal_src.items():
+        blk = {"a": tolist(a)}
+        for label, sc in (("10.7", 10.7), ("10.5", 10.5), ("300", 300.0), ("neg_1.5", -1.5),
+                          ("1e5", 1e5), ("neg_70000", -70000.0), ("3e9", 3e9)):
+            blk[f"add_{label}"] = tolist(cv2.add(a, (sc, 0, 0, 0)))
+            blk[f"subtract_{label}"] = tolist(cv2.subtract(a, (sc, 0, 0, 0)))
+        for label, sc in (("0.3", 0.3), ("1.5", 1.5), ("2", 2.0), ("0.1", 0.1), ("neg_0.5", -0.5), ("1e5", 1e5)):
+            blk[f"multiply_{label}"] = tolist(cv2.multiply(a, (sc, 0, 0, 0)))
+        for label, sc in (("3", 3.0), ("0.4", 0.4), ("0", 0.0), ("neg_2.5", -2.5), ("0.1", 0.1)):
+            blk[f"divide_{label}"] = tolist(cv2.divide(a, (sc, 0, 0, 0)))
+        results["other_depths_scalar"][name] = blk
+    # f64 source: the scalar stays double
+    a64 = np.array([-1e10, -0.1, 0.0, 0.1, 1.0, 1e10], dtype=np.float64)
+    results["other_depths_scalar"]["f64"] = {
+        "a": tolist(a64),
+        "add_0.1": tolist(cv2.add(a64, (0.1, 0, 0, 0))),
+        "multiply_0.1": tolist(cv2.multiply(a64, (0.1, 0, 0, 0))),
+        "divide_0": tolist(cv2.divide(a64, (0.0, 0, 0, 0))),
+        "divide_3": tolist(cv2.divide(a64, (3.0, 0, 0, 0))),
+    }
+    # per-channel scalar on a 1 x 3 pixel, 3 channel u8 image
+    img3 = np.array([[[0, 100, 250], [10, 200, 255], [255, 1, 7]]], dtype=np.uint8)
+    results["u8c3_scalar"] = {
+        "a": tolist(img3.reshape(-1)),
+        "add_10.7_neg_1.5_300": tolist(cv2.add(img3, (10.7, -1.5, 300.0, 0)).reshape(-1)),
+        "multiply_0.3_1.5_2": tolist(cv2.multiply(img3, (0.3, 1.5, 2.0, 0)).reshape(-1)),
+        "divide_3_0.4_0": tolist(cv2.divide(img3, (3.0, 0.4, 0.0, 0)).reshape(-1)),
+    }
+
     # --- add_weighted on u8 and f32
     results["add_weighted"] = {
         "a": tolist(A_U8),

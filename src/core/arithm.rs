@@ -49,12 +49,12 @@ use crate::core::{DataType, Matrix};
 use crate::cv_log_warning;
 use crate::{cv_bail, cv_err};
 use core::ops::{BitAnd, BitOr, BitXor, Not, Sub};
-use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
+use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::core::saturate::SaturatingOps;
+use crate::core::saturate::{SaturateCast, SaturatingOps, ScalarOps};
 use crate::core::simd::SimdElement;
 
 /// Internal macro to handle feature-gated loop execution for binary operations.
@@ -326,71 +326,63 @@ macro_rules! unary_op {
 }
 
 /// Adds a scalar value to a matrix: dst = src1 + scalar
+///
+/// Channel `c` uses `scalar.v[c]`. For the integer depths the scalar is first
+/// converted to `i32` with `saturate_cast` (round half to even, so `10.7` adds
+/// 11 and `10.5` adds 10) and the sum is saturated to the depth of `src1`; see
+/// [`ScalarOps`] for the working type of every depth.
 pub fn add_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType
-        + SaturatingAdd
-        + FromPrimitive
-        + ToPrimitive
-        + Send
-        + Sync
-        + 'static
-        + Default
-        + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = s.saturating_add(&T::from_f64(sc).unwrap_or_default());
+        *d = s.add_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Subtracts a scalar value from a matrix: dst = src1 - scalar
+///
+/// The scalar is converted like in [`add_scalar`].
 pub fn subtract_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType
-        + SaturatingSub
-        + FromPrimitive
-        + ToPrimitive
-        + Send
-        + Sync
-        + 'static
-        + Default
-        + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = s.saturating_sub(&T::from_f64(sc).unwrap_or_default());
+        *d = s.sub_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Multiplies a matrix by a scalar value: dst = src1 * scalar
+///
+/// The product is computed in `f64` and converted once to the depth of `src1`
+/// with `saturate_cast` (`9 * 0.3` gives 3 for `u8`).
 pub fn multiply_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType + FromPrimitive + ToPrimitive + Send + Sync + 'static + Default + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        let val = s.to_f64().unwrap_or_default() * sc;
-        *d = T::from_f64(val).unwrap_or_default();
+        *d = s.mul_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Divides a matrix by a scalar value: dst = src1 / scalar
+///
+/// The quotient is computed in `f64` and converted once to the depth of `src1`
+/// with `saturate_cast` (`128 / 3` gives 43 for `u8`). Integer matrices
+/// divided by `0` give `0`; `f32` and `f64` follow IEEE (`inf`, `NaN`).
 pub fn divide_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType + FromPrimitive + ToPrimitive + Send + Sync + 'static + Default + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        if sc != 0.0 {
-            let val = s.to_f64().unwrap_or_default() / sc;
-            *d = T::from_f64(val).unwrap_or_default();
-        } else {
-            *d = T::default();
-        }
+        *d = s.div_scalar_op(sc);
     });
     Ok(dst)
 }
@@ -1869,6 +1861,11 @@ pub const GEMM_3_T: i32 = 4;
 ///
 /// dst = alpha * op(src1) * op(src2) + beta * op(src3)
 /// where op(X) is X or X^T based on flags.
+///
+/// The sum is accumulated in `f64` and written with `saturate_cast`, so an
+/// integer output rounds half to even and clamps to the range of `T`. OpenCV
+/// accepts only `f32` and `f64` (and complex) here, so the integer outputs are
+/// purecv's own choice.
 pub fn gemm<T>(
     src1: &Matrix<T>,
     src2: &Matrix<T>,
@@ -1878,7 +1875,7 @@ pub fn gemm<T>(
     flags: i32,
 ) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num + Copy + Send + Sync + ToPrimitive + SaturateCast + Default + 'static,
 {
     let trans1 = (flags & GEMM_1_T) != 0;
     let trans2 = (flags & GEMM_2_T) != 0;
@@ -1945,8 +1942,7 @@ where
                         };
 
                         let final_val = alpha * sum + beta * v3;
-                        row_slice[j * src1.channels + c] =
-                            T::from_f64(final_val).unwrap_or(T::zero());
+                        row_slice[j * src1.channels + c] = T::saturate_from_f64(final_val);
                     }
                 }
             });
@@ -1984,7 +1980,7 @@ where
                     };
 
                     let final_val = alpha * sum + beta * v3;
-                    dst.set(i, j, c, T::from_f64(final_val).unwrap_or(T::zero()));
+                    dst.set(i, j, c, T::saturate_from_f64(final_val));
                 }
             }
         }

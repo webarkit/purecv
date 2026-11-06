@@ -964,11 +964,10 @@ fn absdiff_min_max_u8_match_opencv() {
 // matrix (+ - * /) scalar on u8 (core_convert_arith.py, "u8_scalar")
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV converts the scalar to the working type with `saturate_cast` (10.7 -> 11,
-/// -1.5 -> -2, 300 -> 300 then the sum saturates to 255). purecv truncates 10.7 to 10 and
-/// turns every scalar outside the u8 range into 0.
+/// The scalar goes through `saturate_cast` to the `CV_32S` working type (10.7 -> 11,
+/// 10.5 -> 10, -1.5 -> -2, 300 -> 300) and the sum is then saturated to u8, so `+300` gives
+/// 255 and `+(-1.5)` subtracts 2.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #210"]
 fn add_scalar_u8_rounds_and_saturates_the_scalar() {
     let a = row(&A_U8);
     assert_eq!(
@@ -991,10 +990,10 @@ fn add_scalar_u8_rounds_and_saturates_the_scalar() {
     );
 }
 
-/// OpenCV: `saturate_cast<uchar>(a * 0.3)` computed in double, so 9 * 0.3 = 2.7 -> 3 and
-/// 127 / 0.4 = 317.5 -> 255. purecv truncates (2) and maps out-of-range results to 0.
+/// The product or quotient is computed in double and converted once with
+/// `saturate_cast<uchar>`: 9 * 0.3 = 2.7 -> 3, 128 / 3 = 42.67 -> 43 and
+/// 127 / 0.4 = 317.5 -> 255.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #210"]
 fn multiply_divide_scalar_u8_round_and_saturate() {
     let a = row(&A_U8);
     assert_eq!(
@@ -1027,6 +1026,560 @@ fn divide_scalar_u8_by_zero_matches_opencv() {
             .data,
         vec![0u8; 12]
     );
+}
+
+/// The same operations on the other depths (core_convert_arith.py, "other_depths_scalar").
+/// `arithm_op` picks the working type: `CV_32S` for add and subtract of every integer depth
+/// below 32F (the scalar goes through `saturate_cast<int>`, the sum is then saturated to the
+/// destination depth), the source float depth for f32/f64 add and subtract, and `CV_64F` for
+/// multiply and divide of every depth (the product or quotient is rounded half to even and
+/// saturated once).
+#[test]
+fn scalar_ops_other_depths_match_opencv() {
+    // i8
+    let a = row::<i8>(&[-128, -100, -1, 0, 1, 50, 100, 127]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-117, -89, 10, 11, 12, 61, 111, 127]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(10.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-128, -110, -11, -10, -9, 40, 90, 117]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(300.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![127, 127, 127, 127, 127, 127, 127, 127]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(300.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-128, -128, -128, -128, -128, -128, -128, -128]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-1.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-128, -102, -3, -2, -1, 48, 98, 125]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-38, -30, 0, 0, 0, 15, 30, 38]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(1.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-128, -128, -2, 0, 2, 75, 127, 127]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-43, -33, 0, 0, 0, 17, 33, 42]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(-2.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![51, 40, 0, 0, 0, -20, -40, -51]
+    );
+
+    // u16
+    let a = row::<u16>(&[0, 1, 100, 1000, 32768, 60000, 65534, 65535]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![11, 12, 111, 1011, 32779, 60011, 65535, 65535]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(10.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 90, 990, 32758, 59990, 65524, 65525]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-1.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 98, 998, 32766, 59998, 65532, 65533]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(100000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(100000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-70000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 30, 300, 9830, 18000, 19660, 19660]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(-0.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 0, 33, 333, 10923, 20000, 21845, 21845]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(0.4, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0, 2, 250, 2500, 65535, 65535, 65535, 65535]
+    );
+
+    // i16
+    let a = row::<i16>(&[-32768, -30000, -1, 0, 1, 1000, 30000, 32767]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-32757, -29989, 10, 11, 12, 1011, 30011, 32767]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(300.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-32768, -30300, -301, -300, -299, 700, 29700, 32467]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-1.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-32768, -30002, -3, -2, -1, 998, 29998, 32765]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-9830, -9000, 0, 0, 0, 300, 9000, 9830]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(-0.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![16384, 15000, 0, 0, 0, -500, -15000, -16384]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-10923, -10000, 0, 0, 0, 333, 10000, 10922]
+    );
+
+    // i32
+    let a = row::<i32>(&[
+        -2147483648,
+        -2147483647,
+        -100000,
+        -1,
+        0,
+        1,
+        100000,
+        2147483646,
+        2147483647,
+    ]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -2147483637,
+            -2147483636,
+            -99989,
+            10,
+            11,
+            12,
+            100011,
+            -2147483639,
+            -2147483638
+        ]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(10.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![2147483638, 2147483639, -100010, -11, -10, -9, 99990, 2147483636, 2147483637]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-1.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![2147483646, 2147483647, -100002, -3, -2, -1, 99998, 2147483644, 2147483645]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(100000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -2147383648,
+            -2147383647,
+            0,
+            99999,
+            100000,
+            100001,
+            200000,
+            -2147383650,
+            -2147383649
+        ]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(-70000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            2147413648, 2147413649, -170000, -70001, -70000, -69999, 30000, 2147413646, 2147413647
+        ]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-644245094, -644245094, -30000, 0, 0, 0, 30000, 644245094, 644245094]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.1, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-214748365, -214748365, -10000, 0, 0, 0, 10000, 214748365, 214748365]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(-0.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            1073741824,
+            1073741824,
+            50000,
+            0,
+            0,
+            0,
+            -50000,
+            -1073741823,
+            -1073741824
+        ]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-715827883, -715827882, -33333, 0, 0, 0, 33333, 715827882, 715827882]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(-2.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![858993459, 858993459, 40000, 0, 0, 0, -40000, -858993458, -858993459]
+    );
+
+    // f32
+    let a = row::<f32>(&[
+        -1e+10, -300.5, -1.5, -0.25, 0.0, 0.1, 1.0, 2.5, 255.5, 1e+10,
+    ]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-1e+10, -289.8, 9.2, 10.45, 10.7, 10.8, 11.7, 13.2, 266.2, 1e+10]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(10.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-1e+10, -311.0, -12.0, -10.75, -10.5, -10.4, -9.5, -8.0, 245.0, 1e+10]
+    );
+    assert_eq!(
+        add_scalar(&a, Scalar::new(100000.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -9.9999e+09,
+            99699.5,
+            99998.5,
+            99999.75,
+            100000.0,
+            100000.1,
+            100001.0,
+            100002.5,
+            100255.5,
+            1.00001e+10
+        ]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -3e+09,
+            -90.15,
+            -0.45,
+            -0.075,
+            0.0,
+            0.030000001,
+            0.3,
+            0.75,
+            76.65,
+            3e+09
+        ]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.1, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-1e+09, -30.05, -0.15, -0.025, 0.0, 0.01, 0.1, 0.25, 25.55, 1e+09]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(-0.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![5e+09, 150.25, 0.75, 0.125, -0.0, -0.05, -0.5, -1.25, -127.75, -5e+09]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -3.3333332e+09,
+            -100.166664,
+            -0.5,
+            -0.083333336,
+            0.0,
+            0.033333335,
+            0.33333334,
+            0.8333333,
+            85.166664,
+            3.3333332e+09
+        ]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(0.4, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-2.5e+10, -751.25, -3.75, -0.625, 0.0, 0.25, 2.5, 6.25, 638.75, 2.5e+10]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(-2.5, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![4e+09, 120.2, 0.6, 0.1, -0.0, -0.04, -0.4, -1.0, -102.2, -4e+09]
+    );
+
+    // f64
+    let a = row::<f64>(&[-10000000000.0, -0.1, 0.0, 0.1, 1.0, 10000000000.0]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(0.1, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-9999999999.9, 0.0, 0.1, 0.2, 1.1, 10000000000.1]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.1, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -1000000000.0,
+            -0.010000000000000002,
+            0.0,
+            0.010000000000000002,
+            0.1,
+            1000000000.0
+        ]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![
+            -3333333333.3333335,
+            -0.03333333333333333,
+            0.0,
+            0.03333333333333333,
+            0.3333333333333333,
+            3333333333.3333335
+        ]
+    );
+}
+
+/// The scalar operands are per channel (core_convert_arith.py, "u8c3_scalar"): channel `c`
+/// uses `Scalar::v[c]`, each converted on its own.
+#[test]
+fn scalar_ops_u8_three_channels_match_opencv() {
+    let a = Matrix::from_vec(1, 3, 3, vec![0u8, 100, 250, 10, 200, 255, 255, 1, 7]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(10.7, -1.5, 300.0, 0.0))
+            .unwrap()
+            .data,
+        vec![11u8, 98, 255, 21, 198, 255, 255, 0, 255]
+    );
+    assert_eq!(
+        multiply_scalar(&a, Scalar::new(0.3, 1.5, 2.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0u8, 150, 255, 3, 255, 255, 76, 2, 14]
+    );
+    assert_eq!(
+        divide_scalar(&a, Scalar::new(3.0, 0.4, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![0u8, 250, 0, 3, 255, 0, 85, 2, 0]
+    );
+}
+
+/// f32 and f64 divided by a zero scalar follow IEEE (core_convert_arith.py,
+/// "other_depths_scalar"): `x / 0` is `Â±inf` and `0 / 0` is NaN.
+#[test]
+fn divide_scalar_float_by_zero_matches_opencv() {
+    let a = row::<f32>(&[-1e10, -1.5, 0.0, 0.1, 255.5, 1e10]);
+    let out = divide_scalar(&a, Scalar::new(0.0, 0.0, 0.0, 0.0))
+        .unwrap()
+        .data;
+    assert_eq!(out[0], f32::NEG_INFINITY);
+    assert_eq!(out[1], f32::NEG_INFINITY);
+    assert!(out[2].is_nan());
+    assert_eq!(out[3], f32::INFINITY);
+    assert_eq!(out[4], f32::INFINITY);
+    assert_eq!(out[5], f32::INFINITY);
+
+    let a = row::<f64>(&[-1e10, -0.1, 0.0, 0.1, 1.0, 1e10]);
+    let out = divide_scalar(&a, Scalar::new(0.0, 0.0, 0.0, 0.0))
+        .unwrap()
+        .data;
+    assert_eq!(out[0], f64::NEG_INFINITY);
+    assert_eq!(out[1], f64::NEG_INFINITY);
+    assert!(out[2].is_nan());
+    assert_eq!(out[3], f64::INFINITY);
+    assert_eq!(out[4], f64::INFINITY);
+    assert_eq!(out[5], f64::INFINITY);
+}
+
+/// purecv's clamp, not an OpenCV value. OpenCV converts a scalar of 3e9 to `int` with
+/// `saturate_cast<int>(double)`, whose out-of-range result comes from the x86 conversion
+/// (`INT_MIN`), so its output for such a scalar is arbitrary (i8 + 3e9 gives 127 for
+/// negative pixels and -128 for the others). purecv clamps the scalar to the `i32` range
+/// and the result to the destination range.
+#[test]
+fn scalar_operand_beyond_i32_clamps_in_purecv() {
+    let a = row::<i8>(&[-128, 0, 127]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(3e9, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![127i8, 127, 127]
+    );
+    assert_eq!(
+        subtract_scalar(&a, Scalar::new(3e9, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![-128i8, -128, -128]
+    );
+    let a = row::<u16>(&[0, 65535]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(3e9, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![65535u16, 65535]
+    );
+    let a = row::<i32>(&[0]);
+    assert_eq!(
+        add_scalar(&a, Scalar::new(3e9, 0.0, 0.0, 0.0))
+            .unwrap()
+            .data,
+        vec![i32::MAX]
+    );
+}
+
+/// purecv's choice, not an OpenCV value. An integer matrix divided by a zero scalar gives 0
+/// at every depth (OpenCV's u8 result is 0 too, which `divide_scalar_u8_by_zero_matches_opencv`
+/// pins); OpenCV's i8, i16 and i32 results (-128, -32768, `INT_MIN`) are the x86 conversion
+/// of an infinite quotient. An integer product beyond the `i32` range clamps to the
+/// destination range where OpenCV's result is arbitrary (i16 30000 * 1e5 gives -32768).
+#[test]
+fn integer_scalar_overflow_and_zero_divisor_clamp_in_purecv() {
+    let zero = Scalar::new(0.0, 0.0, 0.0, 0.0);
+    assert_eq!(
+        divide_scalar(&row::<i8>(&[-128, 0, 127]), zero)
+            .unwrap()
+            .data,
+        vec![0i8; 3]
+    );
+    assert_eq!(
+        divide_scalar(&row::<i16>(&[-32768, 5, 32767]), zero)
+            .unwrap()
+            .data,
+        vec![0i16; 3]
+    );
+    assert_eq!(
+        divide_scalar(&row::<i32>(&[i32::MIN, 5, i32::MAX]), zero)
+            .unwrap()
+            .data,
+        vec![0i32; 3]
+    );
+    assert_eq!(
+        multiply_scalar(
+            &row::<i16>(&[30000, -30000]),
+            Scalar::new(1e5, 0.0, 0.0, 0.0)
+        )
+        .unwrap()
+        .data,
+        vec![32767i16, -32768]
+    );
+}
+
+/// `gemm` on an integer matrix. OpenCV rejects it (`CV_Assert(type == CV_32FC1 || ...)`), so
+/// there is no OpenCV value; this is purecv's choice: accumulate in f64, then round half to
+/// even and saturate to the output type like every other integer output.
+#[test]
+fn gemm_u8_output_saturates() {
+    let a = Matrix::from_vec(1, 2, 1, vec![200u8, 100]);
+    let b = Matrix::from_vec(2, 1, 1, vec![2u8, 1]);
+    let empty = Matrix::<u8>::new(0, 0, 1);
+    // 200 * 2 + 100 * 1 = 500
+    assert_eq!(gemm(&a, &b, 1.0, &empty, 0.0, 0).unwrap().data, vec![255u8]);
+    // -500 saturates at the other end
+    assert_eq!(gemm(&a, &b, -1.0, &empty, 0.0, 0).unwrap().data, vec![0u8]);
+    // 3 * 0.5 = 1.5 -> 2 and 5 * 0.5 = 2.5 -> 2 (ties to even)
+    let one = Matrix::from_vec(2, 1, 1, vec![1u8, 1]);
+    let a3 = Matrix::from_vec(1, 2, 1, vec![1u8, 2]);
+    let a5 = Matrix::from_vec(1, 2, 1, vec![2u8, 3]);
+    assert_eq!(
+        gemm(&a3, &one, 0.5, &empty, 0.0, 0).unwrap().data,
+        vec![2u8]
+    );
+    assert_eq!(
+        gemm(&a5, &one, 0.5, &empty, 0.0, 0).unwrap().data,
+        vec![2u8]
+    );
+    // alpha * A * B + beta * C: 500 * 0.25 + 0.5 * 3 = 126.5 -> 126
+    let c = Matrix::from_vec(1, 1, 1, vec![3u8]);
+    assert_eq!(gemm(&a, &b, 0.25, &c, 0.5, 0).unwrap().data, vec![126u8]);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1262,7 +1815,7 @@ fn min_max_loc_matches_opencv() {
 // Constants, initialisers, has_no_zero (core_mat_initializers.js, core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
+/// OpenCV's `CV_LOG2` is ln 2 = 0.693147â€¦ (`cvdef.h`); purecv's is log2(e) = 1.442695â€¦.
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #226"]
 fn cv_log2_is_ln_2() {
@@ -2267,7 +2820,7 @@ fn for_each_shuffle_type(seed: u64, want: [i32; 10]) {
     assert_eq!(idx, want_u8, "seed {seed}: randShuffle u8");
 }
 
-/// `core_rng_fill.py`: the `RNG::fill` paths beyond `core_rng.py` — block boundaries of the
+/// `core_rng_fill.py`: the `RNG::fill` paths beyond `core_rng.py` â€” block boundaries of the
 /// four-per-draw integer loop (3 channels: 1026-element blocks), the fast-bits and division
 /// paths on every integer depth, reversed float bounds, the ziggurat on several depths,
 /// per-channel `randn` and a long `randShuffle`.

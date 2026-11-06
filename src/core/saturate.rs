@@ -425,3 +425,124 @@ impl SaturatingOps for i32 {
         div_f32_working(self, rhs)
     }
 }
+
+/// Matrix-with-scalar arithmetic with the working types of OpenCV's `arithm_op`.
+///
+/// `cv::add`, `subtract`, `multiply` and `divide` with a `Scalar` operand pick
+/// their working type from the depth of the matrix
+/// ([`arithm.cpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.cpp#L690-L712)):
+///
+/// | operation | depth | working type | scalar conversion |
+/// |---|---|---|---|
+/// | `add`, `subtract` | `u8`, `i8`, `u16`, `i16` | `CV_32S` | `saturate_cast<int>`, then the sum is saturated to the depth |
+/// | `add`, `subtract` | `i32` | `CV_32S` | `saturate_cast<int>`, the sum wraps like [`SaturatingOps`] |
+/// | `add`, `subtract` | `f32` | `CV_32F` | the scalar is narrowed to `f32` |
+/// | `add`, `subtract` | `f64` | `CV_64F` | none |
+/// | `multiply`, `divide` | every depth | `CV_64F` | none; the result is converted once with `saturate_cast` |
+///
+/// Where OpenCV's result comes from the x86 conversion of an out-of-range
+/// double (a scalar or an integer result beyond the `i32` range) purecv clamps.
+/// An integer divided by a zero scalar gives `0` at every depth; floats follow
+/// IEEE.
+pub trait ScalarOps: SaturateCast {
+    /// `self + sc`.
+    fn add_scalar_op(self, sc: f64) -> Self;
+    /// `self - sc`.
+    fn sub_scalar_op(self, sc: f64) -> Self;
+    /// `self * sc`.
+    fn mul_scalar_op(self, sc: f64) -> Self;
+    /// `self / sc`.
+    fn div_scalar_op(self, sc: f64) -> Self;
+}
+
+macro_rules! impl_scalar_ops_int {
+    ($($t:ty),*) => {$(
+        impl ScalarOps for $t {
+            #[inline]
+            fn add_scalar_op(self, sc: f64) -> Self {
+                let c = i32::saturate_from_f64(sc) as i64;
+                Self::saturate_from_i64(self as i64 + c)
+            }
+            #[inline]
+            fn sub_scalar_op(self, sc: f64) -> Self {
+                let c = i32::saturate_from_f64(sc) as i64;
+                Self::saturate_from_i64(self as i64 - c)
+            }
+            #[inline]
+            fn mul_scalar_op(self, sc: f64) -> Self {
+                Self::saturate_from_f64(self as f64 * sc)
+            }
+            #[inline]
+            fn div_scalar_op(self, sc: f64) -> Self {
+                if sc == 0.0 {
+                    0
+                } else {
+                    Self::saturate_from_f64(self as f64 / sc)
+                }
+            }
+        }
+    )*};
+}
+
+impl_scalar_ops_int!(u8, i8, u16, i16);
+
+impl ScalarOps for i32 {
+    #[inline]
+    fn add_scalar_op(self, sc: f64) -> Self {
+        self.wrapping_add(i32::saturate_from_f64(sc))
+    }
+    #[inline]
+    fn sub_scalar_op(self, sc: f64) -> Self {
+        self.wrapping_sub(i32::saturate_from_f64(sc))
+    }
+    #[inline]
+    fn mul_scalar_op(self, sc: f64) -> Self {
+        Self::saturate_from_f64(self as f64 * sc)
+    }
+    #[inline]
+    fn div_scalar_op(self, sc: f64) -> Self {
+        if sc == 0.0 {
+            0
+        } else {
+            Self::saturate_from_f64(self as f64 / sc)
+        }
+    }
+}
+
+impl ScalarOps for f32 {
+    #[inline]
+    fn add_scalar_op(self, sc: f64) -> Self {
+        self + sc as f32
+    }
+    #[inline]
+    fn sub_scalar_op(self, sc: f64) -> Self {
+        self - sc as f32
+    }
+    #[inline]
+    fn mul_scalar_op(self, sc: f64) -> Self {
+        (self as f64 * sc) as f32
+    }
+    #[inline]
+    fn div_scalar_op(self, sc: f64) -> Self {
+        (self as f64 / sc) as f32
+    }
+}
+
+impl ScalarOps for f64 {
+    #[inline]
+    fn add_scalar_op(self, sc: f64) -> Self {
+        self + sc
+    }
+    #[inline]
+    fn sub_scalar_op(self, sc: f64) -> Self {
+        self - sc
+    }
+    #[inline]
+    fn mul_scalar_op(self, sc: f64) -> Self {
+        self * sc
+    }
+    #[inline]
+    fn div_scalar_op(self, sc: f64) -> Self {
+        self / sc
+    }
+}
