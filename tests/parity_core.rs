@@ -617,7 +617,6 @@ fn add_u8_without_overflow_matches_opencv() {
 /// OpenCV: `b != 0 ? saturate_cast<uchar>(float(a) / b) : 0`, so 7/2 = 3.5 -> 4 and
 /// 250/7 = 35.7 -> 36. purecv divides in integers (7/2 = 3).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #209"]
 fn divide_u8_rounds_the_float_quotient() {
     let dst = divide(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(dst.data, vec![0u8, 1, 33, 1, 1, 1, 36, 128, 4, 2, 0, 2]);
@@ -634,7 +633,6 @@ fn divide_u8_by_zero_is_zero_matches_opencv() {
 /// OpenCV: float division is plain IEEE division (`a / b`), so x/0 is inf, -inf or nan.
 /// purecv maps every division by zero to 0, for floats too.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #209"]
 fn divide_f32_by_zero_is_ieee() {
     let a = row(&[1.0f32, -1.0, 0.0, 4.0]);
     let b = row(&[0.0f32, 0.0, 0.0, 2.0]);
@@ -646,13 +644,301 @@ fn divide_f32_by_zero_is_ieee() {
     );
 }
 
-/// The current behaviour, pinned so that a fix shows up: x/0 is 0 for f32 as well (the fact
-/// recorded in #209; the fix deletes this test).
+/// `core_convert_arith.py`, `divide_ints`: `op_div_scale` computes the quotient of `u16`, `i8`,
+/// `i16` and `i32` in `float` and `saturate_cast`s it, so ties go to the even integer
+/// (`65535/2` -> 32768, `-7/2` -> -4), the result clamps (`-128/-1` -> 127) and `x/0` is 0.
+/// The `i32` operands go through `float` too: `16777217/1` -> 16777216, `1000000007/3` ->
+/// 333333344. Quotients of exactly 2^31 are in `divide_i32_quotient_2pow31_clamps`.
 #[test]
-fn divide_f32_by_zero_current_behaviour_is_zero() {
-    let a = row(&[1.0f32, -1.0, 0.0, 4.0]);
-    let b = row(&[0.0f32, 0.0, 0.0, 2.0]);
-    assert_eq!(divide(&a, &b).unwrap().data, vec![0.0f32, 0.0, 0.0, 2.0]);
+fn divide_i16_i32_match_opencv() {
+    // i16
+    let a = row::<i16>(&[
+        32767, -32768, -32768, 7, -7, 7, -7, 1, 100, 0, -32768, 5, 32767,
+    ]);
+    let b = row::<i16>(&[2, -1, 3, 2, 2, -2, -2, 3, 0, 5, 32767, 0, -32768]);
+    assert_eq!(
+        divide(&a, &b).unwrap().data,
+        vec![16384, 32767, -10923, 4, -4, -4, 4, 0, 0, 0, -1, 0, -1,]
+    );
+    // i32
+    let a = row::<i32>(&[
+        7,
+        -7,
+        7,
+        -7,
+        100,
+        0,
+        16777217,
+        -2147483648,
+        2147483647,
+        1000000007,
+        -5,
+        3,
+        9,
+        10,
+    ]);
+    let b = row::<i32>(&[2, 2, -2, -2, 0, 3, 1, 1, 2, 3, 0, 2, 3, 4]);
+    assert_eq!(
+        divide(&a, &b).unwrap().data,
+        vec![
+            4,
+            -4,
+            -4,
+            4,
+            0,
+            0,
+            16777216,
+            -2147483648,
+            1073741824,
+            333333344,
+            0,
+            2,
+            3,
+            2,
+        ]
+    );
+}
+
+/// `core_convert_arith.py`, `divide_ints`, i8 and u16 (the same float working type).
+#[test]
+fn divide_i8_u16_match_opencv() {
+    let a = row::<i8>(&[
+        127, -128, -128, 127, 7, -7, 7, -7, 100, -100, 5, 0, 1, -128, 127,
+    ]);
+    let b = row::<i8>(&[2, -1, 3, -1, 2, 2, -2, -2, 0, 0, 7, 0, -128, 127, 127]);
+    assert_eq!(
+        divide(&a, &b).unwrap().data,
+        vec![64, 127, -43, -127, 4, -4, -4, 4, 0, 0, 1, 0, 0, -1, 1,]
+    );
+    let a = row::<u16>(&[65535, 1, 7, 100, 65535, 0, 3, 40000, 65535, 5, 9]);
+    let b = row::<u16>(&[1, 3, 2, 0, 65535, 5, 7, 3, 2, 0, 4]);
+    assert_eq!(
+        divide(&a, &b).unwrap().data,
+        vec![65535, 0, 4, 0, 1, 0, 0, 13333, 32768, 0, 2,]
+    );
+}
+
+/// OpenCV gives `INT_MIN` for `INT_MAX / 1` and `INT_MIN / -1` (`divide_i32_2pow31`
+/// measured [-2147483648, -2147483648]): the float quotient is 2^31, outside `int`, and the
+/// x86 conversion returns `INT_MIN` instead of clamping. That is not ported; purecv clamps to
+/// `i32::MAX`, like every other out-of-range quotient.
+#[test]
+fn divide_i32_quotient_2pow31_clamps() {
+    let a = row(&[i32::MAX, i32::MIN]);
+    let b = row(&[1i32, -1]);
+    assert_eq!(divide(&a, &b).unwrap().data, vec![i32::MAX, i32::MAX]);
+}
+
+/// `u32`, `u64` and `i64` have no OpenCV depth. purecv divides them exactly (no float
+/// detour) with the same half-to-even rounding, clamping and `x/0 = 0`; not a measured value.
+#[test]
+fn divide_wide_integers_are_exact_and_never_panic() {
+    let big = (1i64 << 53) + 1;
+    let a = row(&[big, 7i64, -7, 7, -7, 5, i64::MIN, i64::MAX, 9]);
+    let b = row(&[1i64, 2, 2, -2, -2, 0, -1, 1, 2]);
+    assert_eq!(
+        divide(&a, &b).unwrap().data,
+        vec![big, 4, -4, -4, 4, 0, i64::MAX, i64::MAX, 4]
+    );
+    let ua = row(&[u64::MAX, 7u64, 5, 3, 1]);
+    let ub = row(&[1u64, 2, 0, 2, 2]);
+    assert_eq!(divide(&ua, &ub).unwrap().data, vec![u64::MAX, 4, 0, 2, 0]);
+    let wa = row(&[u32::MAX, 7u32, 9, 0]);
+    let wb = row(&[1u32, 2, 0, 0]);
+    assert_eq!(divide(&wa, &wb).unwrap().data, vec![u32::MAX, 4, 0, 0]);
+}
+
+/// `core_convert_arith.py`, `divide_u8_seeded`: 64 `u8` pairs from `RandomState(209)`, 0..256
+/// over 0..40, with two zero divisors (indices 22 and 50).
+#[test]
+fn divide_u8_seeded_fixture_matches_opencv() {
+    let a = row::<u8>(&[
+        222, 125, 240, 161, 71, 234, 171, 177, 58, 39, 31, 109, 144, 96, 201, 220, 178, 13, 34, 3,
+        157, 5, 20, 104, 230, 129, 90, 86, 231, 226, 35, 22, 159, 70, 183, 22, 147, 154, 199, 131,
+        174, 193, 229, 63, 116, 115, 230, 236, 11, 126, 200, 75, 143, 120, 141, 214, 89, 84, 94,
+        148, 39, 36, 137, 63,
+    ]);
+    let b = row::<u8>(&[
+        29, 9, 2, 16, 30, 5, 6, 12, 16, 3, 22, 16, 31, 30, 39, 16, 16, 18, 9, 29, 8, 14, 0, 8, 35,
+        16, 7, 1, 38, 7, 5, 27, 18, 32, 5, 34, 20, 6, 12, 39, 27, 18, 15, 4, 32, 32, 6, 28, 21, 36,
+        0, 7, 5, 20, 39, 27, 28, 23, 18, 39, 26, 3, 16, 5,
+    ]);
+    let want = vec![
+        8, 14, 120, 10, 2, 47, 28, 15, 4, 13, 1, 7, 5, 3, 5, 14, 11, 1, 4, 0, 20, 0, 0, 13, 7, 8,
+        13, 86, 6, 32, 7, 1, 9, 2, 37, 1, 7, 26, 17, 3, 6, 11, 15, 16, 4, 4, 38, 8, 1, 4, 0, 11,
+        29, 6, 4, 8, 3, 4, 5, 4, 2, 12, 9, 13,
+    ];
+    assert_eq!(divide(&a, &b).unwrap().data, want);
+}
+
+/// `core_convert_arith.py`, `divide_float_lanes`: 64 elements, so every SIMD lane position sees
+/// 0/0 (NaN), x/0 (+-inf) and signed zeros. Bit-exact for non-NaN values, so `-0.0` counts.
+/// Run with `--features simd` as well: the SIMD kernels must agree with the scalar path.
+#[test]
+#[allow(clippy::excessive_precision)]
+fn divide_f32_by_zero_is_ieee_across_simd_lanes() {
+    let a: [f64; 64] = [
+        0.0, -30.5, -29.5, -28.5, -27.5, 0.0, -25.5, -24.5, -23.5, -22.5, 0.0, -20.5, -19.5, -18.5,
+        -17.5, 0.0, -15.5, -14.5, -13.5, -12.5, 0.0, -10.5, -9.5, -8.5, -7.5, 0.0, -5.5, -4.5,
+        -3.5, -2.5, 0.0, -0.5, 0.5, 1.5, 2.5, 0.0, 4.5, 5.5, 6.5, 7.5, 0.0, 9.5, 10.5, 11.5, 12.5,
+        0.0, 14.5, 15.5, 16.5, 17.5, 0.0, 19.5, 20.5, 21.5, 22.5, 0.0, 24.5, 25.5, 26.5, 27.5, 0.0,
+        29.5, 30.5, 31.5,
+    ];
+    let b: [f64; 64] = [
+        0.0, -4.75, -4.5, 0.0, -4.0, -3.75, 0.0, -3.25, -3.0, 0.0, -2.5, -2.25, 0.0, -1.75, -1.5,
+        0.0, -1.0, -0.75, 0.0, -0.25, 0.0, 0.0, 0.5, 0.75, 0.0, 1.25, 1.5, 0.0, 2.0, 2.25, 0.0,
+        2.75, 3.0, 0.0, 3.5, 3.75, 0.0, 4.25, 4.5, 0.0, 5.0, 5.25, 0.0, 5.75, 6.0, 0.0, 6.5, 6.75,
+        0.0, 7.25, 7.5, 0.0, 8.0, 8.25, 0.0, 8.75, 9.0, 0.0, 9.5, 9.75, 0.0, 10.25, 10.5, 0.0,
+    ];
+    let want32: [f32; 64] = [
+        f32::NAN,
+        6.4210524559021,
+        6.55555534362793,
+        f32::NEG_INFINITY,
+        6.875,
+        -0.0,
+        f32::NEG_INFINITY,
+        7.538461685180664,
+        7.833333492279053,
+        f32::NEG_INFINITY,
+        -0.0,
+        9.11111068725586,
+        f32::NEG_INFINITY,
+        10.571428298950195,
+        11.666666984558105,
+        f32::NAN,
+        15.5,
+        19.33333396911621,
+        f32::NEG_INFINITY,
+        50.0,
+        f32::NAN,
+        f32::NEG_INFINITY,
+        -19.0,
+        -11.333333015441895,
+        f32::NEG_INFINITY,
+        0.0,
+        -3.6666667461395264,
+        f32::NEG_INFINITY,
+        -1.75,
+        -1.1111111640930176,
+        f32::NAN,
+        -0.1818181872367859,
+        0.1666666716337204,
+        f32::INFINITY,
+        0.7142857313156128,
+        0.0,
+        f32::INFINITY,
+        1.2941176891326904,
+        1.4444444179534912,
+        f32::INFINITY,
+        0.0,
+        1.8095238208770752,
+        f32::INFINITY,
+        2.0,
+        2.0833332538604736,
+        f32::NAN,
+        2.230769157409668,
+        2.2962963581085205,
+        f32::INFINITY,
+        2.4137930870056152,
+        0.0,
+        f32::INFINITY,
+        2.5625,
+        2.60606050491333,
+        f32::INFINITY,
+        0.0,
+        2.722222328186035,
+        f32::INFINITY,
+        2.78947377204895,
+        2.8205127716064453,
+        f32::NAN,
+        2.878048896789551,
+        2.904761791229248,
+        f32::INFINITY,
+    ];
+    let want64: [f64; 64] = [
+        f64::NAN,
+        6.421052631578948,
+        6.555555555555555,
+        f64::NEG_INFINITY,
+        6.875,
+        -0.0,
+        f64::NEG_INFINITY,
+        7.538461538461538,
+        7.833333333333333,
+        f64::NEG_INFINITY,
+        -0.0,
+        9.11111111111111,
+        f64::NEG_INFINITY,
+        10.571428571428571,
+        11.666666666666666,
+        f64::NAN,
+        15.5,
+        19.333333333333332,
+        f64::NEG_INFINITY,
+        50.0,
+        f64::NAN,
+        f64::NEG_INFINITY,
+        -19.0,
+        -11.333333333333334,
+        f64::NEG_INFINITY,
+        0.0,
+        -3.6666666666666665,
+        f64::NEG_INFINITY,
+        -1.75,
+        -1.1111111111111112,
+        f64::NAN,
+        -0.18181818181818182,
+        0.16666666666666666,
+        f64::INFINITY,
+        0.7142857142857143,
+        0.0,
+        f64::INFINITY,
+        1.2941176470588236,
+        1.4444444444444444,
+        f64::INFINITY,
+        0.0,
+        1.8095238095238095,
+        f64::INFINITY,
+        2.0,
+        2.0833333333333335,
+        f64::NAN,
+        2.230769230769231,
+        2.2962962962962963,
+        f64::INFINITY,
+        2.413793103448276,
+        0.0,
+        f64::INFINITY,
+        2.5625,
+        2.606060606060606,
+        f64::INFINITY,
+        0.0,
+        2.7222222222222223,
+        f64::INFINITY,
+        2.789473684210526,
+        2.8205128205128207,
+        f64::NAN,
+        2.8780487804878048,
+        2.9047619047619047,
+        f64::INFINITY,
+    ];
+    let a32: Vec<f32> = a.iter().map(|&v| v as f32).collect();
+    let b32: Vec<f32> = b.iter().map(|&v| v as f32).collect();
+    let got = divide(&row(&a32), &row(&b32)).unwrap().data;
+    assert_eq!(got.len(), 64);
+    for (i, (g, w)) in got.iter().zip(want32.iter()).enumerate() {
+        assert!(
+            (g.is_nan() && w.is_nan()) || g.to_bits() == w.to_bits(),
+            "f32 lane {i}: got {g}, OpenCV {w}"
+        );
+    }
+    let got = divide(&row(&a), &row(&b)).unwrap().data;
+    for (i, (g, w)) in got.iter().zip(want64.iter()).enumerate() {
+        assert!(
+            (g.is_nan() && w.is_nan()) || g.to_bits() == w.to_bits(),
+            "f64 lane {i}: got {g}, OpenCV {w}"
+        );
+    }
 }
 
 /// absdiff, min and max on u8 match element for element.

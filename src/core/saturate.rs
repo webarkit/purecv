@@ -49,6 +49,7 @@
 // disabled; with `std` the inherent method wins.
 #[allow(unused_imports)]
 use num_traits::Float;
+use num_traits::{AsPrimitive, Bounded};
 
 /// Rounds `v` to the nearest integer, ties to even (`cvRound` in the
 /// default FP mode).
@@ -205,7 +206,7 @@ pub fn saturate_cast<T: SaturateCast>(v: f64) -> T {
     T::saturate_from_f64(v)
 }
 
-/// Element-wise `+`, `-`, `*` and `|a - b|` with OpenCV's overflow behaviour.
+/// Element-wise `+`, `-`, `*`, `/` and `|a - b|` with OpenCV's overflow behaviour.
 ///
 /// OpenCV writes the result of `cv::add`, `cv::subtract`, `cv::multiply` and
 /// `cv::absdiff` through `saturate_cast`, so the 8- and 16-bit integer depths
@@ -222,6 +223,22 @@ pub fn saturate_cast<T: SaturateCast>(v: f64) -> T {
 /// - `u32`, `u64`, `i64` have no OpenCV depth and saturate.
 /// - `f32`, `f64`: plain IEEE arithmetic, `|a - b|` is `(a - b).abs()`.
 ///
+/// `sat_div` follows `op_div_scale` in `arithm.simd.hpp`
+/// ([source](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.simd.hpp#L1573-L1601)),
+/// with the scale of `cv::divide(a, b)` equal to 1:
+///
+/// - `u8`, `i8`, `u16`, `i16`, `i32`: the quotient is computed in `f32`
+///   (`1.0f * (float)a / b`), rounded half to even and clamped, so `7 / 2` is
+///   `4`. A zero divisor gives `0`. `i32` goes through `f32` as well, so
+///   operands above 2²⁴ lose low bits first, as in OpenCV
+///   (`16777217 / 1 = 16777216`). The one result OpenCV does not clamp is a
+///   quotient of exactly 2³¹ (`INT_MAX / 1`, `INT_MIN / -1`): the x86
+///   conversion turns it into `INT_MIN`, where purecv clamps to `i32::MAX`.
+/// - `f32`, `f64`: plain IEEE division, so `x / 0` is `±inf` and `0 / 0` is NaN.
+/// - `u32`, `u64`, `i64` have no OpenCV depth. The quotient is exact (no float
+///   detour, so it stays exact above 2⁵³), rounded half to even like the
+///   depths above and clamped; `x / 0` is `0`.
+///
 /// The one known difference for the saturating depths is `u16` multiply: OpenCV
 /// converts the `double` product through a 32-bit `int`, so `65535 * 65535`
 /// gives `0` there and `65535` here (the same `INT_MIN` effect that
@@ -235,6 +252,9 @@ pub fn saturate_cast<T: SaturateCast>(v: f64) -> T {
 /// assert_eq!(1u8.sat_sub(3), 0);
 /// assert_eq!((-128i8).sat_absdiff(127), 127);
 /// assert_eq!(i32::MAX.sat_add(1), i32::MIN); // CV_32S wraps in OpenCV
+/// assert_eq!(7u8.sat_div(2), 4); // the quotient is rounded, not truncated
+/// assert_eq!(7u8.sat_div(0), 0);
+/// assert_eq!(1.0f32.sat_div(0.0), f32::INFINITY);
 /// ```
 pub trait SaturatingOps: Copy {
     /// `self + rhs` with OpenCV's overflow behaviour.
@@ -245,10 +265,47 @@ pub trait SaturatingOps: Copy {
     fn sat_mul(self, rhs: Self) -> Self;
     /// `|self - rhs|` with OpenCV's overflow behaviour.
     fn sat_absdiff(self, rhs: Self) -> Self;
+    /// `self / rhs` with OpenCV's rounding and division-by-zero behaviour.
+    fn sat_div(self, rhs: Self) -> Self;
+}
+
+/// `a / b` for the depths OpenCV divides in `float` (`op_div_scale`): the
+/// float quotient, rounded half to even and clamped; `b == 0` gives `0`.
+#[inline]
+fn div_f32_working<T: SaturateCast + AsPrimitive<f32>>(a: T, b: T) -> T {
+    let (fa, fb): (f32, f32) = (a.as_(), b.as_());
+    if fb == 0.0 {
+        T::saturate_from_f64(0.0)
+    } else {
+        T::saturate_from_f32(fa / fb)
+    }
+}
+
+/// `a / b` rounded half to even in exact integer arithmetic, clamped to `T`;
+/// `b == 0` gives `0`. For the types that have no OpenCV depth.
+#[inline]
+fn div_exact<T: Bounded + AsPrimitive<i128>>(a: T, b: T) -> T
+where
+    i128: AsPrimitive<T>,
+{
+    let (a, b): (i128, i128) = (a.as_(), b.as_());
+    if b == 0 {
+        return AsPrimitive::<T>::as_(0i128);
+    }
+    let (q, r) = (a / b, a % b);
+    // |2r| > |b| rounds away from zero; a tie goes to the even quotient.
+    let twice = r.unsigned_abs() * 2;
+    let q = if twice > b.unsigned_abs() || (twice == b.unsigned_abs() && q % 2 != 0) {
+        q + if (a < 0) != (b < 0) { -1 } else { 1 }
+    } else {
+        q
+    };
+    let (lo, hi): (i128, i128) = (T::min_value().as_(), T::max_value().as_());
+    AsPrimitive::<T>::as_(q.clamp(lo, hi))
 }
 
 macro_rules! impl_saturating_ops_unsigned {
-    ($($t:ty),*) => {$(
+    ($div:ident; $($t:ty),*) => {$(
         impl SaturatingOps for $t {
             #[inline]
             fn sat_add(self, rhs: Self) -> Self {
@@ -266,12 +323,16 @@ macro_rules! impl_saturating_ops_unsigned {
             fn sat_absdiff(self, rhs: Self) -> Self {
                 self.abs_diff(rhs)
             }
+            #[inline]
+            fn sat_div(self, rhs: Self) -> Self {
+                $div(self, rhs)
+            }
         }
     )*};
 }
 
 macro_rules! impl_saturating_ops_signed {
-    ($($t:ty),*) => {$(
+    ($div:ident; $($t:ty),*) => {$(
         impl SaturatingOps for $t {
             #[inline]
             fn sat_add(self, rhs: Self) -> Self {
@@ -294,6 +355,10 @@ macro_rules! impl_saturating_ops_signed {
                 } else {
                     rhs.saturating_sub(self)
                 }
+            }
+            #[inline]
+            fn sat_div(self, rhs: Self) -> Self {
+                $div(self, rhs)
             }
         }
     )*};
@@ -318,12 +383,18 @@ macro_rules! impl_saturating_ops_float {
             fn sat_absdiff(self, rhs: Self) -> Self {
                 (self - rhs).abs()
             }
+            #[inline]
+            fn sat_div(self, rhs: Self) -> Self {
+                self / rhs
+            }
         }
     )*};
 }
 
-impl_saturating_ops_unsigned!(u8, u16, u32, u64);
-impl_saturating_ops_signed!(i8, i16, i64);
+impl_saturating_ops_unsigned!(div_f32_working; u8, u16);
+impl_saturating_ops_unsigned!(div_exact; u32, u64);
+impl_saturating_ops_signed!(div_f32_working; i8, i16);
+impl_saturating_ops_signed!(div_exact; i64);
 impl_saturating_ops_float!(f32, f64);
 
 // CV_32S wraps in OpenCV 4.10.0 (measured, see the trait documentation), so
@@ -348,5 +419,9 @@ impl SaturatingOps for i32 {
         } else {
             rhs.wrapping_sub(self)
         }
+    }
+    #[inline]
+    fn sat_div(self, rhs: Self) -> Self {
+        div_f32_working(self, rhs)
     }
 }

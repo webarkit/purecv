@@ -509,9 +509,34 @@ where
 /// Calculates the per-element quotient of two matrices.
 ///
 /// dst = src1 / src2
+///
+/// Follows `cv::divide(src1, src2, dst)` with `scale = 1`
+/// ([`op_div_scale`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.simd.hpp#L1573-L1601)):
+///
+/// - `u8`, `i8`, `u16`, `i16`, `i32`: the quotient is computed in `f32`,
+///   rounded half to even and clamped (`7 / 2` is `4`, `250 / 7` is `36`),
+///   and a zero divisor gives `0`. `i32` operands above 2²⁴ lose low bits
+///   in that `f32`, as in OpenCV.
+/// - `f32`, `f64`: IEEE division, `1 / 0` is `inf` and `0 / 0` is NaN.
+/// - `u32`, `u64`, `i64` have no OpenCV depth: the quotient is exact, rounded
+///   half to even and clamped, and `x / 0` is `0`.
+///
+/// See [`SaturatingOps`] for the one value OpenCV produces through the x86
+/// conversion (an `i32` quotient of exactly 2³¹), which clamps here.
+///
+/// The `scale` argument and `divide(scale, src2)` of OpenCV are not available.
 pub fn divide<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -529,13 +554,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        if !s2.is_zero() {
-            *d = s1 / s2;
-        } else {
-            *d = T::zero();
-        }
-    }, simd: simd_div);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_div(s2), simd: simd_div);
 
     Ok(dst)
 }

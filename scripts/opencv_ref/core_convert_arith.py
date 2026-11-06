@@ -92,6 +92,43 @@ def main() -> None:
     b32 = np.array([0.0, 0.0, 0.0, 2.0], dtype=np.float32)
     results["f32_divide_by_zero"] = {"a": tolist(a32), "b": tolist(b32), "divide": tolist(cv2.divide(a32, b32))}
 
+    # divide on the other depths (op_div_scale: float working type, x/0 = 0 for the integers)
+    div_i = {
+        "i8": (np.int8, [127, -128, -128, 127, 7, -7, 7, -7, 100, -100, 5, 0, 1, -128, 127],
+               [2, -1, 3, -1, 2, 2, -2, -2, 0, 0, 7, 0, -128, 127, 127]),
+        "u16": (np.uint16, [65535, 1, 7, 100, 65535, 0, 3, 40000, 65535, 5, 9],
+                [1, 3, 2, 0, 65535, 5, 7, 3, 2, 0, 4]),
+        "i16": (np.int16, [32767, -32768, -32768, 7, -7, 7, -7, 1, 100, 0, -32768, 5, 32767],
+                [2, -1, 3, 2, 2, -2, -2, 3, 0, 5, 32767, 0, -32768]),
+        "i32": (np.int32, [7, -7, 7, -7, 100, 0, 16777217, -2147483648,
+                           2147483647, 1000000007, -5, 3, 9, 10],
+                [2, 2, -2, -2, 0, 3, 1, 1, 2, 3, 0, 2, 3, 4]),
+    }
+    results["divide_ints"] = {}
+    for name, (dt, av, bv) in div_i.items():
+        a = np.array(av, dtype=dt).reshape(1, -1)
+        b = np.array(bv, dtype=dt).reshape(1, -1)
+        results["divide_ints"][name] = {"a": tolist(a), "b": tolist(b), "divide": tolist(cv2.divide(a, b))}
+    # CV_32S quotients of exactly 2^31: saturate_cast<int>(float) gives INT_MIN here, the x86
+    # conversion of an out-of-range float (not a clamp); purecv clamps instead.
+    ea = np.array([2147483647, -2147483648], dtype=np.int32).reshape(1, -1)
+    eb = np.array([1, -1], dtype=np.int32).reshape(1, -1)
+    results["divide_i32_2pow31"] = {"a": tolist(ea), "b": tolist(eb), "divide": tolist(cv2.divide(ea, eb))}
+    # a 1 x 64 u8 fixture from a seeded generator, zeros in the divisor
+    rs = np.random.RandomState(209)
+    sa = rs.randint(0, 256, size=(1, 64)).astype(np.uint8)
+    sb = rs.randint(0, 40, size=(1, 64)).astype(np.uint8)
+    results["divide_u8_seeded"] = {"a": tolist(sa), "b": tolist(sb), "divide": tolist(cv2.divide(sa, sb))}
+    # f32 / f64 with inf and nan in every position of a 64-element row (SIMD lanes)
+    lane = np.arange(64, dtype=np.float64)
+    fa = np.where(lane % 5 == 0, 0.0, lane - 31.5).reshape(1, -1)
+    fb = np.where(lane % 3 == 0, 0.0, 0.25 * (lane - 20.0)).reshape(1, -1)
+    results["divide_float_lanes"] = {
+        "a": tolist(fa), "b": tolist(fb),
+        "f32": tolist(cv2.divide(fa.astype(np.float32), fb.astype(np.float32))),
+        "f64": tolist(cv2.divide(fa, fb)),
+    }
+
     # --- matrix + scalar on u8: the scalar is saturate_cast to the working type first
     results["u8_scalar"] = {
         "a": tolist(A_U8),
