@@ -3046,21 +3046,231 @@ fn sort_and_sort_idx_match_opencv() {
 // transform / perspective_transform / linear algebra (core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV writes integer outputs through `saturate_cast`: (10+20+33)*0.3 = 18.9 -> 19 and
-/// 229.5 -> 230; purecv truncates (18, 229).
+/// Integer outputs go through `saturate_cast`, round half to even: (10+20+33)*0.3 = 18.9 -> 19
+/// and 229.5 -> 230 (`core_misc.py`, `transform`, keys `u8_m1x3_0.3` and `u8_m2x4_affine`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #220"]
 fn transform_u8_rounds_half_to_even() {
     let src = Matrix::from_vec(1, 3, 3, vec![10u8, 20, 33, 255, 255, 255, 1, 1, 1]);
     let m = Matrix::from_vec(1, 3, 1, vec![0.3f64, 0.3, 0.3]);
     let mut dst = Matrix::<u8>::new(0, 0, 0);
     transform(&src, &mut dst, &m).unwrap();
     assert_eq!(dst.data, vec![19u8, 230, 1]);
-    // affine 2x4: OpenCV [[10, 32], [255, 254], [2, 0]]; the 1.5 of the third pixel rounds to
-    // 2 in OpenCV and truncates to 1 in purecv.
+    // affine 2x4: the 1.5 of the third pixel rounds to 2 (ties to even), 10.5 to 10, 32.5 to 32.
     let affine = Matrix::from_vec(2, 4, 1, vec![1.0f64, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, -0.5]);
     transform(&src, &mut dst, &affine).unwrap();
     assert_eq!(dst.data, vec![10u8, 32, 255, 254, 2, 0]);
+}
+
+/// `core_misc.py`, `transform_working_type`, key `oor_u8`: results below 0 and above 255 clamp
+/// (3 -> 4 channels, so the generic kernel runs). Source `[[100, 200, 50], [255, 255, 255]]`,
+/// rows of `m`: `[2 0 0 | 0]`, `[0 1 0 | -300]`, `[0 1 0 | 100]`, `[-1 0 0 | 0]`.
+#[test]
+fn transform_u8_saturates_out_of_range() {
+    let src = Matrix::from_vec(1, 2, 3, vec![100u8, 200, 50, 255, 255, 255]);
+    #[rustfmt::skip]
+    let m = Matrix::from_vec(4, 4, 1, vec![
+        2.0f64, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, -300.0,
+        0.0, 1.0, 0.0, 100.0,
+        -1.0, 0.0, 0.0, 0.0,
+    ]);
+    let mut dst = Matrix::<u8>::new(0, 0, 0);
+    transform(&src, &mut dst, &m).unwrap();
+    assert_eq!(dst.channels, 4);
+    assert_eq!(dst.data, vec![200u8, 0, 255, 0, 255, 0, 255, 0]);
+}
+
+/// `core_misc.py`, `transform_working_type` (`RandomState(220)`). Every matrix entry is a
+/// multiple of 1/8 (1/4 for the `i32` and bias values), so each product and sum is exact in
+/// float and OpenCV's SIMD (FMA) and generic scalar kernels agree; ties abound and decide the
+/// result. The u8 3 -> 3 shape is left out on purpose: its SIMD kernel is fixed point and
+/// rounds ties up, which the generic path (ported here) does not.
+#[test]
+fn transform_seeded_fixture_matches_opencv() {
+    let mut dst8 = Matrix::<u8>::new(0, 0, 0);
+
+    // u8 4 -> 4, key `u8_4to4`
+    let s4 = Matrix::from_vec(
+        1,
+        8,
+        4,
+        vec![
+            115u8, 220, 15, 180, 120, 2, 112, 114, 27, 107, 182, 157, 142, 204, 47, 9, 111, 0, 40,
+            58, 18, 105, 73, 181, 245, 162, 0, 42, 181, 255, 32, 170,
+        ],
+    );
+    #[rustfmt::skip]
+    let m4 = Matrix::from_vec(4, 4, 1, vec![
+        0.25f64, 0.0, 0.25, -0.25,
+        0.0, -0.25, 0.5, 0.625,
+        0.125, 0.125, 0.625, -0.25,
+        0.375, 0.375, -0.125, -0.125,
+    ]);
+    transform(&s4, &mut dst8, &m4).unwrap();
+    assert_eq!(
+        dst8.data,
+        vec![
+            0u8, 65, 6, 101, 30, 127, 57, 18, 13, 162, 91, 8, 45, 0, 70, 123, 23, 56, 24, 29, 0,
+            123, 16, 14, 51, 0, 40, 147, 11, 58, 32, 138
+        ]
+    );
+
+    // u8 3 -> 2 affine (keys `u8_3to2_affine`) and 3 -> 1 (key `u8_3to1`)
+    let s3 = Matrix::from_vec(
+        1,
+        8,
+        3,
+        vec![
+            94u8, 248, 30, 126, 8, 157, 224, 24, 111, 156, 203, 255, 34, 164, 160, 14, 176, 245,
+            127, 15, 20, 194, 152, 186,
+        ],
+    );
+    let m3to2 = Matrix::from_vec(
+        2,
+        4,
+        1,
+        vec![0.375f64, 0.5, -0.125, 0.0, 0.125, 0.5, -0.25, 0.75],
+    );
+    transform(&s3, &mut dst8, &m3to2).unwrap();
+    assert_eq!(
+        dst8.data,
+        vec![156u8, 129, 32, 0, 82, 13, 128, 58, 75, 47, 63, 29, 53, 19, 126, 54]
+    );
+    let m3to1 = Matrix::from_vec(1, 3, 1, vec![0.25f64, 0.375, 0.375]);
+    transform(&s3, &mut dst8, &m3to1).unwrap();
+    assert_eq!(dst8.data, vec![128u8, 93, 107, 211, 130, 161, 45, 175]);
+
+    // i16 3 -> 2 affine, same matrix, key `i16_3to2_affine`: float working type
+    let s16 = Matrix::from_vec(
+        1,
+        8,
+        3,
+        vec![
+            -2049i16, 2682, 1172, 2070, -2970, 1732, 1812, -2546, -839, 2147, -1486, 1402, 2430,
+            1377, 2967, 740, -310, 717, -1970, -112, 2017, -1486, -39, -2078,
+        ],
+    );
+    let mut dst16 = Matrix::<i16>::new(0, 0, 0);
+    transform(&s16, &mut dst16, &m3to2).unwrap();
+    assert_eq!(
+        dst16.data,
+        vec![
+            426i16, 793, -925, -1658, -489, -836, -113, -824, 1229, 251, 33, -241, -1047, -806,
+            -317, 315
+        ]
+    );
+
+    // i32 3 -> 2 affine, key `i32_3to2_affine`: the matrix and the sum are f64, so the first
+    // pixel keeps 16777217 (an f32 working type would give 16777216) and the second result
+    // 25165819.5 rounds to the even 25165820.
+    let s32 = Matrix::from_vec(
+        1,
+        6,
+        3,
+        vec![
+            16777217i32,
+            3,
+            -16777217,
+            -80624759,
+            103227088,
+            39522842,
+            133865647,
+            -57659356,
+            20879032,
+            -177023738,
+            138849448,
+            117637714,
+            117414239,
+            237643101,
+            165583266,
+            -221647597,
+            235278206,
+            -250759144,
+        ],
+    );
+    let m32 = Matrix::from_vec(
+        2,
+        4,
+        1,
+        vec![-0.5f64, 1.5, -2.0, -0.75, 0.25, -1.75, -1.25, -0.75],
+    );
+    let mut dst32 = Matrix::<i32>::new(0, 0, 0);
+    transform(&s32, &mut dst32, &m32).unwrap();
+    assert_eq!(
+        dst32.data,
+        vec![
+            25165829i32,
+            25165820,
+            116107327,
+            -250207147,
+            -195179922,
+            108271494,
+            61510612,
+            -434289612,
+            -33409001,
+            -593500950,
+            965259395,
+            -153699830
+        ]
+    );
+}
+
+/// `core_misc.py`, `transform_working_type`, keys `u8_1ch_half`, `u8_1ch_half_plus_quarter`
+/// (`scn == dcn == 1` is `convertTo(alpha, beta)`) and `u8_diag_3to3` (a diagonal `m` runs the
+/// `diagtransform` kernel).
+#[test]
+fn transform_single_channel_and_diagonal_match_opencv() {
+    let one = Matrix::from_vec(1, 7, 1, vec![0u8, 1, 2, 3, 4, 5, 200]);
+    let mut dst = Matrix::<u8>::new(0, 0, 0);
+    transform(&one, &mut dst, &Matrix::from_vec(1, 1, 1, vec![0.5f64])).unwrap();
+    assert_eq!(dst.data, vec![0u8, 0, 1, 2, 2, 2, 100]);
+    transform(
+        &one,
+        &mut dst,
+        &Matrix::from_vec(1, 2, 1, vec![0.5f64, 0.25]),
+    )
+    .unwrap();
+    assert_eq!(dst.data, vec![0u8, 1, 1, 2, 2, 3, 100]);
+
+    let src = Matrix::from_vec(
+        1,
+        4,
+        3,
+        vec![94u8, 248, 30, 126, 8, 157, 224, 24, 111, 156, 203, 255],
+    );
+    #[rustfmt::skip]
+    let diag = Matrix::from_vec(3, 4, 1, vec![
+        0.5f64, 0.0, 0.0, 0.5,
+        0.0, 0.25, 0.0, -0.5,
+        0.0, 0.0, 1.5, 0.25,
+    ]);
+    transform(&src, &mut dst, &diag).unwrap();
+    assert_eq!(
+        dst.data,
+        vec![48u8, 62, 45, 64, 2, 236, 112, 6, 167, 78, 50, 255]
+    );
+}
+
+/// Types with no OpenCV depth (`u32`, `u64`, `i64`) use the `f64` working type and must not
+/// panic; they round half to even and clamp like the others.
+#[test]
+fn transform_types_without_opencv_depth_use_f64() {
+    let m = Matrix::from_vec(1, 3, 1, vec![0.5f64, 0.5, 0.5]);
+    let mut d32 = Matrix::<u32>::new(0, 0, 0);
+    transform(
+        &Matrix::from_vec(1, 2, 3, vec![1u32, 2, 0, 5, 5, 6]),
+        &mut d32,
+        &m,
+    )
+    .unwrap();
+    assert_eq!(d32.data, vec![2u32, 8]); // 1.5 -> 2, 8
+    let mut d64 = Matrix::<i64>::new(0, 0, 0);
+    let neg = Matrix::from_vec(1, 1, 3, vec![-5i64, -5, -1]);
+    transform(&neg, &mut d64, &m).unwrap();
+    assert_eq!(d64.data, vec![-6i64]); // -5.5 -> -6
+    let mut du = Matrix::<u64>::new(0, 0, 0);
+    transform(&Matrix::from_vec(1, 1, 3, vec![u64::MAX; 3]), &mut du, &m).unwrap();
+    assert_eq!(du.data, vec![u64::MAX]);
 }
 
 #[test]
@@ -3069,12 +3279,10 @@ fn transform_and_perspective_transform_match_opencv() {
     let m = Matrix::from_vec(2, 4, 1, vec![1.0f64, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, -0.5]);
     let mut dst = Matrix::<u8>::new(0, 0, 0);
     transform(&src, &mut dst, &m).unwrap();
-    // OpenCV: [[10, 32], [255, 254], [2, 0]]. Five of the six values agree (10.5 -> 10 and
-    // 32.5 -> 32 by ties-to-even in OpenCV, by truncation here; 255.5 saturates; 0.5 -> 0).
-    // The sixth, 1.5 -> 2 (OpenCV) vs 1 (purecv), is asserted in the ignored test above.
+    // OpenCV: [[10, 32], [255, 254], [2, 0]]: 10.5 -> 10 and 32.5 -> 32 (ties to even), 255.5
+    // saturates, 1.5 -> 2, 0.5 -> 0.
     assert_eq!(dst.channels, 2);
-    assert_eq!(&dst.data[..4], &[10u8, 32, 255, 254]);
-    assert_eq!(dst.data[5], 0);
+    assert_eq!(dst.data, vec![10u8, 32, 255, 254, 2, 0]);
     let srcf = Matrix::from_vec(
         1,
         3,

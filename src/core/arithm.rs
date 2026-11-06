@@ -55,7 +55,9 @@ use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::core::saturate::{SaturateCast, SaturatingOps, ScalarOps, WeightedOps};
+use crate::core::saturate::{
+    SaturateCast, SaturatingOps, ScalarOps, TransformOps, TransformWork, WeightedOps,
+};
 use crate::core::simd::SimdElement;
 
 /// Internal macro to handle feature-gated loop execution for binary operations.
@@ -3013,6 +3015,20 @@ where
 ///
 /// Mirrors OpenCV's `cv::transform`.
 ///
+/// The arithmetic runs in the working type of the depth, see [`TransformOps`]:
+/// the matrix is narrowed to `f32` for `u8`, `i8`, `u16`, `i16` and `f32`, and
+/// kept in `f64` for `i32` and `f64`. Integer outputs are rounded half to even
+/// and clamped to the range of the type (`saturate_cast`), so
+/// `(10 + 20 + 33) * 0.3 = 18.9` is `19` and `300` is `255` for `u8`.
+/// `u32`, `u64` and `i64` have no OpenCV depth and use `f64`. The summation
+/// order follows the kernels of
+/// [`matmul.simd.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matmul.simd.hpp#L1380-L1448):
+/// the bias is added last for the 2→2, 3→3, 3→1 and 4→4 shapes and first
+/// otherwise, and a square `m` whose off-diagonal entries are all within
+/// `FLT_EPSILON` (`DBL_EPSILON` for the `f64` working type) of zero is applied
+/// per channel. The fixed-point and fused multiply-add SIMD kernels of the
+/// reference build are not reproduced; they can differ on a rounding tie.
+///
 /// # Arguments
 /// * `src` - Input matrix with `scn` channels.
 /// * `dst` - Output matrix; will be (re)allocated with `dcn` channels.
@@ -3021,11 +3037,10 @@ where
 ///
 /// # Errors
 /// Returns `PureCvError::InvalidDimensions` if `m` dimensions are
-/// incompatible with the source channel count.
-#[allow(clippy::needless_range_loop)]
+/// incompatible with the source channel count, or if `m` has no rows.
 pub fn transform<T>(src: &Matrix<T>, dst: &mut Matrix<T>, m: &Matrix<f64>) -> Result<()>
 where
-    T: Default + Clone + Copy + FromPrimitive + ToPrimitive + Send + Sync + 'static,
+    T: TransformOps + Default + Clone + Send + Sync + 'static,
 {
     if m.channels != 1 {
         cv_bail!(
@@ -3040,6 +3055,16 @@ where
     let dcn = m.rows;
     let m_cols = m.cols;
 
+    if scn == 0 || dcn == 0 {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "transform: source channels ({}) and matrix rows ({}) must be non-zero",
+            scn,
+            dcn
+        );
+    }
+
     // m must be dcn × scn  OR  dcn × (scn + 1)  (affine)
     if m_cols != scn && m_cols != scn + 1 {
         cv_bail!(
@@ -3053,7 +3078,25 @@ where
         );
     }
 
-    let affine = m_cols == scn + 1;
+    // `m` as a `dcn × (scn + 1)` matrix of the working type; a missing bias column is zero
+    // (`matmul.dispatch.cpp`, the `tmp` matrix converted with `convertTo`).
+    let stride = scn + 1;
+    let mut coef = vec![<T::Work as TransformWork>::from_coefficient(0.0); dcn * stride];
+    for r in 0..dcn {
+        for c in 0..m_cols {
+            coef[r * stride + c] =
+                <T::Work as TransformWork>::from_coefficient(m.data[r * m_cols + c]);
+        }
+    }
+
+    // scn == dcn > 1 with every off-diagonal entry within epsilon of zero: per-channel kernel.
+    let diag = scn == dcn
+        && scn > 1
+        && (0..dcn).all(|i| {
+            (0..scn).all(|j| i == j || coef[i * stride + j].to_f64().abs() <= T::Work::EPSILON)
+        });
+    // The shapes `transform_` unrolls add the bias last.
+    let bias_last = matches!((scn, dcn), (2, 2) | (3, 3) | (3, 1) | (4, 4));
 
     dst.create(src.rows, src.cols, dcn);
 
@@ -3063,41 +3106,55 @@ where
             .par_chunks_exact_mut(dcn)
             .zip(src.data.par_chunks_exact(scn))
             .for_each(|(d_chunk, s_chunk)| {
-                for r in 0..dcn {
-                    let row_base = r * m_cols;
-                    let mut val = 0.0;
-                    for c in 0..scn {
-                        val += m.data[row_base + c] * s_chunk[c].to_f64().unwrap_or(0.0);
-                    }
-                    if affine {
-                        val += m.data[row_base + scn];
-                    }
-                    d_chunk[r] = T::from_f64(val).unwrap_or_default();
-                }
+                transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last);
             });
     }
 
     #[cfg(not(feature = "parallel"))]
     {
-        let pixel_count = src.rows * src.cols;
-        for p in 0..pixel_count {
-            let s_off = p * scn;
-            let d_off = p * dcn;
-            for r in 0..dcn {
-                let row_base = r * m_cols;
-                let mut val = 0.0;
-                for c in 0..scn {
-                    val += m.data[row_base + c] * src.data[s_off + c].to_f64().unwrap_or(0.0);
-                }
-                if affine {
-                    val += m.data[row_base + scn];
-                }
-                dst.data[d_off + r] = T::from_f64(val).unwrap_or_default();
-            }
-        }
+        dst.data
+            .chunks_exact_mut(dcn)
+            .zip(src.data.chunks_exact(scn))
+            .for_each(|(d_chunk, s_chunk)| {
+                transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last);
+            });
     }
 
     Ok(())
+}
+
+/// One pixel of [`transform`]: `coef` is the `dcn × (scn + 1)` matrix in the working type.
+///
+/// `diag` is `diagtransform_`, `bias_last` the unrolled shapes of `transform_` and the
+/// rest its generic loop (`s = bias; s += m[k] * src[k]`).
+#[inline]
+fn transform_pixel<T: TransformOps>(
+    src: &[T],
+    dst: &mut [T],
+    coef: &[T::Work],
+    diag: bool,
+    bias_last: bool,
+) {
+    let stride = src.len() + 1;
+    for (j, out) in dst.iter_mut().enumerate() {
+        let row = &coef[j * stride..(j + 1) * stride];
+        let s = if diag {
+            src[j].to_work() * row[j] + row[src.len()]
+        } else if bias_last {
+            let mut s = row[0] * src[0].to_work();
+            for k in 1..src.len() {
+                s = s + row[k] * src[k].to_work();
+            }
+            s + row[src.len()]
+        } else {
+            let mut s = row[src.len()];
+            for (k, v) in src.iter().enumerate() {
+                s = s + row[k] * v.to_work();
+            }
+            s
+        };
+        *out = s.saturate_to();
+    }
 }
 
 /// Performs the perspective matrix transformation of vectors.

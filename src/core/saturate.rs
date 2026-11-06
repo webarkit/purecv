@@ -598,3 +598,88 @@ macro_rules! impl_weighted_ops_f64 {
 
 impl_weighted_ops_f32!(u8, i8, u16, i16);
 impl_weighted_ops_f64!(i32, u32, u64, i64, f32, f64);
+
+/// The floating-point type (`f32` or `f64`) a [`TransformOps`] depth computes in.
+///
+/// It only carries what `cv::transform` needs: `+`, `*`, the conversion of a
+/// matrix coefficient and the final `saturate_cast`.
+pub trait TransformWork:
+    Copy + Send + Sync + core::ops::Add<Output = Self> + core::ops::Mul<Output = Self>
+{
+    /// `saturate_cast<WT>(double)`: `f32` narrows the coefficient, `f64` keeps it.
+    fn from_coefficient(v: f64) -> Self;
+    /// The value as `f64`, for comparing against a tolerance.
+    fn to_f64(self) -> f64;
+    /// `saturate_cast<T>(self)` with the precision of the working type.
+    fn saturate_to<T: SaturateCast>(self) -> T;
+    /// The tolerance under which `cv::transform` treats an off-diagonal
+    /// coefficient as zero: `FLT_EPSILON` for `f32`, `DBL_EPSILON` for `f64`.
+    const EPSILON: f64;
+}
+
+impl TransformWork for f32 {
+    #[inline]
+    fn from_coefficient(v: f64) -> Self {
+        v as f32
+    }
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    #[inline]
+    fn saturate_to<T: SaturateCast>(self) -> T {
+        T::saturate_from_f32(self)
+    }
+    const EPSILON: f64 = f32::EPSILON as f64;
+}
+
+impl TransformWork for f64 {
+    #[inline]
+    fn from_coefficient(v: f64) -> Self {
+        v
+    }
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self
+    }
+    #[inline]
+    fn saturate_to<T: SaturateCast>(self) -> T {
+        T::saturate_from_f64(self)
+    }
+    const EPSILON: f64 = f64::EPSILON;
+}
+
+/// Element types `cv::transform` can process, and the precision it uses for them.
+///
+/// `cv::transform` converts the matrix to `CV_64F` for `CV_32S` and `CV_64F` and to
+/// `CV_32F` for every other depth, and the kernels in
+/// [`matmul.simd.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matmul.simd.hpp#L1380-L1803)
+/// accumulate in the same type (`WT`):
+///
+/// | depth | working type | source |
+/// |---|---|---|
+/// | `u8`, `i8`, `u16`, `i16`, `f32` | `f32`: the coefficients are narrowed first | `transform_8u` … `transform_32f` |
+/// | `i32`, `f64` | `f64` | `transform_32s`, `transform_64f` |
+///
+/// `u32`, `u64` and `i64` have no OpenCV depth and use `f64`.
+pub trait TransformOps: SaturateCast {
+    /// The working type.
+    type Work: TransformWork;
+    /// The element as the working type.
+    fn to_work(self) -> Self::Work;
+}
+
+macro_rules! impl_transform_ops {
+    ($work:ty; $($t:ty),*) => {$(
+        impl TransformOps for $t {
+            type Work = $work;
+            #[inline]
+            fn to_work(self) -> $work {
+                self as $work
+            }
+        }
+    )*};
+}
+
+impl_transform_ops!(f32; u8, i8, u16, i16, f32);
+impl_transform_ops!(f64; i32, u32, u64, i64, f64);
