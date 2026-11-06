@@ -118,13 +118,8 @@ fn convert_to_f32_to_u8_current_behaviour_truncates_and_errors() {
 const A_U8: [u8; 12] = [0, 1, 100, 127, 128, 200, 250, 255, 7, 5, 1, 9];
 const B_U8: [u8; 12] = [0, 1, 3, 100, 128, 255, 7, 2, 2, 2, 3, 4];
 
-/// OpenCV: `saturate_cast<uchar>(a + b)`. The `simd` u8 kernel already saturates (#208), so
-/// this test runs and passes with that feature and is an expected failure without it.
+/// OpenCV: `saturate_cast<uchar>(a + b)`.
 #[test]
-#[cfg_attr(
-    not(feature = "simd"),
-    ignore = "diverges from OpenCV 4.10.0, see #208"
-)]
 fn add_u8_saturates() {
     let dst = add(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(
@@ -133,13 +128,8 @@ fn add_u8_saturates() {
     );
 }
 
-/// OpenCV: `saturate_cast<uchar>(a - b)` clamps at 0. The `simd` u8 kernel already saturates
-/// (#208), so this test runs and passes with that feature and is an expected failure without it.
+/// OpenCV: `saturate_cast<uchar>(a - b)` clamps at 0.
 #[test]
-#[cfg_attr(
-    not(feature = "simd"),
-    ignore = "diverges from OpenCV 4.10.0, see #208"
-)]
 fn subtract_u8_saturates_at_zero() {
     let dst = subtract(&row(&B_U8), &row(&A_U8)).unwrap();
     assert_eq!(dst.data, vec![0u8, 0, 0, 0, 0, 55, 0, 0, 0, 0, 2, 0]);
@@ -147,13 +137,206 @@ fn subtract_u8_saturates_at_zero() {
 
 /// OpenCV: `saturate_cast<uchar>(a * b)`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #208"]
 fn multiply_u8_saturates() {
     let dst = multiply(&row(&A_U8), &row(&B_U8)).unwrap();
     assert_eq!(
         dst.data,
         vec![0u8, 1, 255, 255, 255, 255, 255, 255, 14, 10, 3, 36]
     );
+}
+
+/// `add`, `subtract`, `multiply`, `absdiff` at the type bounds (core_saturating_ops.py).
+/// i8, u16 and i16 saturate; i32 wraps (OpenCV 4.10.0 `add`/`subtract`/`multiply`/`absdiff`
+/// on CV_32S compute in 32-bit integers, e.g. `INT_MAX + 1 = INT_MIN`).
+#[test]
+fn add_sub_mul_bounds_match_opencv() {
+    macro_rules! check {
+        ($t:ty, $a:expr, $b:expr, $add_e:expr, $sub_e:expr, $mul_e:expr $(,)?) => {{
+            let ma = row::<$t>($a);
+            let mb = row::<$t>($b);
+            assert_eq!(add(&ma, &mb).unwrap().data, $add_e.to_vec(), "add");
+            assert_eq!(
+                subtract(&ma, &mb).unwrap().data,
+                $sub_e.to_vec(),
+                "subtract"
+            );
+            assert_eq!(
+                multiply(&ma, &mb).unwrap().data,
+                $mul_e.to_vec(),
+                "multiply"
+            );
+        }};
+    }
+
+    check!(
+        i8,
+        &[127, 127, -128, -128, -128, 127, 0, 0, 1, 3, 64, -65, 127, -128],
+        &[1, 127, -1, -128, 127, -128, -128, 127, 3, 1, 2, 2, 2, 2],
+        &[127, 127, -128, -128, -1, -1, -128, 127, 4, 4, 66, -63, 127, -126],
+        &[126, 0, -127, 0, -128, 127, 127, -127, -2, 2, 62, -67, 125, -128],
+        &[127, 127, 127, 127, -128, -128, 0, 0, 3, 3, 127, -128, 127, -128],
+    );
+    // OpenCV's u16 multiply gives 0 for 65535 * 65535 (index 1): the double product is
+    // converted through a 32-bit int, which overflows. purecv saturates to 65535, the same
+    // documented divergence as `saturate_cast` for |v| >= 2^31.
+    check!(
+        u16,
+        &[65535, 65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
+        &[1, 65535, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
+        &[65535, 65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
+        &[65534, 0, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
+        &[65535, 65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
+    );
+    check!(
+        i16,
+        &[32767, 32767, -32768, -32768, -32768, 32767, 0, 0, 1, 3, 16384, -16385, 32767, -32768],
+        &[1, 32767, -1, -32768, 32767, -32768, -32768, 32767, 3, 1, 2, 2, 2, 2],
+        &[32767, 32767, -32768, -32768, -1, -1, -32768, 32767, 4, 4, 16386, -16383, 32767, -32766],
+        &[32766, 0, -32767, 0, -32768, 32767, 32767, -32767, -2, 2, 16382, -16387, 32765, -32768],
+        &[32767, 32767, 32767, 32767, -32768, -32768, 0, 0, 3, 3, 32767, -32768, 32767, -32768],
+    );
+    check!(
+        i32,
+        &[
+            2147483647,
+            2147483647,
+            -2147483648,
+            -2147483648,
+            -2147483648,
+            2147483647,
+            0,
+            0,
+            1,
+            3,
+            1073741824,
+            -1073741825,
+            2147483647,
+            -2147483648,
+        ],
+        &[
+            1,
+            2147483647,
+            -1,
+            -2147483648,
+            2147483647,
+            -2147483648,
+            -2147483648,
+            2147483647,
+            3,
+            1,
+            2,
+            2,
+            2,
+            2
+        ],
+        &[
+            -2147483648,
+            -2,
+            2147483647,
+            0,
+            -1,
+            -1,
+            -2147483648,
+            2147483647,
+            4,
+            4,
+            1073741826,
+            -1073741823,
+            -2147483647,
+            -2147483646,
+        ],
+        &[
+            2147483646,
+            0,
+            -2147483647,
+            0,
+            1,
+            -1,
+            -2147483648,
+            -2147483647,
+            -2,
+            2,
+            1073741822,
+            -1073741827,
+            2147483645,
+            2147483646,
+        ],
+        &[
+            2147483647,
+            1,
+            -2147483648,
+            0,
+            -2147483648,
+            -2147483648,
+            0,
+            0,
+            3,
+            3,
+            -2147483648,
+            2147483646,
+            -2,
+            0,
+        ],
+    );
+}
+
+/// The `simd` u8 kernels run on 64 elements (several lanes) and must give the same
+/// saturated values as the scalar path.
+#[test]
+fn add_u8_saturates_across_simd_lanes() {
+    let a = vec![128u8; 64];
+    let b = vec![128u8; 64];
+    assert_eq!(add(&row(&a), &row(&b)).unwrap().data, vec![255u8; 64]);
+    let c = vec![1u8; 64];
+    let d = vec![3u8; 64];
+    assert_eq!(subtract(&row(&c), &row(&d)).unwrap().data, vec![0u8; 64]);
+    assert_eq!(multiply(&row(&a), &row(&b)).unwrap().data, vec![255u8; 64]);
+}
+
+/// 64-bit integers are added and multiplied exactly above 2^53 (never through `f64`) and
+/// saturate at their own bounds; they have no OpenCV depth.
+#[test]
+fn add_mul_i64_keep_exact_values_above_2_53() {
+    let big = (1i64 << 53) + 1;
+    let a = row(&[big, i64::MAX, i64::MIN, -big]);
+    let b = row(&[2i64, 1, -1, 3]);
+    assert_eq!(
+        add(&a, &b).unwrap().data,
+        vec![big + 2, i64::MAX, i64::MIN, -big + 3]
+    );
+    assert_eq!(
+        multiply(&a, &b).unwrap().data,
+        vec![2 * big, i64::MAX, i64::MAX, -3 * big]
+    );
+    let ubig = (1u64 << 53) + 1;
+    let ua = row(&[ubig, u64::MAX, 0u64]);
+    let ub = row(&[3u64, 1, 1]);
+    assert_eq!(add(&ua, &ub).unwrap().data, vec![ubig + 3, u64::MAX, 1]);
+    assert_eq!(
+        multiply(&ua, &ub).unwrap().data,
+        vec![3 * ubig, u64::MAX, 0]
+    );
+    assert_eq!(subtract(&ub, &ua).unwrap().data, vec![0u64, 0, 1]);
+}
+
+/// OpenCV `absdiff` on CV_8S saturates: |127 - (-128)| = 255 -> 127 (core_saturating_ops.py).
+/// Both spellings (`absdiff`, `abs_diff`) are covered.
+#[test]
+fn absdiff_i8_bounds_match_opencv() {
+    let a = row(&[
+        127i8, 127, -128, -128, -128, 127, 0, 0, 1, 3, 64, -65, 127, -128,
+    ]);
+    let b = row(&[1i8, 127, -1, -128, 127, -128, -128, 127, 3, 1, 2, 2, 2, 2]);
+    let expected = vec![126i8, 0, 127, 0, 127, 127, 127, 127, 2, 2, 62, 67, 125, 127];
+    assert_eq!(absdiff(&a, &b).unwrap().data, expected);
+    assert_eq!(abs_diff(&a, &b).unwrap().data, expected);
+    // The scalar variant clamps the same way.
+    let s = abs_diff_scalar(&row(&[127i8, -128, 0]), Scalar::new(-128i8, 0, 0, 0)).unwrap();
+    assert_eq!(s.data, vec![127i8, 0, 127]);
+    // i32 wraps like OpenCV: |INT_MIN - INT_MAX| = -1, |0 - INT_MIN| = INT_MIN.
+    let c = row(&[i32::MIN, 0, i32::MAX]);
+    let d = row(&[i32::MAX, i32::MIN, i32::MIN]);
+    assert_eq!(absdiff(&c, &d).unwrap().data, vec![-1, i32::MIN, -1]);
 }
 
 /// Sums that fit in u8 match (no saturation involved).

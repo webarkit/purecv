@@ -152,3 +152,149 @@ impl SaturateCast for f64 {
 pub fn saturate_cast<T: SaturateCast>(v: f64) -> T {
     T::saturate_from_f64(v)
 }
+
+/// Element-wise `+`, `-`, `*` and `|a - b|` with OpenCV's overflow behaviour.
+///
+/// OpenCV writes the result of `cv::add`, `cv::subtract`, `cv::multiply` and
+/// `cv::absdiff` through `saturate_cast`, so the 8- and 16-bit integer depths
+/// clamp to the range of the type instead of wrapping or panicking. The
+/// operations here run in the native width of the type and never go through
+/// `f64`, so 64-bit values above 2⁵³ stay exact.
+///
+/// - `u8`, `i8`, `u16`, `i16`: saturate (`saturating_*`).
+/// - `i32` (`CV_32S`): **wraps** (`wrapping_*`). OpenCV 4.10.0 computes these
+///   four operations in 32-bit integers, measured with
+///   `scripts/opencv_ref/core_saturating_ops.py`: `INT_MAX + 1 = INT_MIN`,
+///   `INT_MIN - 1 = INT_MAX`, `INT_MAX * 2 = -2` and
+///   `|INT_MIN - INT_MAX| = -1`.
+/// - `u32`, `u64`, `i64` have no OpenCV depth and saturate.
+/// - `f32`, `f64`: plain IEEE arithmetic, `|a - b|` is `(a - b).abs()`.
+///
+/// The one known difference for the saturating depths is `u16` multiply: OpenCV
+/// converts the `double` product through a 32-bit `int`, so `65535 * 65535`
+/// gives `0` there and `65535` here (the same `INT_MIN` effect that
+/// [`SaturateCast`] documents).
+///
+/// # Example
+/// ```
+/// use purecv::core::SaturatingOps;
+///
+/// assert_eq!(200u8.sat_add(100), 255);
+/// assert_eq!(1u8.sat_sub(3), 0);
+/// assert_eq!((-128i8).sat_absdiff(127), 127);
+/// assert_eq!(i32::MAX.sat_add(1), i32::MIN); // CV_32S wraps in OpenCV
+/// ```
+pub trait SaturatingOps: Copy {
+    /// `self + rhs` with OpenCV's overflow behaviour.
+    fn sat_add(self, rhs: Self) -> Self;
+    /// `self - rhs` with OpenCV's overflow behaviour.
+    fn sat_sub(self, rhs: Self) -> Self;
+    /// `self * rhs` with OpenCV's overflow behaviour.
+    fn sat_mul(self, rhs: Self) -> Self;
+    /// `|self - rhs|` with OpenCV's overflow behaviour.
+    fn sat_absdiff(self, rhs: Self) -> Self;
+}
+
+macro_rules! impl_saturating_ops_unsigned {
+    ($($t:ty),*) => {$(
+        impl SaturatingOps for $t {
+            #[inline]
+            fn sat_add(self, rhs: Self) -> Self {
+                self.saturating_add(rhs)
+            }
+            #[inline]
+            fn sat_sub(self, rhs: Self) -> Self {
+                self.saturating_sub(rhs)
+            }
+            #[inline]
+            fn sat_mul(self, rhs: Self) -> Self {
+                self.saturating_mul(rhs)
+            }
+            #[inline]
+            fn sat_absdiff(self, rhs: Self) -> Self {
+                self.abs_diff(rhs)
+            }
+        }
+    )*};
+}
+
+macro_rules! impl_saturating_ops_signed {
+    ($($t:ty),*) => {$(
+        impl SaturatingOps for $t {
+            #[inline]
+            fn sat_add(self, rhs: Self) -> Self {
+                self.saturating_add(rhs)
+            }
+            #[inline]
+            fn sat_sub(self, rhs: Self) -> Self {
+                self.saturating_sub(rhs)
+            }
+            #[inline]
+            fn sat_mul(self, rhs: Self) -> Self {
+                self.saturating_mul(rhs)
+            }
+            #[inline]
+            fn sat_absdiff(self, rhs: Self) -> Self {
+                // `abs_diff` returns the unsigned type; OpenCV clamps
+                // |127 - (-128)| to 127 in the signed type instead.
+                if self > rhs {
+                    self.saturating_sub(rhs)
+                } else {
+                    rhs.saturating_sub(self)
+                }
+            }
+        }
+    )*};
+}
+
+macro_rules! impl_saturating_ops_float {
+    ($($t:ty),*) => {$(
+        impl SaturatingOps for $t {
+            #[inline]
+            fn sat_add(self, rhs: Self) -> Self {
+                self + rhs
+            }
+            #[inline]
+            fn sat_sub(self, rhs: Self) -> Self {
+                self - rhs
+            }
+            #[inline]
+            fn sat_mul(self, rhs: Self) -> Self {
+                self * rhs
+            }
+            #[inline]
+            fn sat_absdiff(self, rhs: Self) -> Self {
+                (self - rhs).abs()
+            }
+        }
+    )*};
+}
+
+impl_saturating_ops_unsigned!(u8, u16, u32, u64);
+impl_saturating_ops_signed!(i8, i16, i64);
+impl_saturating_ops_float!(f32, f64);
+
+// CV_32S wraps in OpenCV 4.10.0 (measured, see the trait documentation), so
+// `i32` is the one integer type that does not clamp.
+impl SaturatingOps for i32 {
+    #[inline]
+    fn sat_add(self, rhs: Self) -> Self {
+        self.wrapping_add(rhs)
+    }
+    #[inline]
+    fn sat_sub(self, rhs: Self) -> Self {
+        self.wrapping_sub(rhs)
+    }
+    #[inline]
+    fn sat_mul(self, rhs: Self) -> Self {
+        self.wrapping_mul(rhs)
+    }
+    #[inline]
+    fn sat_absdiff(self, rhs: Self) -> Self {
+        if self > rhs {
+            self.wrapping_sub(rhs)
+        } else {
+            rhs.wrapping_sub(self)
+        }
+    }
+}

@@ -47,7 +47,8 @@
 //! - `dft`/`dct` frequency transforms, [`rng`] random-number generation,
 //!   [`metrics`] and [`structural`] helpers.
 //! - [`SaturateCast`] / [`saturate_cast`] — OpenCV's rounding, clamping
-//!   conversion from floating point to an element type.
+//!   conversion from floating point to an element type, and [`SaturatingOps`],
+//!   its overflow-safe `+ - * |a-b|` counterpart.
 //! - [`error::PureCvError`] — the crate-wide error type returned as
 //!   [`error::Result`].
 //! - [`logging`] — an OpenCV-compatible structured logging API built on the
@@ -119,7 +120,7 @@ pub use self::metrics::{mahalanobis, psnr};
 #[cfg(feature = "std")]
 pub use self::rng::{rand_shuffle, randn, randu, rng_generator, set_rng_generator, set_rng_seed};
 pub use self::rng::{Rng, RngGenerator};
-pub use self::saturate::{saturate_cast, SaturateCast};
+pub use self::saturate::{saturate_cast, SaturateCast, SaturatingOps};
 pub use self::solvers::{solve_cubic, solve_quadratic};
 pub use self::types::{
     BorderTypes, NormTypes, Point, Point2d, Point2f, Point2i, Point2l, Point3, Point3d, Point3f,

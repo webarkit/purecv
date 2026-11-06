@@ -54,6 +54,7 @@ use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPr
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::core::saturate::SaturatingOps;
 use crate::core::simd::SimdElement;
 
 /// Internal macro to handle feature-gated loop execution for binary operations.
@@ -399,7 +400,16 @@ where
 /// dst = src1 + src2
 pub fn add<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -417,7 +427,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 + s2, simd: simd_add);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_add(s2), simd: simd_add);
 
     Ok(dst)
 }
@@ -427,7 +437,16 @@ where
 /// dst = src1 - src2
 pub fn subtract<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -445,7 +464,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 - s2, simd: simd_sub);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_sub(s2), simd: simd_sub);
 
     Ok(dst)
 }
@@ -455,7 +474,16 @@ where
 /// dst = src1 * src2
 pub fn multiply<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -473,7 +501,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 * s2, simd: simd_mul);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_mul(s2), simd: simd_mul);
 
     Ok(dst)
 }
@@ -699,7 +727,7 @@ where
 /// Calculates the per-element absolute difference between two matrices.
 pub fn abs_diff<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + 'static,
+    T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + SaturatingOps + 'static,
 {
     if !src1.dims_match(src2) {
         cv_bail!(
@@ -718,7 +746,7 @@ where
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        *d = if s1 > s2 { s1 - s2 } else { s2 - s1 };
+        *d = s1.sat_absdiff(s2);
     }, simd: simd_absdiff);
 
     Ok(dst)
@@ -751,11 +779,11 @@ where
 /// Calculates the per-element absolute difference between a matrix and a scalar.
 pub fn abs_diff_scalar<T>(src1: &Matrix<T>, scalar: Scalar<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Default + 'static,
+    T: Num + Copy + Send + Sync + PartialOrd + Default + SaturatingOps + 'static,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = if s > sc { s - sc } else { sc - s };
+        *d = s.sat_absdiff(sc);
     });
     Ok(dst)
 }
@@ -977,7 +1005,16 @@ where
 /// dst = |src1 - src2|
 pub fn absdiff<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Sub<Output = T> + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Sub<Output = T>
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if !src1.dims_match(src2) {
         cv_bail!(
@@ -996,7 +1033,7 @@ where
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        *d = if s1 > s2 { s1 - s2 } else { s2 - s1 };
+        *d = s1.sat_absdiff(s2);
     }, simd: simd_absdiff);
 
     Ok(dst)

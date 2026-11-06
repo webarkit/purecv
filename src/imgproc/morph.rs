@@ -43,6 +43,7 @@ use num_traits::Float;
 
 use crate::core::arithm;
 use crate::core::error::{PureCvError, Result};
+use crate::core::saturate::SaturatingOps;
 use crate::core::simd::SimdElement;
 use crate::core::types::{BorderTypes, Point, Size};
 use crate::core::utils::border_interpolate;
@@ -665,6 +666,7 @@ where
         + ToPrimitive
         + FromPrimitive
         + SimdElement
+        + SaturatingOps
         + 'static,
 {
     match op {
