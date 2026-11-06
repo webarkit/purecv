@@ -152,6 +152,46 @@ def main() -> None:
         "f32_sum2_dim0": tolist(cv2.reduce(rf, 0, cv2.REDUCE_SUM2)),
     }
 
+    # depth pairs of reduce (#216): every accepted and rejected (source, destination) pair
+    # the purecv tests use; REDUCE_AVG promotes a destination narrower than 32S to 32S.
+    r16 = np.array([[1, 2, 60000], [2, 3, 60000]], dtype=np.uint16)
+    s16 = np.array([[-5, 7, 30000], [4, -9, 30000]], dtype=np.int16)
+    r32 = np.array([[1, 2, 300], [2, 3, 100]], dtype=np.int32)
+    rd = r8.astype(np.float64)
+    results["reduce"].update(
+        {
+            "u8_sum_dim1_i32": tolist(cv2.reduce(r8, 1, cv2.REDUCE_SUM, dtype=cv2.CV_32S)),
+            "u8_sum2_dim0_i32": tolist(cv2.reduce(r8, 0, cv2.REDUCE_SUM2, dtype=cv2.CV_32S)),
+            "u8_sum2_dim1_f64": tolist(cv2.reduce(r8, 1, cv2.REDUCE_SUM2, dtype=cv2.CV_64F)),
+            "u8_sum2_dim0_default_dtype": attempt(lambda: cv2.reduce(r8, 0, cv2.REDUCE_SUM2)),
+            "f32_sum2_dim1": tolist(cv2.reduce(rf, 1, cv2.REDUCE_SUM2)),
+            "u16_sum_dim0_f32": tolist(cv2.reduce(r16, 0, cv2.REDUCE_SUM, dtype=cv2.CV_32F)),
+            "u16_sum_dim0_u16": attempt(lambda: cv2.reduce(r16, 0, cv2.REDUCE_SUM)),
+            "u16_sum_dim0_i32": attempt(lambda: cv2.reduce(r16, 0, cv2.REDUCE_SUM, dtype=cv2.CV_32S)),
+            "u16_avg_dim0_u16": attempt(lambda: cv2.reduce(r16, 0, cv2.REDUCE_AVG)),
+            "u16_max_dim0": tolist(cv2.reduce(r16, 0, cv2.REDUCE_MAX)),
+            "i16_sum2_dim1_f64": tolist(cv2.reduce(s16, 1, cv2.REDUCE_SUM2, dtype=cv2.CV_64F)),
+            "i16_min_dim0": tolist(cv2.reduce(s16, 0, cv2.REDUCE_MIN)),
+            "i16_sum_dim0_i16": attempt(lambda: cv2.reduce(s16, 0, cv2.REDUCE_SUM)),
+            "i32_max_dim0": attempt(lambda: cv2.reduce(r32, 0, cv2.REDUCE_MAX)),
+            "i32_sum_dim0_i32": attempt(lambda: cv2.reduce(r32, 0, cv2.REDUCE_SUM)),
+            "i32_sum_dim0_f64": attempt(lambda: cv2.reduce(r32, 0, cv2.REDUCE_SUM, dtype=cv2.CV_64F)),
+            "f32_sum_dim0_u8": attempt(lambda: cv2.reduce(rf, 0, cv2.REDUCE_SUM, dtype=cv2.CV_8U)),
+            "f32_max_dim0_f64": attempt(lambda: cv2.reduce(rf, 0, cv2.REDUCE_MAX, dtype=cv2.CV_64F)),
+            "f64_sum_dim0_f32": attempt(lambda: cv2.reduce(rd, 0, cv2.REDUCE_SUM, dtype=cv2.CV_32F)),
+            "u8_avg_dim0_i32": tolist(cv2.reduce(r8, 0, cv2.REDUCE_AVG, dtype=cv2.CV_32S)),
+            "u8_avg_dim1_f32": tolist(cv2.reduce(r8, 1, cv2.REDUCE_AVG, dtype=cv2.CV_32F)),
+            "u8_avg_dim0_u16": tolist(cv2.reduce(r8, 0, cv2.REDUCE_AVG, dtype=cv2.CV_16U)),
+            "u8_avg_dim0_i8": tolist(cv2.reduce(r8, 0, cv2.REDUCE_AVG, dtype=cv2.CV_8S)),
+            "f32_avg_dim1_f64": tolist(cv2.reduce(rf, 1, cv2.REDUCE_AVG, dtype=cv2.CV_64F)),
+            "f32_avg_dim0_u8": attempt(lambda: cv2.reduce(rf, 0, cv2.REDUCE_AVG, dtype=cv2.CV_8U)),
+            "f64_max_dim1": tolist(cv2.reduce(rd, 1, cv2.REDUCE_MAX)),
+            "u8_3ch_sum_dim0_i32": tolist(
+                cv2.reduce(np.stack([r8, r8 + 1, r8 + 2], axis=2), 0, cv2.REDUCE_SUM, dtype=cv2.CV_32S)
+            ),
+        }
+    )
+
     # --- countNonZero / hasNonZero
     z = np.array([[0, 3, 0], [1, 0, 0]], dtype=np.uint8)
     results["non_zero"] = {

@@ -89,8 +89,9 @@ pub use self::arithm::{
     absdiff, add, bitwise_and, bitwise_not, bitwise_or, bitwise_xor, cart_to_polar, check_range,
     count_non_zero, cross, determinant, divide, dot, gemm, has_no_zero, invert, kmeans, lut,
     magnitude, mean, mean_std_dev, min_max_loc, multiply, norm, normalize, normalize_to,
-    perspective_transform, phase, polar_to_cart, reduce, set_identity, solve, solve_poly, sort,
-    sort_idx, subtract, sum, trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T, GEMM_3_T,
+    perspective_transform, phase, polar_to_cart, reduce, reduce_to, set_identity, solve,
+    solve_poly, sort, sort_idx, subtract, sum, trace, transform, DecompTypes, GEMM_1_T, GEMM_2_T,
+    GEMM_3_T,
 };
 pub use self::constants::{
     CV_2PI, CV_E, CV_LN10, CV_LN2, CV_LOG2, CV_PI, CV_PI_2, CV_PI_4, CV_SQRT2,

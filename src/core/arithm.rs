@@ -44,6 +44,7 @@ use num_traits::Float;
 use crate::core::constants::CV_2PI;
 use crate::core::error::Result;
 use crate::core::logging::tags;
+use crate::core::matrix::Depth;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
 use crate::cv_log_warning;
@@ -1466,129 +1467,248 @@ where
     Ok(())
 }
 
-/// Reduces a matrix to a vector.
+/// The type `cv::reduce` accumulates a sum in, see `reduceR_`/`reduceC_`.
+#[derive(Clone, Copy, PartialEq)]
+enum ReduceAcc {
+    /// `int`: sums of `u8` sources, wrapping like the C++ `int`.
+    Int,
+    F32,
+    F64,
+}
+
+/// The sums `cv::reduce` knows (`REDUCE_SUM`, `REDUCE_SUM2` and `REDUCE_AVG` after its
+/// promotion): `8U` to `32S`/`32F`/`64F`, `16U`/`16S`/`32F` to `32F`/`64F`, `64F` to `64F`.
+/// Source: [`cv::reduce`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matrix_operations.cpp#L765-L850).
+fn reduce_sum_acc(src: Depth, dst: Depth) -> Option<ReduceAcc> {
+    use Depth::*;
+    match (src, dst) {
+        (CV_8U, CV_32S | CV_32F | CV_64F) => Some(ReduceAcc::Int),
+        (CV_16U | CV_16S | CV_32F, CV_32F) => Some(ReduceAcc::F32),
+        (CV_16U | CV_16S | CV_32F, CV_64F) | (CV_64F, CV_64F) => Some(ReduceAcc::F64),
+        _ => None,
+    }
+}
+
+/// Reduces a matrix to a vector, keeping the element type.
 ///
-/// dim 0: reduced to 1 row.
-/// dim 1: reduced to 1 column.
+/// `dim` 0 reduces to one row, `dim` 1 to one column. This is
+/// [`reduce_to`] with the destination type `T`, so it accepts the (source, destination)
+/// pairs `cv::reduce` accepts with `dtype` equal to the source depth: [`ReduceTypes::Max`]
+/// and [`ReduceTypes::Min`] on `u8`, `u16`, `i16`, `f32` and `f64`, and the sums
+/// ([`ReduceTypes::Sum`], [`ReduceTypes::Avg`], [`ReduceTypes::Sum2`]) on `f32` and `f64`,
+/// plus [`ReduceTypes::Avg`] on `u8`, which is summed in `i32` and converted back
+/// once, rounding ties to even (1.5 becomes 2, 2.5 becomes 2). Everything else, for
+/// example a `u8` sum into `u8` (OpenCV asks for a `dtype`) or any `i32` reduction, returns
+/// an error; use [`reduce_to`] for a wider destination.
+///
+/// # Example
+/// ```
+/// use purecv::core::types::ReduceTypes;
+/// use purecv::core::{reduce, Matrix};
+///
+/// let m = Matrix::from_vec(2, 2, 1, vec![1u8, 2, 2, 3]);
+/// assert_eq!(reduce(&m, 0, ReduceTypes::Avg).unwrap().data, vec![2, 2]);
+/// assert!(reduce(&m, 0, ReduceTypes::Sum).is_err());
+/// ```
 pub fn reduce<T>(src: &Matrix<T>, dim: i32, reduce_op: ReduceTypes) -> Result<Matrix<T>>
 where
-    T: DataType
-        + Num
-        + ToPrimitive
-        + FromPrimitive
-        + Copy
-        + Send
-        + Sync
-        + PartialOrd
-        + Default
-        + 'static,
+    T: DataType + ToPrimitive + SaturateCast + Default + Clone + Send + Sync + 'static,
 {
-    let (rows, cols) = if dim == 0 {
-        (1, src.cols)
-    } else if dim == 1 {
-        (src.rows, 1)
-    } else {
-        cv_bail!(
+    reduce_to::<T, T>(src, dim, reduce_op)
+}
+
+/// Reduces a matrix to a vector of another element type, like `cv::reduce` with `dtype`
+/// set to the depth of `U`.
+///
+/// `dim` 0 reduces to one row, `dim` 1 to one column. The accepted (source, destination)
+/// pairs are those of
+/// [`cv::reduce`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matrix_operations.cpp#L765-L850);
+/// any other pair returns [`PureCvError::NotImplemented`] where OpenCV raises
+/// `StsUnsupportedFormat`:
+///
+/// | operation | source to destination |
+/// |---|---|
+/// | `Sum`, `Sum2` | `u8` to `i32`/`f32`/`f64`; `u16`, `i16` to `f32`/`f64`; `f32` to `f32`/`f64`; `f64` to `f64` |
+/// | `Max`, `Min` | `u8`, `u16`, `i16`, `f32`, `f64` to the same type |
+/// | `Avg` | the `Sum` pairs, after a destination narrower than `i32` is promoted to `i32` |
+///
+/// The sum is accumulated in OpenCV's type for the pair (`i32` for a `u8` source, else the
+/// destination type; `i32` sums wrap as the C++ `int` does). `Avg` is the sum in the
+/// promoted destination type followed by one conversion with the scale `1/n`, so a `u8`
+/// average into `u8` is rounded to even and saturated once. `Sum2` adds the squares.
+///
+/// An empty source returns an error. The element types OpenCV has no depth for (`u32`,
+/// `u64`, `i64`) are not [`DataType`], so they cannot be named here; `i8` has a depth but
+/// no pair, so it is rejected like `i32`.
+///
+/// # Example
+/// ```
+/// use purecv::core::types::ReduceTypes;
+/// use purecv::core::{reduce_to, Matrix};
+///
+/// let m = Matrix::from_vec(2, 2, 1, vec![200u8, 1, 100, 2]);
+/// let sum: Matrix<i32> = reduce_to(&m, 0, ReduceTypes::Sum).unwrap();
+/// assert_eq!(sum.data, vec![300, 3]); // does not fit in u8
+/// ```
+pub fn reduce_to<T, U>(src: &Matrix<T>, dim: i32, reduce_op: ReduceTypes) -> Result<Matrix<U>>
+where
+    T: DataType + ToPrimitive + Copy + Send + Sync + 'static,
+    U: DataType + SaturateCast + Default + Clone + Send + Sync + 'static,
+{
+    let (rows, cols) = match dim {
+        0 => (1, src.cols),
+        1 => (src.rows, 1),
+        _ => cv_bail!(
             tags::CORE,
             InvalidInput,
             "reduce: dim must be 0 or 1, got {}",
             dim
+        ),
+    };
+    if src.rows == 0 || src.cols == 0 {
+        cv_bail!(tags::CORE, InvalidInput, "reduce: the source is empty");
+    }
+
+    let (sdepth, ddepth) = (T::depth(), U::depth());
+    let avg = reduce_op == ReduceTypes::Avg;
+    // `REDUCE_AVG` sums into 32S when both depths are narrower than that.
+    let wdepth = if avg
+        && (sdepth as i32) < Depth::CV_32S as i32
+        && (ddepth as i32) < Depth::CV_32S as i32
+    {
+        Depth::CV_32S
+    } else {
+        ddepth
+    };
+    let acc = match reduce_op {
+        ReduceTypes::Max | ReduceTypes::Min => {
+            if sdepth != ddepth
+                || !matches!(
+                    sdepth,
+                    Depth::CV_8U | Depth::CV_16U | Depth::CV_16S | Depth::CV_32F | Depth::CV_64F
+                )
+            {
+                None
+            } else {
+                Some(ReduceAcc::F64)
+            }
+        }
+        ReduceTypes::Sum | ReduceTypes::Avg | ReduceTypes::Sum2 => reduce_sum_acc(sdepth, wdepth),
+    };
+    let Some(acc) = acc else {
+        cv_bail!(
+            tags::CORE,
+            NotImplemented,
+            "reduce: unsupported combination of input and output array formats ({:?} into {:?} for {:?})",
+            sdepth,
+            ddepth,
+            reduce_op
         );
     };
 
-    let mut dst_data = vec![T::default(); rows * cols * src.channels];
     let channels = src.channels;
-    let src_rows = src.rows;
-    let src_cols = src.cols;
-
-    #[cfg(feature = "parallel")]
-    {
-        dst_data.par_iter_mut().enumerate().for_each(|(idx, d)| {
-            let channel = idx % channels;
-            let pos = idx / channels;
-
-            let count = if dim == 0 { src_rows } else { src_cols };
-            let mut accum: f64 = match reduce_op {
-                ReduceTypes::Sum | ReduceTypes::Avg => 0.0,
-                ReduceTypes::Max => f64::MIN,
-                ReduceTypes::Min => f64::MAX,
-            };
-
-            for i in 0..count {
-                let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
-                if let Some(val) = src.get(r, c, channel).and_then(|v| v.to_f64()) {
-                    match reduce_op {
-                        ReduceTypes::Sum | ReduceTypes::Avg => accum += val,
-                        ReduceTypes::Max => {
-                            if val > accum {
-                                accum = val;
+    let count = if dim == 0 { src.rows } else { src.cols };
+    let at = |idx: usize, i: usize| -> f64 {
+        let (channel, pos) = (idx % channels, idx / channels);
+        let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
+        src.data[(r * src.cols + c) * channels + channel]
+            .to_f64()
+            .unwrap_or(0.0)
+    };
+    let value = |idx: usize| -> f64 {
+        match reduce_op {
+            // std::max(a, b) and std::min(a, b)
+            ReduceTypes::Max => (1..count).fold(at(idx, 0), |a, i| {
+                let b = at(idx, i);
+                if a < b {
+                    b
+                } else {
+                    a
+                }
+            }),
+            ReduceTypes::Min => (1..count).fold(at(idx, 0), |a, i| {
+                let b = at(idx, i);
+                if b < a {
+                    b
+                } else {
+                    a
+                }
+            }),
+            _ => {
+                let sq = reduce_op == ReduceTypes::Sum2;
+                match acc {
+                    ReduceAcc::Int => {
+                        let term = |i: usize| {
+                            let x = at(idx, i) as i32;
+                            if sq {
+                                x.wrapping_mul(x)
+                            } else {
+                                x
                             }
-                        }
-                        ReduceTypes::Min => {
-                            if val < accum {
-                                accum = val;
+                        };
+                        (1..count).fold(term(0), |a, i| a.wrapping_add(term(i))) as f64
+                    }
+                    ReduceAcc::F32 => {
+                        let term = |i: usize| {
+                            let x = at(idx, i) as f32;
+                            if sq {
+                                x * x
+                            } else {
+                                x
                             }
-                        }
+                        };
+                        (1..count).fold(term(0), |a, i| a + term(i)) as f64
+                    }
+                    ReduceAcc::F64 => {
+                        let term = |i: usize| {
+                            let x = at(idx, i);
+                            if sq {
+                                x * x
+                            } else {
+                                x
+                            }
+                        };
+                        (1..count).fold(term(0), |a, i| a + term(i))
                     }
                 }
             }
-
-            let res = if reduce_op == ReduceTypes::Avg {
-                accum / count as f64
-            } else {
-                accum
-            };
-            *d = T::from_f64(res).unwrap_or_default();
-        });
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    {
-        for (idx, d) in dst_data.iter_mut().enumerate() {
-            let channel = idx % channels;
-            let pos = idx / channels;
-
-            let count = if dim == 0 { src_rows } else { src_cols };
-            let mut accum: f64 = match reduce_op {
-                ReduceTypes::Sum | ReduceTypes::Avg => 0.0,
-                ReduceTypes::Max => f64::MIN,
-                ReduceTypes::Min => f64::MAX,
-            };
-
-            for i in 0..count {
-                let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
-                if let Some(val) = src.get(r, c, channel).and_then(|v| v.to_f64()) {
-                    match reduce_op {
-                        ReduceTypes::Sum | ReduceTypes::Avg => accum += val,
-                        ReduceTypes::Max => {
-                            if val > accum {
-                                accum = val;
-                            }
-                        }
-                        ReduceTypes::Min => {
-                            if val < accum {
-                                accum = val;
-                            }
-                        }
-                    }
-                }
-            }
-
-            let res = if reduce_op == ReduceTypes::Avg {
-                accum / count as f64
-            } else {
-                accum
-            };
-            *d = T::from_f64(res).unwrap_or_default();
         }
-    }
+    };
 
-    Ok(Matrix {
-        rows,
-        cols,
-        channels,
-        data: dst_data,
-    })
+    let n = rows * cols * channels;
+    #[cfg(feature = "parallel")]
+    let values: Vec<f64> = (0..n).into_par_iter().map(value).collect();
+    #[cfg(not(feature = "parallel"))]
+    let values: Vec<f64> = (0..n).map(value).collect();
+
+    if !avg {
+        let data: Vec<U> = values.into_iter().map(U::saturate_from_f64).collect();
+        return Ok(Matrix::from_vec(rows, cols, channels, data));
+    }
+    // The sum is exact in the working type; `convertTo(dst, type, 1./n)` then converts it
+    // once, with the arithmetic precision that conversion selects for the pair.
+    let scale = 1.0 / count as f64;
+    match wdepth {
+        Depth::CV_32S => {
+            let w = Matrix::from_vec(
+                rows,
+                cols,
+                channels,
+                values.into_iter().map(|v| v as i32).collect::<Vec<i32>>(),
+            );
+            w.convert_to_scaled::<U>(scale, 0.0)
+        }
+        Depth::CV_32F => {
+            let w = Matrix::from_vec(
+                rows,
+                cols,
+                channels,
+                values.into_iter().map(|v| v as f32).collect::<Vec<f32>>(),
+            );
+            w.convert_to_scaled::<U>(scale, 0.0)
+        }
+        _ => Matrix::from_vec(rows, cols, channels, values).convert_to_scaled::<U>(scale, 0.0),
+    }
 }
 
 /// Counts non-zero array elements.

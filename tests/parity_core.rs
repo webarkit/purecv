@@ -2689,10 +2689,10 @@ fn reduce_max_min_and_f32_match_opencv() {
     assert!((avg[0] - 67.66667).abs() < 1e-4 && avg[1] == 35.0);
 }
 
-/// OpenCV: REDUCE_AVG on u8 accumulates in 32S and converts back with `saturate_cast`
-/// (1.5 -> 2, 2.5 -> 2, 67.7 -> 68); purecv truncates.
+/// `reduce` with `REDUCE_AVG` on `u8` accumulates in 32S and converts back with
+/// `saturate_cast` (`u8_avg_dim0`, `u8_avg_dim1` in `core_stats.py`, block `reduce`): the
+/// averages 1.5 and 67.7 become 2 and 68, and 2.5 becomes 2 (ties to even).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #216"]
 fn reduce_avg_u8_rounds_half_to_even() {
     let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
     assert_eq!(
@@ -2705,14 +2705,129 @@ fn reduce_avg_u8_rounds_half_to_even() {
     );
 }
 
-/// OpenCV refuses REDUCE_SUM from 8U into 8U (`u8_sum_dim0_default_dtype`: "Unsupported
-/// combination of input and output array formats"; a `dtype` such as `CV_32S` is required);
-/// purecv returns the sum in `u8` and 0 where it overflows (300 -> 0).
+/// `reduce` refuses `REDUCE_SUM` from 8U into 8U (`u8_sum_dim0_default_dtype` in
+/// `core_stats.py`, block `reduce`: "Unsupported combination of input and output array
+/// formats"); a wider destination goes through `reduce_to`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #216"]
 fn reduce_sum_u8_into_u8_is_rejected() {
     let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
     assert!(reduce(&r8, 0, ReduceTypes::Sum).is_err());
+}
+
+/// `reduce_to::<u8, i32>` keeps the sum that overflows a byte (`u8_sum_dim0_i32`,
+/// `u8_sum_dim1_i32`, `u8_3ch_sum_dim0_i32` in `core_stats.py`, block `reduce`).
+#[test]
+fn reduce_to_sum_u8_to_i32_matches_opencv() {
+    let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
+    let d0: Matrix<i32> = reduce_to(&r8, 0, ReduceTypes::Sum).unwrap();
+    assert_eq!((d0.rows, d0.cols), (1, 3));
+    assert_eq!(d0.data, vec![3, 5, 300]);
+    let d1: Matrix<i32> = reduce_to(&r8, 1, ReduceTypes::Sum).unwrap();
+    assert_eq!((d1.rows, d1.cols), (2, 1));
+    assert_eq!(d1.data, vec![203, 105]);
+    let c3 = Matrix::from_vec(
+        2,
+        3,
+        3,
+        vec![
+            1u8, 2, 3, 2, 3, 4, 200, 201, 202, 2, 3, 4, 3, 4, 5, 100, 101, 102,
+        ],
+    );
+    let d3: Matrix<i32> = reduce_to(&c3, 0, ReduceTypes::Sum).unwrap();
+    assert_eq!(d3.data, vec![3, 5, 7, 5, 7, 9, 300, 302, 304]);
+}
+
+/// `REDUCE_SUM2` sums the squares (`u8_sum2_dim0_i32`, `u8_sum2_dim1_f64`,
+/// `u8_sum2_dim0_default_dtype`, `f32_sum2_dim0`, `f32_sum2_dim1`, `i16_sum2_dim1_f64` in
+/// `core_stats.py`, block `reduce`); like the other sums it needs a wide enough destination.
+#[test]
+fn reduce_sum2_matches_opencv() {
+    let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
+    let i: Matrix<i32> = reduce_to(&r8, 0, ReduceTypes::Sum2).unwrap();
+    assert_eq!(i.data, vec![5, 13, 50000]);
+    let d: Matrix<f64> = reduce_to(&r8, 1, ReduceTypes::Sum2).unwrap();
+    assert_eq!(d.data, vec![40005.0, 10013.0]);
+    assert!(reduce(&r8, 0, ReduceTypes::Sum2).is_err());
+
+    let rf = Matrix::from_vec(2, 3, 1, vec![1.0f32, 2.0, 200.0, 2.0, 3.0, 100.0]);
+    assert_eq!(
+        reduce(&rf, 0, ReduceTypes::Sum2).unwrap().data,
+        vec![5.0f32, 13.0, 50000.0]
+    );
+    assert_eq!(
+        reduce(&rf, 1, ReduceTypes::Sum2).unwrap().data,
+        vec![40005.0f32, 10013.0]
+    );
+
+    let s16 = Matrix::from_vec(2, 3, 1, vec![-5i16, 7, 30000, 4, -9, 30000]);
+    let i16d: Matrix<f64> = reduce_to(&s16, 1, ReduceTypes::Sum2).unwrap();
+    assert_eq!(i16d.data, vec![900000074.0, 900000097.0]);
+}
+
+/// The accepted (source, destination) depth pairs are those of `cv::reduce`: the sums
+/// reach 32S/32F/64F from 8U, 32F/64F from 16U/16S, and 32F/64F from 32F/64F; max and min
+/// keep the depth and exist for 8U, 16U, 16S, 32F and 64F only. Everything else is
+/// rejected (`u16_sum_dim0_u16`, `u16_sum_dim0_i32`, `i16_sum_dim0_i16`, `i32_max_dim0`,
+/// `i32_sum_dim0_i32`, `i32_sum_dim0_f64`, `f32_sum_dim0_u8`, `f32_max_dim0_f64`,
+/// `f64_sum_dim0_f32`, `f32_avg_dim0_u8`, `u16_avg_dim0_u16` in `core_stats.py`, block
+/// `reduce`; `u16_sum_dim0_f32`, `u16_max_dim0`, `i16_min_dim0`, `f64_max_dim1` are the
+/// accepted neighbours).
+#[test]
+fn reduce_to_rejects_unsupported_depth_pair() {
+    let r16 = Matrix::from_vec(2, 3, 1, vec![1u16, 2, 60000, 2, 3, 60000]);
+    let s16 = Matrix::from_vec(2, 3, 1, vec![-5i16, 7, 30000, 4, -9, 30000]);
+    let r32 = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 300, 2, 3, 100]);
+    let rf = Matrix::from_vec(2, 3, 1, vec![1.0f32, 2.0, 200.0, 2.0, 3.0, 100.0]);
+    let rd = Matrix::from_vec(2, 3, 1, vec![1.0f64, 2.0, 200.0, 2.0, 3.0, 100.0]);
+    for dim in [0, 1] {
+        assert!(reduce_to::<_, u16>(&r16, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, i32>(&r16, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, i16>(&s16, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, i32>(&r32, dim, ReduceTypes::Max).is_err());
+        assert!(reduce_to::<_, i32>(&r32, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, f64>(&r32, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, u8>(&rf, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, f64>(&rf, dim, ReduceTypes::Max).is_err());
+        assert!(reduce_to::<_, f32>(&rd, dim, ReduceTypes::Sum).is_err());
+        assert!(reduce_to::<_, u8>(&rf, dim, ReduceTypes::Avg).is_err());
+        // AVG into a destination narrower than 32S is promoted to 32S first, which 16U
+        // has no sum for.
+        assert!(reduce_to::<_, u16>(&r16, dim, ReduceTypes::Avg).is_err());
+    }
+    let w: Matrix<f32> = reduce_to(&r16, 0, ReduceTypes::Sum).unwrap();
+    assert_eq!(w.data, vec![3.0, 5.0, 120000.0]);
+    assert_eq!(
+        reduce(&r16, 0, ReduceTypes::Max).unwrap().data,
+        vec![2u16, 3, 60000]
+    );
+    assert_eq!(
+        reduce(&s16, 0, ReduceTypes::Min).unwrap().data,
+        vec![-5i16, -9, 30000]
+    );
+    assert_eq!(
+        reduce(&rd, 1, ReduceTypes::Max).unwrap().data,
+        vec![200.0f64, 100.0]
+    );
+}
+
+/// `REDUCE_AVG` sums in the (promoted) destination depth and converts once with the scale
+/// `1/n` (`u8_avg_dim0_i32`, `u8_avg_dim1_f32`, `u8_avg_dim0_u16`, `u8_avg_dim0_i8`,
+/// `f32_avg_dim1_f64` in `core_stats.py`, block `reduce`): a narrow destination is
+/// promoted to 32S, so 150 saturates in `i8` rather than wrapping.
+#[test]
+fn reduce_to_avg_converts_once_like_opencv() {
+    let r8 = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 200, 2, 3, 100]);
+    let i: Matrix<i32> = reduce_to(&r8, 0, ReduceTypes::Avg).unwrap();
+    assert_eq!(i.data, vec![2, 2, 150]);
+    let f: Matrix<f32> = reduce_to(&r8, 1, ReduceTypes::Avg).unwrap();
+    assert_eq!(f.data, vec![67.666_67_f32, 35.0]);
+    let u: Matrix<u16> = reduce_to(&r8, 0, ReduceTypes::Avg).unwrap();
+    assert_eq!(u.data, vec![2, 2, 150]);
+    let s: Matrix<i8> = reduce_to(&r8, 0, ReduceTypes::Avg).unwrap();
+    assert_eq!(s.data, vec![2, 2, 127]);
+    let rf = Matrix::from_vec(2, 3, 1, vec![1.0f32, 2.0, 200.0, 2.0, 3.0, 100.0]);
+    let d: Matrix<f64> = reduce_to(&rf, 1, ReduceTypes::Avg).unwrap();
+    assert_eq!(d.data, vec![67.66666666666666, 35.0]);
 }
 
 // ---------------------------------------------------------------------------------------
