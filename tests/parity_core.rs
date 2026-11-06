@@ -1454,7 +1454,7 @@ fn scalar_ops_u8_three_channels_match_opencv() {
 }
 
 /// f32 and f64 divided by a zero scalar follow IEEE (core_convert_arith.py,
-/// "other_depths_scalar"): `x / 0` is `Â±inf` and `0 / 0` is NaN.
+/// "other_depths_scalar"): `x / 0` is `±inf` and `0 / 0` is NaN.
 #[test]
 fn divide_scalar_float_by_zero_matches_opencv() {
     let a = row::<f32>(&[-1e10, -1.5, 0.0, 0.1, 255.5, 1e10]);
@@ -1815,7 +1815,7 @@ fn min_max_loc_matches_opencv() {
 // Constants, initialisers, has_no_zero (core_mat_initializers.js, core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's `CV_LOG2` is ln 2 = 0.693147â€¦ (`cvdef.h`); purecv's is log2(e) = 1.442695â€¦.
+/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
 #[test]
 #[ignore = "diverges from OpenCV 4.10.0, see #226"]
 fn cv_log2_is_ln_2() {
@@ -2820,7 +2820,7 @@ fn for_each_shuffle_type(seed: u64, want: [i32; 10]) {
     assert_eq!(idx, want_u8, "seed {seed}: randShuffle u8");
 }
 
-/// `core_rng_fill.py`: the `RNG::fill` paths beyond `core_rng.py` â€” block boundaries of the
+/// `core_rng_fill.py`: the `RNG::fill` paths beyond `core_rng.py` — block boundaries of the
 /// four-per-draw integer loop (3 channels: 1026-element blocks), the fast-bits and division
 /// paths on every integer depth, reversed float bounds, the ziggurat on several depths,
 /// per-channel `randn` and a long `randShuffle`.
