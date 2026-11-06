@@ -176,16 +176,15 @@ fn add_sub_mul_bounds_match_opencv() {
         &[126, 0, -127, 0, -128, 127, 127, -127, -2, 2, 62, -67, 125, -128],
         &[127, 127, 127, 127, -128, -128, 0, 0, 3, 3, 127, -128, 127, -128],
     );
-    // OpenCV's u16 multiply gives 0 for 65535 * 65535 (index 1): the double product is
-    // converted through a 32-bit int, which overflows. purecv saturates to 65535, the same
-    // documented divergence as `saturate_cast` for |v| >= 2^31.
+    // The pair 65535 * 65535 is left out: see
+    // `multiply_u16_overflow_clamps_where_opencv_hits_the_cvround_artefact`.
     check!(
         u16,
-        &[65535, 65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
-        &[1, 65535, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
-        &[65535, 65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
-        &[65534, 0, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
-        &[65535, 65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
+        &[65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
+        &[1, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
+        &[65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
+        &[65534, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
+        &[65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
     );
     check!(
         i16,
@@ -278,6 +277,16 @@ fn add_sub_mul_bounds_match_opencv() {
             0,
         ],
     );
+}
+
+/// OpenCV 4.10.0 gives 0 for u16 `65535 * 65535` (measured by
+/// `scripts/opencv_ref/core_saturating_ops.py`, `u16.multiply`, index 1). That 0 comes from the
+/// out-of-range double-to-int conversion that `SaturateCast` documents as not ported, so
+/// purecv clamps to 65535 on purpose.
+#[test]
+fn multiply_u16_overflow_clamps_where_opencv_hits_the_cvround_artefact() {
+    let a = row(&[65535u16]);
+    assert_eq!(multiply(&a, &a).unwrap().data, vec![65535u16]);
 }
 
 /// The `simd` u8 kernels run on 64 elements (several lanes) and must give the same
