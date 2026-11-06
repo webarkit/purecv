@@ -2499,10 +2499,9 @@ fn normalize_f32_matches_opencv() {
     assert_eq!(d8.data[3], 255);
 }
 
-/// OpenCV writes integer outputs through `convertTo` (saturate_cast): u8 MINMAX 0..255 of
-/// [10, 20, 30, 250] is [0, 11, 21, 255]; purecv truncates to [0, 10, 21, 255].
+/// Integer outputs go through `convertTo` (saturate_cast, ties to even): u8 MINMAX 0..255 of
+/// [10, 20, 30, 250] is [0, 11, 21, 255], and 0..100 is [0, 4, 8, 100].
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #215"]
 fn normalize_u8_minmax_rounds_like_convert_to() {
     let s8 = row(&[10u8, 20, 30, 250]);
     let mut d8 = Matrix::<u8>::new(1, 4, 1);
@@ -2512,14 +2511,56 @@ fn normalize_u8_minmax_rounds_like_convert_to() {
     assert_eq!(d8.data, vec![0u8, 4, 8, 100]);
 }
 
-/// OpenCV sorts alpha/beta (`dmin = MIN(a, b)`), so (255, 0) equals (0, 255); purecv uses
-/// them as given and inverts the range.
+/// MINMAX sorts alpha and beta (`dmin = MIN(a, b)`), so (255, 0) equals (0, 255).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #215"]
 fn normalize_minmax_swapped_bounds_match_sorted_bounds() {
     let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
     let mut dst = Matrix::<f32>::new(1, 4, 1);
     normalize(&src, &mut dst, 255.0, 0.0, NormTypes::MinMax, -1, None).unwrap();
+    assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
+}
+
+/// `normalize_to` carries the destination type. Values from `core_stats.py`, block
+/// `normalize`, keys `u8_minmax_0_1_to_f32`, `u8_minmax_0_255_to_f32` and
+/// `u8_minmax_swapped_to_f32`. A float destination uses single-precision scale and shift, so
+/// the 0..1 range ends at 1.0000001. The literals are the shortest f32 forms of the measured doubles.
+#[test]
+fn normalize_to_u8_to_f32_matches_opencv() {
+    let s8 = row(&[10u8, 20, 30, 250]);
+    let mut d = Matrix::<f32>::new(1, 4, 1);
+    normalize_to(&s8, &mut d, 0.0, 1.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(
+        d.data,
+        vec![0.0f32, 0.041_666_668, 0.083_333_33, 1.000_000_1]
+    );
+    normalize_to(&s8, &mut d, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(d.data, vec![0.0f32, 10.625, 21.25, 255.0]);
+    normalize_to(&s8, &mut d, 1.0, 0.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(
+        d.data,
+        vec![0.0f32, 0.041_666_668, 0.083_333_33, 1.000_000_1]
+    );
+    // f32 source to u8 destination (`f32_minmax_to_u8`)
+    let s32 = row(&[10.0f32, 20.0, 30.0, 250.0]);
+    let mut d8 = Matrix::<u8>::new(1, 4, 1);
+    normalize_to(&s32, &mut d8, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(d8.data, vec![0u8, 11, 21, 255]);
+    // a destination type without an OpenCV depth saturates instead of panicking
+    let mut d64 = Matrix::<u64>::new(1, 4, 1);
+    normalize_to(&s32, &mut d64, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(d64.data, vec![0u64, 11, 21, 255]);
+}
+
+/// A `dtype` other than -1 or the depth of `T` is an error; `normalize_to` is the
+/// way to change the destination type.
+#[test]
+fn normalize_rejects_mismatched_dtype() {
+    let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
+    let mut dst = Matrix::<f32>::new(1, 4, 1);
+    // CV_8U = 0
+    assert!(normalize(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, 0, None).is_err());
+    // CV_32F = 5 is the depth of f32
+    normalize(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, 5, None).unwrap();
     assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
 }
 

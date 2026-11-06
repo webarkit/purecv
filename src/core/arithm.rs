@@ -1304,153 +1304,164 @@ where
     }
 }
 
-/// Normalizes the norm or value range of an array.
+/// Normalizes the norm or value range of an array, keeping the element type.
 ///
-/// For MINMAX normalization, alpha is the lower bound and beta is the upper bound.
-/// For other norms, alpha is the norm value to reach.
+/// For [`NormTypes::MinMax`], `alpha` and `beta` are the bounds of the output range;
+/// they are sorted first, so `(255, 0)` equals `(0, 255)`. For `L1`, `L2` and `Inf`,
+/// `alpha` is the norm the output reaches and `beta` is ignored. A constant
+/// source (range or norm not above `f64::EPSILON`) maps to `alpha` for `MinMax`
+/// and to 0 for the norms.
+///
+/// `dtype` follows OpenCV's `rtype`: `-1` or the depth of `T` is accepted, and any other
+/// value returns an error because `dst` is a `Matrix<T>`. Use [`normalize_to`] to write a
+/// different element type.
+///
+/// With a `mask`, only the selected elements of `dst` are written (the range or norm is
+/// measured over them too) and the others are kept. Without a mask `dst` is replaced.
+///
+/// This is [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414);
+/// the output is `saturate_cast<T>(x * scale + shift)` through
+/// [`Matrix::convert_to_scaled`], so integer outputs round to nearest, ties to even.
 pub fn normalize<T>(
     src: &Matrix<T>,
     dst: &mut Matrix<T>,
     alpha: f64,
     beta: f64,
     norm_type: NormTypes,
-    _dtype: i32,
+    dtype: i32,
     mask: Option<&Matrix<u8>>,
 ) -> Result<()>
 where
-    T: DataType + Send + Sync + FromPrimitive + Default + Copy + ToPrimitive + SimdElement,
+    T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + SaturateCast + 'static,
 {
-    // If dtype is negative, we keep source type. Currently we don't support converting here yet,
-    // so we just ignore it if it equals T's depth.
+    if dtype >= 0 && dtype != T::depth() as i32 {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "normalize: dtype {} does not match the destination depth {}, use normalize_to to change the element type",
+            dtype,
+            T::depth() as i32
+        );
+    }
+    normalize_to(src, dst, alpha, beta, norm_type, mask)
+}
 
-    match norm_type {
+/// Normalizes the norm or value range of an array into a destination of another element
+/// type, like `cv::normalize` with `rtype` set to the depth of `U`.
+///
+/// Scale and shift are computed in `f64` as in
+/// [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414)
+/// (for an `f32` destination `scale` and `shift` are rounded to `f32` first, which is why the
+/// 0..1 range ends at 1.0000001), then applied with [`Matrix::convert_to_scaled`]: the
+/// output is `saturate_cast<U>(x * scale + shift)`. See [`normalize`] for the parameters.
+///
+/// Without a mask `dst` is replaced by the result. With a mask `dst` must already have
+/// the shape of `src` and only the selected elements are written. A destination
+/// type OpenCV has no depth for (`u32`, `u64`, `i64`) is handled like the others: values
+/// saturate to its range and nothing panics.
+///
+/// # Example
+/// ```
+/// use purecv::core::{normalize_to, Matrix, NormTypes};
+///
+/// let src = Matrix::from_vec(1, 4, 1, vec![10u8, 20, 30, 250]);
+/// let mut dst = Matrix::<f32>::new(1, 4, 1);
+/// normalize_to(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+/// assert_eq!(dst.data, vec![0.0, 10.625, 21.25, 255.0]);
+/// ```
+pub fn normalize_to<T, U>(
+    src: &Matrix<T>,
+    dst: &mut Matrix<U>,
+    alpha: f64,
+    beta: f64,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<()>
+where
+    T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + 'static,
+    U: SaturateCast + Default + Clone,
+{
+    if let Some(m) = mask {
+        if m.rows != src.rows || m.cols != src.cols || m.channels != 1 {
+            cv_bail!(
+                tags::CORE,
+                InvalidDimensions,
+                "normalize: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
+                src.rows,
+                src.cols,
+                m.rows,
+                m.cols,
+                m.channels
+            );
+        }
+        if dst.rows != src.rows || dst.cols != src.cols || dst.channels != src.channels {
+            cv_bail!(
+                tags::CORE,
+                InvalidDimensions,
+                "normalize: a masked destination must have the shape of src ({}×{}×{}), got {}×{}×{}",
+                src.rows,
+                src.cols,
+                src.channels,
+                dst.rows,
+                dst.cols,
+                dst.channels
+            );
+        }
+    }
+    let channels = src.channels.max(1);
+    let selected = |i: usize| mask.is_none_or(|m| m.data[i / channels] != 0);
+
+    let (scale, shift) = match norm_type {
         NormTypes::MinMax => {
-            let mut min_val = f64::MAX;
-            let mut max_val = f64::MIN;
-
-            if let Some(m) = mask {
-                for (&val, &mask_val) in src.data.iter().zip(m.data.iter()) {
-                    if mask_val != 0 {
-                        let v = val.to_f64().unwrap_or(0.0);
-                        if v < min_val {
-                            min_val = v;
-                        }
-                        if v > max_val {
-                            max_val = v;
-                        }
-                    }
-                }
-            } else {
-                for &val in src.data.iter() {
-                    let v = val.to_f64().unwrap_or(0.0);
-                    if v < min_val {
-                        min_val = v;
-                    }
-                    if v > max_val {
-                        max_val = v;
-                    }
+            let (mut smin, mut smax) = (f64::INFINITY, f64::NEG_INFINITY);
+            for (i, &x) in src.data.iter().enumerate() {
+                if selected(i) {
+                    let v = x.to_f64().unwrap_or(0.0);
+                    smin = smin.min(v);
+                    smax = smax.max(v);
                 }
             }
-
-            let scale = if max_val != min_val {
-                (beta - alpha) / (max_val - min_val)
-            } else {
-                0.0
-            };
-
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .zip(m.data.par_iter())
-                        .for_each(|((d, &s), &mask_val)| {
-                            if mask_val != 0 {
-                                let v = s.to_f64().unwrap_or(0.0);
-                                let res = (v - min_val) * scale + alpha;
-                                *d = T::from_f64(res).unwrap_or(T::default());
-                            }
-                        });
+            if smin > smax {
+                // nothing selected: OpenCV reports 0 for both
+                (smin, smax) = (0.0, 0.0);
+            }
+            let (dmin, dmax) = (alpha.min(beta), alpha.max(beta));
+            let mut scale = (dmax - dmin)
+                * if smax - smin > f64::EPSILON {
+                    1.0 / (smax - smin)
                 } else {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .for_each(|(d, &s)| {
-                            let v = s.to_f64().unwrap_or(0.0);
-                            let res = (v - min_val) * scale + alpha;
-                            *d = T::from_f64(res).unwrap_or(T::default());
-                        });
-                }
+                    0.0
+                };
+            let shift;
+            if U::IS_FLOAT && core::mem::size_of::<U>() == 4 {
+                scale = scale as f32 as f64;
+                shift = (dmin as f32 - (smin * scale) as f32) as f64;
+            } else {
+                shift = dmin - smin * scale;
             }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    for (i, &mask_val) in m.data.iter().enumerate() {
-                        if mask_val != 0 {
-                            let v = src.data[i].to_f64().unwrap_or(0.0);
-                            let res = (v - min_val) * scale + alpha;
-                            dst.data[i] = T::from_f64(res).unwrap_or(T::default());
-                        }
-                    }
-                } else {
-                    for (d, s) in dst.data.iter_mut().zip(src.data.iter()) {
-                        let v = s.to_f64().unwrap_or(0.0);
-                        let res = (v - min_val) * scale + alpha;
-                        *d = T::from_f64(res).unwrap_or(T::default());
-                    }
-                }
-            }
+            (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
             let n = norm(src, norm_type, mask)?;
-            let scale = if n != 0.0 { alpha / n } else { 0.0 };
-
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .zip(m.data.par_iter())
-                        .for_each(|((d, &s), &mask_val)| {
-                            if mask_val != 0 {
-                                let res = s.to_f64().unwrap_or(0.0) * scale;
-                                *d = T::from_f64(res).unwrap_or(T::default());
-                            }
-                        });
-                } else {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .for_each(|(d, &s)| {
-                            let res = s.to_f64().unwrap_or(0.0) * scale;
-                            *d = T::from_f64(res).unwrap_or(T::default());
-                        });
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    for (i, &mask_val) in m.data.iter().enumerate() {
-                        if mask_val != 0 {
-                            let res = src.data[i].to_f64().unwrap_or(0.0) * scale;
-                            dst.data[i] = T::from_f64(res).unwrap_or(T::default());
-                        }
-                    }
-                } else {
-                    for (d, s) in dst.data.iter_mut().zip(src.data.iter()) {
-                        let res = s.to_f64().unwrap_or(0.0) * scale;
-                        *d = T::from_f64(res).unwrap_or(T::default());
-                    }
-                }
-            }
+            (if n > f64::EPSILON { alpha / n } else { 0.0 }, 0.0)
         }
         _ => cv_bail!(
             tags::CORE,
             NotImplemented,
-            "normalize: requested normalization type is not implemented yet"
+            "normalize: norm type {:?} is not supported, as in OpenCV only MinMax, L1, L2 and Inf are",
+            norm_type
         ),
+    };
+
+    let converted = src.convert_to_scaled::<U>(scale, shift)?;
+    if mask.is_none() {
+        *dst = converted;
+    } else {
+        for (i, (d, c)) in dst.data.iter_mut().zip(converted.data).enumerate() {
+            if selected(i) {
+                *d = c;
+            }
+        }
     }
     Ok(())
 }
