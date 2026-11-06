@@ -397,13 +397,12 @@ mod simd_impls {
             beta: f64,
             gamma: f64,
         ) -> bool {
-            let alpha_f32 = alpha as f32;
-            let beta_f32 = beta as f32;
-            let gamma_f32 = gamma as f32;
+            // `cv::addWeighted` on CV_32F runs `add_weighted_loop_d`: the sum is
+            // formed in double and narrowed once, like the scalar fallback.
             let arch = Arch::new();
             arch.dispatch(|| {
                 for i in 0..dst.len() {
-                    dst[i] = a[i] * alpha_f32 + b[i] * beta_f32 + gamma_f32;
+                    dst[i] = (a[i] as f64 * alpha + b[i] as f64 * beta + gamma) as f32;
                 }
             });
             true

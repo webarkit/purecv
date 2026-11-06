@@ -54,7 +54,7 @@ use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::core::saturate::{SaturateCast, SaturatingOps, ScalarOps};
+use crate::core::saturate::{SaturateCast, SaturatingOps, ScalarOps, WeightedOps};
 use crate::core::simd::SimdElement;
 
 /// Internal macro to handle feature-gated loop execution for binary operations.
@@ -1666,7 +1666,16 @@ where
 
 /// Calculates the weighted sum of two matrices.
 ///
-/// dst = src1*alpha + src2*beta + gamma
+/// dst = saturate_cast(src1*alpha + src2*beta + gamma)
+///
+/// Follows `cv::addWeighted`: the sum is rounded half to even and clamped to the
+/// range of the element type, so `u8` `51.5` gives `52` and `910` gives `255`.
+/// The working precision depends on the depth, see [`WeightedOps`]: `f32` for
+/// `u8`, `i8`, `u16` and `i16`, `f64` for `i32`, `f32` and `f64`.
+///
+/// `u32`, `u64` and `i64` have no OpenCV depth; they are computed in `f64`,
+/// rounded and clamped like the depths above (no panic, no wrapping). An `i32`
+/// sum outside the `i32` range clamps, where OpenCV returns `INT_MIN`.
 pub fn add_weighted<T>(
     src1: &Matrix<T>,
     alpha: f64,
@@ -1682,7 +1691,7 @@ where
         + PartialOrd
         + Bounded
         + ToPrimitive
-        + FromPrimitive
+        + WeightedOps
         + Default
         + SimdElement
         + 'static,
@@ -1705,7 +1714,8 @@ where
 
     #[cfg(feature = "simd")]
     {
-        // Only f32/f64 have simd_add_weighted; u8 and others use the scalar fallback.
+        // Only f32/f64 have simd_add_weighted (the same `f64` working type as the
+        // scalar path below); the other depths use the scalar fallback.
         if (core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>()
             || core::any::TypeId::of::<T>() == core::any::TypeId::of::<f64>())
             && <T as SimdElement>::has_simd()
@@ -1716,13 +1726,12 @@ where
     }
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        let val = s1.to_f64().unwrap_or(0.0) * alpha + s2.to_f64().unwrap_or(0.0) * beta + gamma;
-        *d = T::from_f64(val).unwrap_or(T::zero());
+        *d = s1.weighted_sum_op(s2, alpha, beta, gamma);
     });
 
     Ok(dst)
 }
-///
+
 /// dst = sqrt(src)
 pub fn sqrt<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where

@@ -546,3 +546,55 @@ impl ScalarOps for f64 {
         self / sc
     }
 }
+
+/// `a * alpha + b * beta + gamma` with the working types of `cv::addWeighted`.
+///
+/// `addWeighted` runs `add_weighted_loop` for the 8- and 16-bit depths and
+/// `add_weighted_loop_d` for `CV_32S`, `CV_32F` and `CV_64F`
+/// ([`arithm.simd.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.simd.hpp#L1760-L1829)),
+/// and the result goes through `saturate_cast`:
+///
+/// | depth | working type | source |
+/// |---|---|---|
+/// | `u8`, `i8`, `u16`, `i16` | `f32`: the weights are narrowed to `f32` first | `add_weighted_loop`, `c_add(a, b, alpha, beta, gamma)` |
+/// | `i32`, `f32`, `f64` | `f64`: the operands are widened, the weights stay `f64` | `add_weighted_loop_d` |
+///
+/// The 8- and 16-bit results are rounded half to even and clamped; `i32` is
+/// rounded and clamped too, `f32` and `f64` are not rounded. The sum is never
+/// fused (`mul_add`): OpenCV's vector loop is, which can move a result that lies
+/// within one `f32` step of a tie, and its scalar tail is not. `u32`, `u64` and
+/// `i64` have no OpenCV depth; they use the `f64` working type and clamp.
+///
+/// Where OpenCV's result for an `i32` sum outside the `i32` range comes from the
+/// x86 conversion (`INT_MIN`), purecv clamps.
+pub trait WeightedOps: SaturateCast {
+    /// `self * alpha + b * beta + gamma`.
+    fn weighted_sum_op(self, b: Self, alpha: f64, beta: f64, gamma: f64) -> Self;
+}
+
+macro_rules! impl_weighted_ops_f32 {
+    ($($t:ty),*) => {$(
+        impl WeightedOps for $t {
+            #[inline]
+            fn weighted_sum_op(self, b: Self, alpha: f64, beta: f64, gamma: f64) -> Self {
+                Self::saturate_from_f32(
+                    self as f32 * alpha as f32 + b as f32 * beta as f32 + gamma as f32,
+                )
+            }
+        }
+    )*};
+}
+
+macro_rules! impl_weighted_ops_f64 {
+    ($($t:ty),*) => {$(
+        impl WeightedOps for $t {
+            #[inline]
+            fn weighted_sum_op(self, b: Self, alpha: f64, beta: f64, gamma: f64) -> Self {
+                Self::saturate_from_f64(self as f64 * alpha + b as f64 * beta + gamma)
+            }
+        }
+    )*};
+}
+
+impl_weighted_ops_f32!(u8, i8, u16, i16);
+impl_weighted_ops_f64!(i32, u32, u64, i64, f32, f64);

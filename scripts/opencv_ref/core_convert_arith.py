@@ -197,6 +197,61 @@ def main() -> None:
         ),
     }
 
+    # add_weighted on a 1 x 64 u8 fixture from a seeded generator (SIMD lanes and tail)
+    rs = np.random.RandomState(211)
+    wa = rs.randint(0, 256, size=(1, 64)).astype(np.uint8)
+    wb = rs.randint(0, 256, size=(1, 64)).astype(np.uint8)
+    results["add_weighted_u8_seeded"] = {
+        "a": tolist(wa),
+        "b": tolist(wb),
+        "0.3_0.7_10.5": tolist(cv2.addWeighted(wa, 0.3, wb, 0.7, 10.5)),
+        "0.5_0.5_0": tolist(cv2.addWeighted(wa, 0.5, wb, 0.5, 0.0)),
+    }
+
+    # add_weighted on the other depths: ties, saturation, and the working type per depth
+    # (float for the 8/16-bit depths, double for CV_32S, CV_32F and CV_64F)
+    wd_src = {
+        "i8": (np.int8, [-128, -127, 127, 100, 1, -1, 0, 3, -100, 50],
+               [-128, 126, 127, 100, 2, -2, 0, 4, -100, -60]),
+        "u16": (np.uint16, [0, 1, 65535, 65535, 3, 1000, 40000, 65534, 5, 32768],
+                [0, 2, 65535, 1, 4, 2001, 40001, 65535, 7, 32767]),
+        "i16": (np.int16, [-32768, -32767, 32767, 32767, 1, -1, 0, 3, -30000, 1234],
+                [-32768, 32766, 32767, 1, 2, -2, 0, 4, -30000, -4321]),
+        # every result stays inside the int range: beyond it OpenCV returns the x86 artefact
+        "i32": (np.int32, [-500000000, 500000000, 1, 3, -1, 0, 7, 1000000000, 12345678, -5],
+                [-500000000, 499999999, 2, 4, -2, 0, 8, -1000000000, 98765432, 10]),
+        "f32": (np.float32, [-1e6, -300.5, -1.5, -0.25, 0.0, 0.1, 1.0, 2.5, 255.5, 1e6],
+                [1e6, 300.5, 0.5, 0.75, 0.0, 0.2, 3.0, 4.5, -0.5, 1e6]),
+        # (1.0, 3.0) is left out: with (0.3, 0.7, 10.5) the wheel's fused vector loop gives
+        # 12.9 where the unfused loop of the source gives 12.899999999999999
+        "f64": (np.float64, [-1e10, -0.1, 0.0, 0.1, 2.0, 1e10, 2.5, 0.3],
+                [1e10, 0.7, 0.0, 0.2, 4.0, 1e10, 4.5, 0.6]),
+    }
+    results["add_weighted_other_depths"] = {}
+    for name, (dt, av, bv) in wd_src.items():
+        a = np.array(av, dtype=dt).reshape(1, -1)
+        b = np.array(bv, dtype=dt).reshape(1, -1)
+        blk = {"a": tolist(a), "b": tolist(b)}
+        for label, (al, be, ga) in (("0.5_0.5_0", (0.5, 0.5, 0.0)), ("2_2_0", (2.0, 2.0, 0.0)),
+                                    ("0.3_0.7_10.5", (0.3, 0.7, 10.5)), ("1_-1_0", (1.0, -1.0, 0.0))):
+            blk[label] = tolist(cv2.addWeighted(a, al, b, be, ga))
+        results["add_weighted_other_depths"][name] = blk
+    # 1 x 64 seeded i32 and f32 rows (double working type, SIMD lanes and tail). The wheel's
+    # vector loop fuses a*alpha + (b*beta + gamma) with FMA, so a result that sits within one
+    # rounding step of a tie or of the float grid can differ from the unfused generic loop in
+    # the source; only scalars whose 64 results agree with both are recorded.
+    rs = np.random.RandomState(212)
+    ia = rs.randint(-2**30, 2**30, size=(1, 64)).astype(np.int32)
+    ib = rs.randint(-2**30, 2**30, size=(1, 64)).astype(np.int32)
+    fa = (rs.rand(1, 64) * 1000 - 500).astype(np.float32)
+    fb = (rs.rand(1, 64) * 1000 - 500).astype(np.float32)
+    results["add_weighted_seeded_wide"] = {
+        "i32_a": tolist(ia), "i32_b": tolist(ib),
+        "i32_0.5_0.5_0": tolist(cv2.addWeighted(ia, 0.5, ib, 0.5, 0.0)),
+        "f32_a": tolist(fa), "f32_b": tolist(fb),
+        "f32_0.3_0.7_10.5": tolist(cv2.addWeighted(fa, 0.3, fb, 0.7, 10.5)),
+    }
+
     # --- convert_scale_abs
     src_i16 = np.array([-300, -2, -1, 0, 1, 2, 127, 128, 254, 255, 256, 1000], dtype=np.int16)
     src_f32 = np.array(
