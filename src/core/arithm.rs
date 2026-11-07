@@ -1454,13 +1454,12 @@ where
                 } else {
                     0.0
                 };
-            let shift;
-            if U::IS_FLOAT && core::mem::size_of::<U>() == 4 {
+            let shift = if U::IS_FLOAT && core::mem::size_of::<U>() == 4 {
                 scale = scale as f32 as f64;
-                shift = (dmin as f32 - (smin * scale) as f32) as f64;
+                (dmin as f32 - (smin * scale) as f32) as f64
             } else {
-                shift = dmin - smin * scale;
-            }
+                dmin - smin * scale
+            };
             (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
@@ -3170,7 +3169,7 @@ fn fixed_point_3to3<T: TransformOps>(coef: &[T::Work]) -> Option<[[i32; 4]; 3]> 
     const SCALE: f32 = 1024.0;
     const MAX_M: f32 = 32.0;
     let mut fixed = [[0i32; 4]; 3];
-    for (out, row) in fixed.iter_mut().zip(coef.chunks_exact(4)) {
+    for (out, row) in fixed.iter_mut().zip(coef.as_chunks::<4>().0) {
         // `u8` works in `f32`, so going through `f64` here is exact.
         let m = [
             row[0].to_f64() as f32,

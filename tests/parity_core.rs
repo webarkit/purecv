@@ -2603,13 +2603,13 @@ fn normalize_to_writes_the_destination_in_place() {
     let mask = Matrix::from_vec(rows, cols, 1, mask_data);
     let mut dst = Matrix::from_vec(rows, cols, 3, vec![7.0f64; n * 3]);
     normalize_to(&big, &mut dst, 0.0, 255.0, NormTypes::MinMax, Some(&mask)).unwrap();
-    for (i, px) in dst.data.chunks_exact(3).enumerate() {
+    for (i, px) in dst.data.as_chunks::<3>().0.iter().enumerate() {
         let want: [f64; 3] = match i % 3 {
             0 => [0.0, 51.0, 102.0],
             1 => [7.0, 7.0, 7.0],
             _ => [255.0, 204.0, 153.0],
         };
-        assert_eq!(px, want, "pixel {i}");
+        assert_eq!(*px, want, "pixel {i}");
     }
 }
 
@@ -3519,7 +3519,7 @@ fn transform_u8_3to3_bias_follows_the_opencv_scalar_tail() {
             &[0.0, 0.5, 0.5, 0.0],
         ],
     );
-    assert!(dst.chunks_exact(3).all(|px| px[0] == 0), "{dst:?}");
+    assert!(dst.as_chunks::<3>().0.iter().all(|px| px[0] == 0), "{dst:?}");
 }
 
 /// Types with no OpenCV depth (`u32`, `u64`, `i64`) use the `f64` working type and must not
