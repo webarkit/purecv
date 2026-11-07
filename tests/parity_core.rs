@@ -553,17 +553,39 @@ fn multiply_u16_overflow_saturates_like_the_opencv_vector_lanes() {
     }
 }
 
-/// A `Scalar` has four values. On more channels the rest of the operand is the default of
-/// the type (a project ruling, `cv::Scalar` has no such form to measure), and nothing panics.
+/// OpenCV rejects a four-value scalar on a 5-channel array with error -209 for every
+/// function (`core_misc.py`, `scalar_5_channels`, the `<op>_nonzero` keys); the one-value form (`<op>_one`)
+/// that succeeds for the bitwise, min, max and compare functions has no purecv equivalent,
+/// since a `Scalar` always holds four values. So all 11 scalar functions return an error
+/// on more than four channels, and four channels still work.
 #[test]
-fn scalar_ops_beyond_four_channels_use_the_default() {
-    let src = Matrix::from_vec(1, 1, 5, vec![1u8, 2, 3, 4, 5]);
-    let s = Scalar::new(10.0f64, 20.0, 30.0, 40.0);
-    assert_eq!(add_scalar(&src, s).unwrap().data, vec![11u8, 22, 33, 44, 5]);
-    assert_eq!(
-        multiply_scalar(&src, s).unwrap().data,
-        vec![10u8, 40, 90, 160, 0]
-    );
+fn scalar_ops_reject_more_than_four_channels() {
+    let five = Matrix::from_vec(1, 2, 5, vec![1u8; 10]);
+    let four = Matrix::from_vec(1, 2, 4, vec![1u8; 8]);
+    let sf = Scalar::new(2.0f64, 2.0, 2.0, 2.0);
+    let su = Scalar::new(2u8, 2, 2, 2);
+    let cmp = CmpTypes::Eq;
+
+    assert!(add_scalar(&five, sf).is_err());
+    assert!(subtract_scalar(&five, sf).is_err());
+    assert!(multiply_scalar(&five, sf).is_err());
+    assert!(divide_scalar(&five, sf).is_err());
+    assert!(abs_diff_scalar(&five, su).is_err());
+    assert!(bitwise_and_scalar(&five, su).is_err());
+    assert!(bitwise_or_scalar(&five, su).is_err());
+    assert!(bitwise_xor_scalar(&five, su).is_err());
+    assert!(min_scalar(&five, su).is_err());
+    assert!(max_scalar(&five, su).is_err());
+    assert!(compare_scalar(&five, su, cmp).is_err());
+    // a zero scalar is rejected too (`<op>_zero` keys), and an f32 divide never reaches inf/NaN
+    assert!(multiply_scalar(&five, Scalar::new(0.0f64, 0.0, 0.0, 0.0)).is_err());
+    let five_f = Matrix::from_vec(1, 1, 5, vec![1.0f32; 5]);
+    assert!(divide_scalar(&five_f, Scalar::new(2.0f64, 2.0, 2.0, 2.0)).is_err());
+
+    assert_eq!(add_scalar(&four, sf).unwrap().data, vec![3u8; 8]);
+    assert_eq!(divide_scalar(&four, sf).unwrap().data, vec![0u8; 8]); // 0.5 rounds to even
+    assert_eq!(min_scalar(&four, su).unwrap().data, vec![1u8; 8]);
+    assert_eq!(compare_scalar(&four, su, cmp).unwrap().data, vec![0u8; 8]);
 }
 
 /// The `simd` u8 kernels run on 64 elements (several lanes) and must give the same
@@ -2603,13 +2625,13 @@ fn normalize_to_writes_the_destination_in_place() {
     let mask = Matrix::from_vec(rows, cols, 1, mask_data);
     let mut dst = Matrix::from_vec(rows, cols, 3, vec![7.0f64; n * 3]);
     normalize_to(&big, &mut dst, 0.0, 255.0, NormTypes::MinMax, Some(&mask)).unwrap();
-    for (i, px) in dst.data.chunks_exact(3).enumerate() {
+    for (i, px) in dst.data.as_chunks::<3>().0.iter().enumerate() {
         let want: [f64; 3] = match i % 3 {
             0 => [0.0, 51.0, 102.0],
             1 => [7.0, 7.0, 7.0],
             _ => [255.0, 204.0, 153.0],
         };
-        assert_eq!(px, want, "pixel {i}");
+        assert_eq!(*px, want, "pixel {i}");
     }
 }
 
@@ -3600,7 +3622,10 @@ fn transform_u8_3to3_bias_follows_the_opencv_scalar_tail() {
             &[0.0, 0.5, 0.5, 0.0],
         ],
     );
-    assert!(dst.chunks_exact(3).all(|px| px[0] == 0), "{dst:?}");
+    assert!(
+        dst.as_chunks::<3>().0.iter().all(|px| px[0] == 0),
+        "{dst:?}"
+    );
 }
 
 /// Types with no OpenCV depth (`u32`, `u64`, `i64`) use the `f64` working type and must not
