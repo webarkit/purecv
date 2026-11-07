@@ -3033,8 +3033,22 @@ where
 /// the bias is added last for the 2→2, 3→3, 3→1 and 4→4 shapes and first
 /// otherwise, and a square `m` whose off-diagonal entries are all within
 /// `FLT_EPSILON` (`DBL_EPSILON` for the `f64` working type) of zero is applied
-/// per channel. The fixed-point and fused multiply-add SIMD kernels of the
-/// reference build are not reproduced; they can differ on a rounding tie.
+/// per channel.
+///
+/// `u8` with three source and three destination channels and a non-diagonal `m`
+/// runs in 10-bit fixed point instead, like
+/// [`transform_8u`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matmul.simd.hpp#L1442-L1522),
+/// when on every row the first two coefficients are below 32 and the third and the
+/// bias below 8192 in magnitude. Coefficients are rounded to 1/1024, the bias gets
+/// `+0.5`, and the sum is shifted right by 10, so ties round up: with BT.601 luma
+/// weights a pixel can differ by one from the `f32` result. The sum is computed in
+/// `i32` and wraps. The bias is `round((m[3] + 0.5f) * 1024)` as in OpenCV's scalar
+/// tail; its vector lanes use `round(m[3] * 1024) + 512`, which differs only for a
+/// bias within a float step of a tie
+/// (`scripts/opencv_ref/core_transform_fixed_point.py`, key `bias_near_tie`).
+///
+/// The fused multiply-add SIMD kernels of the reference build are not reproduced;
+/// they can differ on a rounding tie.
 ///
 /// # Arguments
 /// * `src` - Input matrix with `scn` channels.
@@ -3104,17 +3118,31 @@ where
         });
     // The shapes `transform_` unrolls add the bias last.
     let bias_last = matches!((scn, dcn), (2, 2) | (3, 3) | (3, 1) | (4, 4));
+    // `transform_8u`: only reached by a non-diagonal `m`, `scn == dcn == 1` and the diagonal
+    // case have their own kernels.
+    let fixed = if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>()
+        && scn == 3
+        && dcn == 3
+        && !diag
+    {
+        fixed_point_3to3::<T>(&coef)
+    } else {
+        None
+    };
 
     dst.create(src.rows, src.cols, dcn);
+
+    let apply = |d_chunk: &mut [T], s_chunk: &[T]| match &fixed {
+        Some(k) => fixed_point_pixel(s_chunk, d_chunk, k),
+        None => transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last),
+    };
 
     #[cfg(feature = "parallel")]
     {
         dst.data
             .par_chunks_exact_mut(dcn)
             .zip(src.data.par_chunks_exact(scn))
-            .for_each(|(d_chunk, s_chunk)| {
-                transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last);
-            });
+            .for_each(|(d_chunk, s_chunk)| apply(d_chunk, s_chunk));
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -3122,12 +3150,60 @@ where
         dst.data
             .chunks_exact_mut(dcn)
             .zip(src.data.chunks_exact(scn))
-            .for_each(|(d_chunk, s_chunk)| {
-                transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last);
-            });
+            .for_each(|(d_chunk, s_chunk)| apply(d_chunk, s_chunk));
     }
 
     Ok(())
+}
+
+/// The fixed-point form of a `3 × 4` matrix for [`fixed_point_pixel`], or `None` when a
+/// coefficient is out of the range of `transform_8u`, which includes NaN.
+fn fixed_point_3to3<T: TransformOps>(coef: &[T::Work]) -> Option<[[i32; 4]; 3]> {
+    const SCALE: f32 = 1024.0;
+    const MAX_M: f32 = 32.0;
+    let mut fixed = [[0i32; 4]; 3];
+    for (out, row) in fixed.iter_mut().zip(coef.chunks_exact(4)) {
+        // `u8` works in `f32`, so going through `f64` here is exact.
+        let m = [
+            row[0].to_f64() as f32,
+            row[1].to_f64() as f32,
+            row[2].to_f64() as f32,
+            row[3].to_f64() as f32,
+        ];
+        let in_range = m[0].abs() < MAX_M
+            && m[1].abs() < MAX_M
+            && m[2].abs() < MAX_M * 256.0
+            && m[3].abs() < MAX_M * 256.0;
+        if !in_range {
+            return None;
+        }
+        *out = [
+            i16::saturate_from_f32(m[0] * SCALE) as i32,
+            i16::saturate_from_f32(m[1] * SCALE) as i32,
+            i32::saturate_from_f32(m[2] * SCALE),
+            i32::saturate_from_f32((m[3] + 0.5) * SCALE),
+        ];
+    }
+    Some(fixed)
+}
+
+/// One pixel of the fixed-point kernel of [`transform`]: `(c0*v0 + c1*v1 + c2*v2 + b) >> 10`,
+/// wrapping in `i32`, then clamped to the element type.
+#[inline]
+fn fixed_point_pixel<T: TransformOps>(src: &[T], dst: &mut [T], fixed: &[[i32; 4]; 3]) {
+    let v = [
+        src[0].to_work().to_f64() as i32,
+        src[1].to_work().to_f64() as i32,
+        src[2].to_work().to_f64() as i32,
+    ];
+    for (out, c) in dst.iter_mut().zip(fixed) {
+        let sum = c[0]
+            .wrapping_mul(v[0])
+            .wrapping_add(c[1].wrapping_mul(v[1]))
+            .wrapping_add(c[2].wrapping_mul(v[2]))
+            .wrapping_add(c[3]);
+        *out = T::saturate_from_i64((sum >> 10) as i64);
+    }
 }
 
 /// One pixel of [`transform`]: `coef` is the `dcn × (scn + 1)` matrix in the working type.

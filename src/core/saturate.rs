@@ -667,6 +667,8 @@ impl TransformWork for f64 {
 /// | `u8`, `i8`, `u16`, `i16`, `f32` | `f32`: the coefficients are narrowed first | `transform_8u` … `transform_32f` |
 /// | `i32`, `f64` | `f64` | `transform_32s`, `transform_64f` |
 ///
+/// `u8` with three source and three destination channels runs in fixed point
+/// where `transform_8u` does, see [`transform`](crate::core::arithm::transform).
 /// `u32`, `u64` and `i64` have no OpenCV depth and use `f64`.
 pub trait TransformOps: SaturateCast {
     /// The working type.
