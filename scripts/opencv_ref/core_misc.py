@@ -107,6 +107,9 @@ def main() -> None:
         "f32_0_255": [bool(cv2.checkRange(crf, True, 0.0, 255.0)[0]), tolist(cv2.checkRange(crf, True, 0.0, 255.0)[1])],
         "f32_0_255.5": bool(cv2.checkRange(crf, True, 0.0, 255.5)[0]),
         "f32_nan_default_bounds": bool(cv2.checkRange(nanf)[0]),
+        # lower bound is inclusive: 5 passes [5, 256), 4 fails it
+        "u8_lower_inclusive_5_in_5_256": bool(cv2.checkRange(np.array([[5, 100]], dtype=np.uint8), True, 5, 256)[0]),
+        "u8_lower_exclusive_4_in_5_256": bool(cv2.checkRange(np.array([[4, 100]], dtype=np.uint8), True, 5, 256)[0]),
     }
     a = np.array([[1, 5, 3]], dtype=np.uint8)
     b = np.array([[1, 2, 7]], dtype=np.uint8)

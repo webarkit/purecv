@@ -3085,11 +3085,18 @@ fn flip_rotate_transpose_repeat_match_opencv() {
 
 /// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`. purecv is inclusive.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #213"]
 fn check_range_upper_bound_is_exclusive() {
     let a = row(&[0u8, 100, 255]);
     assert!(!check_range(&a, 0.0, 255.0));
     assert!(check_range(&a, 0.0, 256.0));
+}
+
+/// The lower bound stays inclusive: 5 passes `[5, 256)`, 4 fails it
+/// (`scripts/opencv_ref/core_misc.py`, `check_range.u8_lower_*`).
+#[test]
+fn check_range_lower_bound_is_inclusive() {
+    assert!(check_range(&row(&[5u8, 100]), 5.0, 256.0));
+    assert!(!check_range(&row(&[4u8, 100]), 5.0, 256.0));
 }
 
 #[test]

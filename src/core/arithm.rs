@@ -2196,13 +2196,14 @@ where
 
 /// Checks if array elements lie within a specified range.
 ///
-/// The function checks if every element of the input matrix is within the range `[min_val, max_val]`.
+/// The function checks if every element of the input matrix is within the half-open range
+/// `[min_val, max_val)`, as OpenCV's `checkRange` does. NaN elements are never in range.
 ///
 /// # Arguments
 ///
 /// * `src` - Input matrix.
 /// * `min_val` - Lower boundary of the range (inclusive).
-/// * `max_val` - Upper boundary of the range (inclusive).
+/// * `max_val` - Upper boundary of the range (exclusive).
 ///
 /// # Example
 ///
@@ -2219,7 +2220,7 @@ where
 {
     src.data.iter().all(|&val| {
         let v = val.to_f64().unwrap_or(0.0);
-        v >= min_val && v <= max_val
+        min_val <= v && v < max_val
     })
 }
 
