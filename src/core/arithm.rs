@@ -1846,9 +1846,6 @@ where
 /// This is a purecv-only predicate: OpenCV has no counterpart, and it is not
 /// the negation of [`has_non_zero`] (which asks whether *any* element is non-zero).
 ///
-/// This provides rapid evaluation checking if no exact 'zero' value exists throughout
-/// the matrix structure natively mapping to OpenCV's iteration check mechanisms without relying on FFI bindings.
-///
 /// Returns true if all elements are non-zero (i.e. it does not contain any zero), false otherwise.
 ///
 /// # Arguments

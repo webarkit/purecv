@@ -156,7 +156,7 @@ def main() -> None:
     results["copy_make_border_codes"] = cmb
 
     # --- flip / rotate / transpose / repeat
-    m23 =np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)
+    m23 = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)
     results["structural"] = {
         "src": tolist(m23),
         "flip_0": tolist(cv2.flip(m23, 0)),

@@ -802,7 +802,7 @@ mod core_tests {
         assert_eq!(o.cols, 2);
         assert_eq!(o.channels, 3);
         assert_eq!(o.data.len(), 12);
-        assert!(o.data.chunks_exact(3).all(|px| px == [1, 0, 0]));
+        assert_eq!(o.data, vec![1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]);
     }
 
     // ---- with_type error cases ----
@@ -1498,12 +1498,7 @@ mod core_tests {
         let mut m1 = Matrix::<u8>::zeros(2, 2, 1);
         let mut m2 = Matrix::<u8>::zeros(2, 2, 1);
 
-        // Identical matrices, PSNR should be infinite, but we cap log(0) basically, wait our PSNR returns 0.0 or inf?
-        // Let's test with a difference.
-        m1.data = vec![10, 20, 30, 40];
-        m2.data = vec![10, 20, 30, 40]; // same
-
-        // Let's make them differ by 10 per element
+        // The two matrices differ by 10 per element.
         m1.data = vec![10, 20, 30, 40];
         m2.data = vec![20, 30, 40, 50]; // mse = 100
 

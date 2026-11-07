@@ -2764,7 +2764,7 @@ fn min_max_loc_matches_opencv() {
 // Constants, initialisers, has_no_zero (core_mat_initializers.js, core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
+/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`).
 #[test]
 fn cv_log2_is_ln_2() {
     assert_eq!(purecv::core::constants::CV_LOG2, core::f64::consts::LN_2);
@@ -2790,9 +2790,9 @@ fn ones_and_eye_multi_channel_set_only_channel_0() {
 
 /// OpenCV's `flipND` takes `axis` in `[-ndims, ndims)` and counts a negative axis from the
 /// end (`flip_nd_axis_minus1` flips the columns, `flip_nd_axis_minus2` the rows; 2 and -3 are
-/// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`); purecv maps every negative axis to
-/// "both" and accepts axis 2. Values: `core_misc.py` keys `flip_nd_axis_minus1`,
-/// `flip_nd_axis_minus2` (flips) and `flip_nd_axis_2`, `flip_nd_axis_minus3` (errors).
+/// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`). Values: `core_misc.py` keys
+/// `flip_nd_axis_minus1`, `flip_nd_axis_minus2` (flips) and `flip_nd_axis_2`,
+/// `flip_nd_axis_minus3` (errors).
 #[test]
 fn flip_nd_negative_axis_counts_from_the_end() {
     let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);

@@ -421,6 +421,7 @@ where
     // The pixel written wherever the border is constant.
     let mut fill = alloc::vec![T::default(); channels];
     if is_constant {
+        // A NaN value fails the equality check on purpose, as it does OpenCV's assert.
         if channels > 4 && !value.v.iter().all(|&v| v == value.v[0]) {
             cv_bail!(
                 tags::CORE,
