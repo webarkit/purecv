@@ -597,7 +597,9 @@ impl<T: Default + Clone> Matrix<T> {
     /// `f64`, or when the target is `i32` and the source `i32` or `f64`;
     /// `f32` for every other pair (so `f64 -> u8` scales in single precision).
     /// The multiply and the add are separate roundings; OpenCV's SIMD loops
-    /// fuse them, which can differ in the last bit of a tie.
+    /// fuse them, which can differ in the last bit of a tie. A row narrower
+    /// than one vector runs OpenCV's scalar tail instead, which is not fused
+    /// and agrees with this path, so that difference needs a wider row.
     ///
     /// # Example
     /// ```

@@ -94,6 +94,9 @@ def main() -> None:
             cv2.normalize(np.array([[5.0, 5.0, 5.0]], dtype=np.float32), None, 0, 255, cv2.NORM_MINMAX)
         ),
         "l2sqr_as_norm_type": attempt(lambda: cv2.normalize(s32, None, 1, 0, cv2.NORM_L2SQR)),
+        # `rtype` is reduced with CV_MAT_DEPTH, so the channel bits of a full type code are ignored.
+        "f32_dtype_CV_32FC3": attempt(lambda: tolist(cv2.normalize(s32, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_32FC3))),
+        "f32_dtype_CV_8UC3": attempt(lambda: tolist(cv2.normalize(s32, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC3))),
     }
 
     # --- mean / sum / meanStdDev

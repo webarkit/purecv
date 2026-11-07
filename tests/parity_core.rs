@@ -541,6 +541,19 @@ fn multiply_u16_overflow_clamps_where_opencv_hits_the_cvround_artefact() {
     assert_eq!(multiply(&a, &a).unwrap().data, vec![65535u16]);
 }
 
+/// A `Scalar` has four values. On more channels the rest of the operand is the default of
+/// the type (a project ruling, `cv::Scalar` has no such form to measure), and nothing panics.
+#[test]
+fn scalar_ops_beyond_four_channels_use_the_default() {
+    let src = Matrix::from_vec(1, 1, 5, vec![1u8, 2, 3, 4, 5]);
+    let s = Scalar::new(10.0f64, 20.0, 30.0, 40.0);
+    assert_eq!(add_scalar(&src, s).unwrap().data, vec![11u8, 22, 33, 44, 5]);
+    assert_eq!(
+        multiply_scalar(&src, s).unwrap().data,
+        vec![10u8, 40, 90, 160, 0]
+    );
+}
+
 /// The `simd` u8 kernels run on 64 elements (several lanes) and must give the same
 /// saturated values as the scalar path.
 #[test]
@@ -606,7 +619,7 @@ fn add_u8_without_overflow_matches_opencv() {
     let a = row(&[0u8, 1, 100, 7, 5, 1, 9]);
     let b = row(&[0u8, 1, 3, 2, 2, 3, 4]);
     assert_eq!(add(&a, &b).unwrap().data, vec![0u8, 2, 103, 9, 7, 4, 13]);
-    // 1 - 3 would underflow (a debug-build panic without `simd`): use a >= b here.
+    // Only a >= b here; the underflow of 1 - 3 is covered by `add_u8_saturates_across_simd_lanes`.
     let b2 = row(&[0u8, 1, 3, 2, 2, 1, 4]);
     assert_eq!(
         subtract(&a, &b2).unwrap().data,
@@ -615,7 +628,7 @@ fn add_u8_without_overflow_matches_opencv() {
 }
 
 /// OpenCV: `b != 0 ? saturate_cast<uchar>(float(a) / b) : 0`, so 7/2 = 3.5 -> 4 and
-/// 250/7 = 35.7 -> 36. purecv divides in integers (7/2 = 3).
+/// 250/7 = 35.7 -> 36. purecv computes the same float quotient.
 #[test]
 fn divide_u8_rounds_the_float_quotient() {
     let dst = divide(&row(&A_U8), &row(&B_U8)).unwrap();
@@ -630,8 +643,8 @@ fn divide_u8_by_zero_is_zero_matches_opencv() {
     assert_eq!(divide(&a, &b).unwrap().data, vec![0u8, 0, 0, 1, 1]);
 }
 
-/// OpenCV: float division is plain IEEE division (`a / b`), so x/0 is inf, -inf or nan.
-/// purecv maps every division by zero to 0, for floats too.
+/// OpenCV: float division is plain IEEE division (`a / b`), so x/0 is inf, -inf or nan, and
+/// purecv does the same.
 #[test]
 fn divide_f32_by_zero_is_ieee() {
     let a = row(&[1.0f32, -1.0, 0.0, 4.0]);
@@ -1614,9 +1627,11 @@ fn add_weighted_u8_rounds_half_even_and_saturates() {
     );
 }
 
-// 1 x 64 u8 rows from `RandomState(211)` and their `cv2.addWeighted` results (the 8-bit
-// depths compute in `f32`). The wheel's vector loop fuses the multiply-add, which can move a
-// result that lies within one `f32` step of a tie; these scalars agree with the unfused loop.
+// `core_convert_arith.py`, block `add_weighted_u8_seeded` (`RandomState(211)`): SEED_A and
+// SEED_B are keys `a` and `b`, SEED_W_0_3_0_7_10_5 is key `0.3_0.7_10.5` and SEED_W_HALF is key
+// `0.5_0.5_0`, the `cv2.addWeighted` results (the 8-bit depths compute in `f32`). The wheel's
+// vector loop fuses the multiply-add, which can move a result that lies within one `f32` step
+// of a tie; these scalars agree with the unfused loop.
 const SEED_A: [u8; 64] = [
     6, 70, 102, 94, 252, 4, 42, 203, 16, 204, 158, 233, 14, 119, 47, 217, 2, 147, 153, 29, 143,
     151, 14, 147, 201, 144, 42, 17, 250, 254, 158, 67, 126, 114, 239, 18, 3, 112, 87, 72, 171, 29,
@@ -2520,6 +2535,37 @@ fn normalize_minmax_swapped_bounds_match_sorted_bounds() {
     assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
 }
 
+/// `rtype` goes through `CV_MAT_DEPTH`, so the channel bits of a full type code do not matter:
+/// `core_stats.py`, `normalize`, key `f32_dtype_CV_32FC3` keeps `f32` and gives the plain
+/// result. `CV_8UC3` has another depth, which a `Matrix<f32>` destination cannot hold, so it is
+/// rejected here and `normalize_to` is the way to change the type.
+#[test]
+fn normalize_dtype_compares_only_the_depth() {
+    let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
+    let mut dst = Matrix::<f32>::new(1, 4, 1);
+    normalize(
+        &src,
+        &mut dst,
+        0.0,
+        255.0,
+        NormTypes::MinMax,
+        CV_32FC3.to_int(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
+    assert!(normalize(
+        &src,
+        &mut dst,
+        0.0,
+        255.0,
+        NormTypes::MinMax,
+        CV_8UC3.to_int(),
+        None
+    )
+    .is_err());
+}
+
 /// `normalize_to` carries the destination type. Values from `core_stats.py`, block
 /// `normalize`, keys `u8_minmax_0_1_to_f32`, `u8_minmax_0_255_to_f32` and
 /// `u8_minmax_swapped_to_f32`. A float destination uses single-precision scale and shift, so
@@ -3252,7 +3298,8 @@ fn transform_single_channel_and_diagonal_match_opencv() {
 }
 
 /// Types with no OpenCV depth (`u32`, `u64`, `i64`) use the `f64` working type and must not
-/// panic; they round half to even and clamp like the others.
+/// panic; they round half to even and clamp like the others. There is nothing to measure for
+/// them, so these expected values are derived by hand from those rules.
 #[test]
 fn transform_types_without_opencv_depth_use_f64() {
     let m = Matrix::from_vec(1, 3, 1, vec![0.5f64, 0.5, 0.5]);

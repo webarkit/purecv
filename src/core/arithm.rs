@@ -187,6 +187,8 @@ macro_rules! binary_op {
 }
 
 /// Internal macro to handle feature-gated loop execution for unary operations.
+///
+/// A `Scalar` has four values; channels beyond them see the default of the element type.
 macro_rules! binary_op_scalar {
     ($dst:expr, $src:expr, $scalar:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s:ident, $sc:ident| $body:expr) => {
         let channels = $src.channels as usize;
@@ -201,7 +203,7 @@ macro_rules! binary_op_scalar {
                     for i in 0..channels {
                         let $d: &mut $t_dst = &mut d_chunk[i];
                         let $s: $t_src = s_chunk[i];
-                        let $sc = scalar_data[i];
+                        let $sc = scalar_data.get(i).copied().unwrap_or_default();
                         $body
                     }
                 });
@@ -216,7 +218,7 @@ macro_rules! binary_op_scalar {
                     for i in 0..channels {
                         let $d: &mut $t_dst = &mut d_chunk[i];
                         let $s: $t_src = s_chunk[i];
-                        let $sc = scalar_data[i];
+                        let $sc = scalar_data.get(i).copied().unwrap_or_default();
                         $body
                     }
                 });
@@ -1312,15 +1314,18 @@ where
 /// For [`NormTypes::MinMax`], `alpha` and `beta` are the bounds of the output range;
 /// they are sorted first, so `(255, 0)` equals `(0, 255)`. For `L1`, `L2` and `Inf`,
 /// `alpha` is the norm the output reaches and `beta` is ignored. A constant
-/// source (range or norm not above `f64::EPSILON`) maps to `alpha` for `MinMax`
+/// source (range or norm not above `f64::EPSILON`) maps to `min(alpha, beta)` for `MinMax`
 /// and to 0 for the norms.
 ///
-/// `dtype` follows OpenCV's `rtype`: `-1` or the depth of `T` is accepted, and any other
-/// value returns an error because `dst` is a `Matrix<T>`. Use [`normalize_to`] to write a
-/// different element type.
+/// `dtype` follows OpenCV's `rtype`: `-1` or a type code with the depth of `T` is accepted
+/// (`CV_MAT_DEPTH`, so `CV_32FC3` is fine for `f32`), and any other depth returns an error
+/// because `dst` is a `Matrix<T>`. Use [`normalize_to`] to write a different element type.
 ///
-/// With a `mask`, only the selected elements of `dst` are written (the range or norm is
-/// measured over them too) and the others are kept. Without a mask `dst` is replaced.
+/// With a `mask`, only the selected pixels of `dst` are written and the others are kept;
+/// without a mask `dst` is replaced. `MinMax` measures the range over the selected pixels.
+/// `L1`, `L2` and `Inf` measure the norm with [`norm`], which pairs the mask with elements
+/// rather than pixels, so on a multi-channel source the norm is not taken over the selected
+/// pixels (#214).
 ///
 /// This is [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414);
 /// the output is `saturate_cast<T>(x * scale + shift)` through
@@ -1337,7 +1342,8 @@ pub fn normalize<T>(
 where
     T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + SaturateCast + 'static,
 {
-    if dtype >= 0 && dtype != T::depth() as i32 {
+    // `CV_MAT_DEPTH(rtype)`: the channel bits of a full type code do not count.
+    if dtype >= 0 && (dtype & 7) != T::depth() as i32 {
         cv_bail!(
             tags::CORE,
             InvalidInput,
@@ -1445,6 +1451,7 @@ where
             (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
+            // `norm` pairs the mask with elements on a multi-channel source, see #214.
             let n = norm(src, norm_type, mask)?;
             (if n > f64::EPSILON { alpha / n } else { 0.0 }, 0.0)
         }
