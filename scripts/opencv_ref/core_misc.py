@@ -333,6 +333,31 @@ def main() -> None:
         "poly_m6_11_m6_1": [float(cv2.solvePoly(np.array([-6.0, 11.0, -6.0, 1.0]))[0]), tolist(cv2.solvePoly(np.array([-6.0, 11.0, -6.0, 1.0]))[1])],
     }
 
+    # --- scalar operand on more than four channels (binary_op_scalar! in src/core/arithm.rs)
+    five = np.full((1, 2, 5), 10, dtype=np.uint8)
+    four = np.full((1, 2, 4), 10, dtype=np.uint8)
+    scalar_ops = {
+        "add": cv2.add,
+        "subtract": cv2.subtract,
+        "multiply": cv2.multiply,
+        "divide": cv2.divide,
+        "absdiff": cv2.absdiff,
+        "bitwise_and": cv2.bitwise_and,
+        "bitwise_or": cv2.bitwise_or,
+        "bitwise_xor": cv2.bitwise_xor,
+        "min": cv2.min,
+        "max": cv2.max,
+        "compare_eq": lambda a, s: cv2.compare(a, s, cv2.CMP_EQ),
+    }
+    scalar_5 = {}
+    for name, op in scalar_ops.items():
+        scalar_5[f"{name}_nonzero"] = attempt(lambda op=op: op(five, (1.0, 2.0, 3.0, 4.0)))
+        scalar_5[f"{name}_zero"] = attempt(lambda op=op: op(five, (0.0, 0.0, 0.0, 0.0)))
+        scalar_5[f"{name}_one"] = attempt(lambda op=op: op(five, (50.0,)))
+    # four channels still work
+    scalar_5["add_4ch_nonzero"] = attempt(lambda: cv2.add(four, (1.0, 2.0, 3.0, 4.0)))
+    results["scalar_5_channels"] = scalar_5
+
     dump("core_misc.py", results)
 
 

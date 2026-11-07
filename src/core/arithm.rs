@@ -188,10 +188,21 @@ macro_rules! binary_op {
 
 /// Internal macro to handle feature-gated loop execution for unary operations.
 ///
-/// A `Scalar` has four values; channels beyond them see the default of the element type.
+/// A `Scalar` has four values, so a source with more than four channels returns an error
+/// (`IncompatibleChannels`) from the calling function: OpenCV 4.10.0 gives error -209 for
+/// every scalar function on 5 channels (`core_misc.py`, `scalar_5_channels`), and its one-value
+/// form that succeeds for some of them has no purecv equivalent.
 macro_rules! binary_op_scalar {
     ($dst:expr, $src:expr, $scalar:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s:ident, $sc:ident| $body:expr) => {
         let channels = $src.channels as usize;
+        if channels > 4 {
+            cv_bail!(
+                tags::CORE,
+                IncompatibleChannels,
+                "a scalar operand has four values, the source has {} channels",
+                channels
+            );
+        }
         let scalar_data = $scalar.v;
 
         #[cfg(feature = "parallel")]
@@ -203,7 +214,7 @@ macro_rules! binary_op_scalar {
                     for i in 0..channels {
                         let $d: &mut $t_dst = &mut d_chunk[i];
                         let $s: $t_src = s_chunk[i];
-                        let $sc = scalar_data.get(i).copied().unwrap_or_default();
+                        let $sc = scalar_data[i];
                         $body
                     }
                 });
@@ -218,7 +229,7 @@ macro_rules! binary_op_scalar {
                     for i in 0..channels {
                         let $d: &mut $t_dst = &mut d_chunk[i];
                         let $s: $t_src = s_chunk[i];
-                        let $sc = scalar_data.get(i).copied().unwrap_or_default();
+                        let $sc = scalar_data[i];
                         $body
                     }
                 });
@@ -336,6 +347,9 @@ macro_rules! unary_op {
 /// converted to `i32` with `saturate_cast` (round half to even, so `10.7` adds
 /// 11 and `10.5` adds 10) and the sum is saturated to the depth of `src1`; see
 /// [`ScalarOps`] for the working type of every depth.
+///
+/// A `Scalar` has four values, so a source with more than four channels returns an error,
+/// like OpenCV (error -209). The same holds for every `*_scalar` function below.
 pub fn add_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
     T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
