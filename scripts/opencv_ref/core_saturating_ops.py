@@ -69,6 +69,15 @@ def main() -> None:
             "multiply": tolist(cv2.multiply(a, b)),
             "absdiff": tolist(cv2.absdiff(a, b)),
         }
+    # u16 multiply: `c_mul` is `saturate_cast<ushort>(a * b)` with both operands promoted to `int`,
+    # so the scalar kernel overflows for products >= 2^31, while the vector lanes saturate.
+    # A row narrower than a vector is all scalar; a longer one ends in a scalar tail.
+    overflow = {}
+    for value in (46340, 46341, 50000, 65535):
+        for width in (3, 64, 65):
+            a = np.full((1, width), value, dtype=np.uint16)
+            overflow[f"{value}x{value}_width_{width}"] = tolist(cv2.multiply(a, a))
+    results["u16_multiply_overflow"] = overflow
     dump("core_saturating_ops", results)
 
 

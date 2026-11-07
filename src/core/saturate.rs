@@ -239,10 +239,16 @@ pub fn saturate_cast<T: SaturateCast>(v: f64) -> T {
 ///   detour, so it stays exact above 2⁵³), rounded half to even like the
 ///   depths above and clamped; `x / 0` is `0`.
 ///
-/// The one known difference for the saturating depths is `u16` multiply: OpenCV
-/// converts the `double` product through a 32-bit `int`, so `65535 * 65535`
-/// gives `0` there and `65535` here (the same `INT_MIN` effect that
-/// [`SaturateCast`] documents).
+/// The one known difference for the saturating depths is `u16` multiply. OpenCV's
+/// scalar kernel is
+/// [`c_mul`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.simd.hpp#L180-L182),
+/// `saturate_cast<ushort>(a * b)`, where both operands promote to `int`: a product
+/// of 2³¹ or more (`46341 * 46341`, `50000 * 50000`, `65535 * 65535`) overflows, the
+/// negative result wraps and the clamp gives `0`. Its vector lanes saturate those
+/// products to `65535`, so the OpenCV result depends on the position in the row
+/// (`scripts/opencv_ref/core_saturating_ops.py`, block `u16_multiply_overflow`: a row
+/// of 64 gives `65535`, a row of 3 gives `0`, and a row of 65 ends in one `0`).
+/// purecv always gives `65535`, like the vector lanes.
 ///
 /// # Example
 /// ```

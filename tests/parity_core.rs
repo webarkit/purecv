@@ -428,15 +428,16 @@ fn add_sub_mul_bounds_match_opencv() {
         &[126, 0, -127, 0, -128, 127, 127, -127, -2, 2, 62, -67, 125, -128],
         &[127, 127, 127, 127, -128, -128, 0, 0, 3, 3, 127, -128, 127, -128],
     );
-    // The pair 65535 * 65535 is left out: see
-    // `multiply_u16_overflow_clamps_where_opencv_hits_the_cvround_artefact`.
+    // The multiply value of the pair 65535 * 65535 (index 1) is the only one that is not the
+    // measured one: this row is narrow, so cv2 gives 0 there and purecv keeps 65535, see
+    // `multiply_u16_overflow_saturates_like_the_opencv_vector_lanes`.
     check!(
         u16,
-        &[65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
-        &[1, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
-        &[65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
-        &[65534, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
-        &[65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
+        &[65535, 65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
+        &[1, 65535, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
+        &[65535, 65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
+        &[65534, 0, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
+        &[65535, 65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
     );
     check!(
         i16,
@@ -531,14 +532,23 @@ fn add_sub_mul_bounds_match_opencv() {
     );
 }
 
-/// OpenCV 4.10.0 gives 0 for u16 `65535 * 65535` (measured by
-/// `scripts/opencv_ref/core_saturating_ops.py`, `u16.multiply`, index 1). That 0 comes from the
-/// out-of-range double-to-int conversion that `SaturateCast` documents as not ported, so
-/// purecv clamps to 65535 on purpose.
+/// `core_saturating_ops.py`, block `u16_multiply_overflow`. OpenCV's scalar kernel `c_mul`
+/// computes `a * b` in `int`, so a product of 2^31 or more (from 46341 * 46341 on) overflows
+/// and gives 0, while its vector lanes saturate to 65535: width 64 is all 65535, width 3 all 0,
+/// and width 65 is 65535 except for a last 0. purecv keeps saturating at every position, like
+/// the vector lanes. 46340 * 46340 still fits in `int`, where the two agree on 65535.
 #[test]
-fn multiply_u16_overflow_clamps_where_opencv_hits_the_cvround_artefact() {
-    let a = row(&[65535u16]);
-    assert_eq!(multiply(&a, &a).unwrap().data, vec![65535u16]);
+fn multiply_u16_overflow_saturates_like_the_opencv_vector_lanes() {
+    for value in [46340u16, 46341, 50000, 65535] {
+        for width in [3, 64, 65] {
+            let a = row(&vec![value; width]);
+            assert_eq!(
+                multiply(&a, &a).unwrap().data,
+                vec![65535u16; width],
+                "{value} x{width}"
+            );
+        }
+    }
 }
 
 /// A `Scalar` has four values. On more channels the rest of the operand is the default of
