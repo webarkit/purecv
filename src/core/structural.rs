@@ -114,28 +114,35 @@ where
 /// # Arguments
 ///
 /// * `src` - A reference to the input Matrix representation.
-/// * `axis` - Specified axis to base mirroring reflections. `0` means flip across rows (vertical axis mirroring), `1` means flip across columns (horizontal axis mirroring), and values strictly `< 0` mirror both axes simultaneously (vertical and horizontal flips).
+/// * `axis` - The axis to mirror, in `[-2, 2)` since a matrix has two dimensions. `0` flips the
+///   rows (vertical mirroring), `1` flips the columns (horizontal mirroring). A negative axis
+///   counts from the end, as in OpenCV: `-1` is `1` and `-2` is `0`.
 ///
 /// # Returns
 ///
 /// * `Result<Matrix<T>>` - Structural copy output Matrix with transposed data logic.
 ///
 /// # Errors
-/// Returns standard matrix operation errors natively.
+/// Returns `PureCvError::InvalidInput` when `axis` is outside `[-2, 2)`, where OpenCV raises
+/// "given axis is out of range".
 pub fn flip_nd<T>(src: &Matrix<T>, axis: i32) -> Result<Matrix<T>>
 where
     T: Copy + Send + Sync + Default + 'static,
 {
-    // Map N-D axis to flip_code for 2D Matrix
-    // axis = 0 means flip across rows (X-axis, flip_code = 0)
-    // axis = 1 means flip across cols (Y-axis, flip_code = 1)
-    // axis < 0 means both (flip_code = -1)
-    let flip_code = match axis {
-        0 => 0,
-        1 => 1,
-        _ => -1,
-    };
-    flip(src, flip_code)
+    const NDIMS: i32 = 2;
+    if !(-NDIMS..NDIMS).contains(&axis) {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "flip_nd: axis {} is out of range [{}, {})",
+            axis,
+            -NDIMS,
+            NDIMS
+        );
+    }
+    // axis 0 flips across rows (flip_code = 0), axis 1 across columns (flip_code = 1).
+    let axis = if axis < 0 { axis + NDIMS } else { axis };
+    flip(src, axis)
 }
 
 /// Transposes a matrix.

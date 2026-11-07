@@ -823,17 +823,28 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
         Self::zeros(size.height.into(), size.width.into(), channels)
     }
 
-    /// Returns an array of all 1's of the specified size and type.
+    /// Returns an array of 1's of the specified size and type, like
+    /// [`Mat::ones`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/mat.hpp#L1424).
+    ///
+    /// As in OpenCV, which writes `Scalar(1)`, only channel 0 of each pixel is 1; the other
+    /// channels of a multi-channel matrix are 0.
+    ///
+    /// ```
+    /// use purecv::core::Matrix;
+    ///
+    /// assert_eq!(Matrix::<u8>::ones(1, 2, 3).data, vec![1, 0, 0, 1, 0, 0]);
+    /// ```
     pub fn ones(rows: usize, cols: usize, channels: usize) -> Self {
-        Self {
-            rows,
-            cols,
-            channels,
-            data: vec![T::one(); rows * cols * channels],
+        let mut mat = Self::zeros(rows, cols, channels);
+        if channels > 0 {
+            for px in mat.data.chunks_exact_mut(channels) {
+                px[0] = T::one();
+            }
         }
+        mat
     }
 
-    /// Returns an array of all 1's of the specified size and type.
+    /// Like [`Matrix::ones`], taking a [`Size`](crate::core::Size).
     pub fn ones_from_size<U: Into<usize>>(size: crate::core::Size<U>, channels: usize) -> Self {
         Self::ones(size.height.into(), size.width.into(), channels)
     }
@@ -872,14 +883,22 @@ impl<T: num_traits::Zero + num_traits::One + Default + Clone> Matrix<T> {
         Ok(Self::ones(rows, cols, mat_type.channels()))
     }
 
-    /// Returns an identity matrix of the specified size and type.
-    /// Following OpenCV, the diagonal has value 1 and others are 0.
+    /// Returns an identity matrix of the specified size and type, like
+    /// [`Mat::eye`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/mat.hpp#L1453).
+    /// The diagonal has value 1 and the others are 0. As in OpenCV, which writes `Scalar(1)`,
+    /// only channel 0 of a diagonal pixel is 1; the other channels are 0.
+    ///
+    /// ```
+    /// use purecv::core::Matrix;
+    ///
+    /// assert_eq!(Matrix::<u8>::eye(2, 2, 2).data, vec![1, 0, 0, 0, 0, 0, 1, 0]);
+    /// ```
     pub fn eye(rows: usize, cols: usize, channels: usize) -> Self {
         let mut mat = Self::zeros(rows, cols, channels);
         let min_dim = core::cmp::min(rows, cols);
-        for i in 0..min_dim {
-            for c in 0..channels {
-                mat.set(i, i, c, T::one());
+        if channels > 0 {
+            for i in 0..min_dim {
+                mat.set(i, i, 0, T::one());
             }
         }
         mat

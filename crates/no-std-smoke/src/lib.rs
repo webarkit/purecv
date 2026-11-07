@@ -62,8 +62,8 @@ pub fn smoke() -> Result<f64> {
     let b = Matrix::<f32>::from_vec(2, 2, 1, vec![5.0, 6.0, 7.0, 8.0]);
 
     let sum = add(&a, &b)?;
-    let avg = mean(&sum);
-    let det = determinant(&sum);
+    let avg = mean(&sum)?;
+    let det = determinant(&sum)?;
 
     Ok(avg.v[0] + det)
 }

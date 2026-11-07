@@ -91,11 +91,19 @@ const OPTIMAL_DFT_SIZES: &[i32] = &[
 /// Optimal sizes are of the form `2^a * 3^b * 5^c` which allow the FFT
 /// algorithm to run most efficiently.
 ///
-/// Returns the input itself if `size <= 1`. Returns `-1` if `size` exceeds the
-/// largest pre-computed entry.
+/// Like OpenCV's
+/// [`getOptimalDFTSize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L4625-L4641),
+/// returns `1` for `0` and `-1` for a negative `size` and for `size >= 2125764000`, the last
+/// entry of OpenCV's table.
 pub fn get_optimal_dft_size(size: i32) -> i32 {
+    /// The largest size in OpenCV's `optimalDFTSizeTab`; the reference compares as unsigned,
+    /// so negative sizes land here too.
+    const OPENCV_TABLE_MAX: u32 = 2_125_764_000;
+    if size as u32 >= OPENCV_TABLE_MAX {
+        return -1;
+    }
     if size <= 1 {
-        return size.max(0);
+        return 1;
     }
     match OPTIMAL_DFT_SIZES.iter().position(|&s| s >= size) {
         Some(idx) => OPTIMAL_DFT_SIZES[idx],
@@ -346,8 +354,8 @@ mod tests {
 
     #[test]
     fn test_get_optimal_dft_size_zero_negative() {
-        assert_eq!(get_optimal_dft_size(0), 0);
-        assert_eq!(get_optimal_dft_size(-5), 0);
+        assert_eq!(get_optimal_dft_size(0), 1);
+        assert_eq!(get_optimal_dft_size(-5), -1);
     }
 
     #[test]

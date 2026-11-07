@@ -191,8 +191,8 @@ mod core_tests {
         assert_eq!(f_nd_v.data, vec![3, 4, 1, 2]);
         let f_nd_h = flip_nd(&m, 1).unwrap(); // horizontal (axis 1)
         assert_eq!(f_nd_h.data, vec![2, 1, 4, 3]);
-        let f_nd_both = flip_nd(&m, -1).unwrap(); // both
-        assert_eq!(f_nd_both.data, vec![4, 3, 2, 1]);
+        let f_nd_end = flip_nd(&m, -1).unwrap(); // counts from the end: axis 1
+        assert_eq!(f_nd_end.data, vec![2, 1, 4, 3]);
 
         // Transpose test
         let m_rect = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
@@ -321,11 +321,11 @@ mod core_tests {
         let m = Matrix::from_vec(2, 2, 1, vec![10.0f64, 20.0, 30.0, 40.0]);
 
         // Sum
-        let s = sum(&m);
+        let s = sum(&m).unwrap();
         assert_eq!(s.v[0], 100.0);
 
         // Mean
-        let mn = mean(&m);
+        let mn = mean(&m).unwrap();
         assert_eq!(mn.v[0], 25.0);
 
         // MinMaxLoc
@@ -391,8 +391,7 @@ mod core_tests {
 
         // Test Matrix::ones_with_type
         let o = Matrix::<i16>::ones_with_type(2, 2, CV_16SC2).unwrap();
-        assert_eq!(o.data.len(), 8);
-        assert!(o.data.iter().all(|&v| v == 1));
+        assert_eq!(o.data, vec![1, 0, 1, 0, 1, 0, 1, 0]); // channel 0 only, as Mat::ones
         assert_eq!(o.mat_type(), CV_16SC2);
 
         // Test error when depth mismatch on new_with_type
@@ -803,7 +802,7 @@ mod core_tests {
         assert_eq!(o.cols, 2);
         assert_eq!(o.channels, 3);
         assert_eq!(o.data.len(), 12);
-        assert!(o.data.iter().all(|&v| v == 1));
+        assert!(o.data.chunks_exact(3).all(|px| px == [1, 0, 0]));
     }
 
     // ---- with_type error cases ----
@@ -1306,7 +1305,7 @@ mod core_tests {
     fn test_determinant() {
         // 2×2: det([1,2;3,4]) = 1*4 - 2*3 = -2
         let m2 = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 3.0, 4.0]);
-        assert!((determinant(&m2) - (-2.0)).abs() < 1e-9);
+        assert!((determinant(&m2).unwrap() - (-2.0)).abs() < 1e-9);
 
         // 3×3: det([1,2,3;0,1,4;5,6,0]) = 1
         let m3 = Matrix::from_vec(
@@ -1315,7 +1314,7 @@ mod core_tests {
             1,
             vec![1.0f64, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0],
         );
-        assert!((determinant(&m3) - 1.0).abs() < 1e-9);
+        assert!((determinant(&m3).unwrap() - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1378,6 +1377,19 @@ mod core_tests {
     // -----------------------------------------------------------------------
     // DynamicMatrix
     // -----------------------------------------------------------------------
+
+    /// `Mat::ones` writes `Scalar(1)`: only channel 0 (`core_mat_initializers.js` keys
+    /// `ones_1x1_8uc3`, `ones_2x2_32fc2`).
+    #[test]
+    fn dynamic_ones_sets_only_channel_0() {
+        let dm = DynamicMatrix::ones(1, 1, CV_8UC3).unwrap();
+        assert_eq!(dm.data_u8(), Some(&[1u8, 0, 0][..]));
+        let dm = DynamicMatrix::ones(2, 2, CV_32FC2).unwrap();
+        assert_eq!(
+            dm.data_f32(),
+            Some(&[1.0f32, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0][..])
+        );
+    }
 
     #[test]
     fn test_dynamic_matrix() {

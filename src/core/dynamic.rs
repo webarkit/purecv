@@ -117,22 +117,22 @@ impl DynamicMatrix {
         Self::new(rows, cols, mat_type)
     }
 
-    /// Creates a matrix filled with ones using a `MatType`.
-    /// Mirrors OpenCV's `Mat::ones(rows, cols, type)`.
+    /// Creates a matrix of ones using a `MatType`.
+    /// Mirrors OpenCV's `Mat::ones(rows, cols, type)`: only channel 0 of each pixel is 1
+    /// (see [`Matrix::ones`]).
     ///
     /// # Errors
     /// Returns `PureCvError::InvalidInput` if `CV_16F` is requested (not yet supported).
     pub fn ones(rows: usize, cols: usize, mat_type: MatType) -> Result<Self> {
         let ch = mat_type.channels();
-        let n = rows * cols * ch;
         let data = match mat_type.depth() {
-            Depth::CV_8U => DynamicData::U8(Matrix::from_vec(rows, cols, ch, vec![1u8; n])),
-            Depth::CV_8S => DynamicData::I8(Matrix::from_vec(rows, cols, ch, vec![1i8; n])),
-            Depth::CV_16U => DynamicData::U16(Matrix::from_vec(rows, cols, ch, vec![1u16; n])),
-            Depth::CV_16S => DynamicData::I16(Matrix::from_vec(rows, cols, ch, vec![1i16; n])),
-            Depth::CV_32S => DynamicData::I32(Matrix::from_vec(rows, cols, ch, vec![1i32; n])),
-            Depth::CV_32F => DynamicData::F32(Matrix::from_vec(rows, cols, ch, vec![1f32; n])),
-            Depth::CV_64F => DynamicData::F64(Matrix::from_vec(rows, cols, ch, vec![1f64; n])),
+            Depth::CV_8U => DynamicData::U8(Matrix::<u8>::ones(rows, cols, ch)),
+            Depth::CV_8S => DynamicData::I8(Matrix::<i8>::ones(rows, cols, ch)),
+            Depth::CV_16U => DynamicData::U16(Matrix::<u16>::ones(rows, cols, ch)),
+            Depth::CV_16S => DynamicData::I16(Matrix::<i16>::ones(rows, cols, ch)),
+            Depth::CV_32S => DynamicData::I32(Matrix::<i32>::ones(rows, cols, ch)),
+            Depth::CV_32F => DynamicData::F32(Matrix::<f32>::ones(rows, cols, ch)),
+            Depth::CV_64F => DynamicData::F64(Matrix::<f64>::ones(rows, cols, ch)),
             Depth::CV_16F => {
                 cv_bail!(
                     tags::CORE,

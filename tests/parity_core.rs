@@ -2695,8 +2695,8 @@ fn normalize_rejects_mismatched_dtype() {
 #[test]
 fn sum_mean_mean_std_dev_match_opencv() {
     let bgr = Matrix::from_vec(2, 2, 3, vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    assert_eq!(sum(&bgr).v, [22.0, 26.0, 30.0, 0.0]);
-    assert_eq!(mean(&bgr).v, [5.5, 6.5, 7.5, 0.0]);
+    assert_eq!(sum(&bgr).unwrap().v, [22.0, 26.0, 30.0, 0.0]);
+    assert_eq!(mean(&bgr).unwrap().v, [5.5, 6.5, 7.5, 0.0]);
     let (m, s) = mean_std_dev(&bgr);
     assert_eq!(m.v, [5.5, 6.5, 7.5, 0.0]);
     assert_close(&s.v[..3], &[3.3541019662496847; 3], 1e-12, "u8 std");
@@ -2757,9 +2757,8 @@ fn ones_and_eye_single_channel_match_opencv() {
 
 /// OpenCV's `Mat::ones` / `Mat::eye` write `Scalar(alpha)`: only channel 0 gets the value on
 /// multi-channel types (`ones_1x1_8uc3`, `ones_2x2_32fc2`, `eye_2x2_8uc2`, `eye_3x3_32fc3`);
-/// purecv fills every channel.
+/// purecv filled every channel before #218.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn ones_and_eye_multi_channel_set_only_channel_0() {
     assert_eq!(Matrix::<u8>::ones(1, 1, 3).data, ONES_1X1_8UC3.to_vec());
     assert_eq!(Matrix::<f32>::ones(2, 2, 2).data, ONES_2X2_32FC2.to_vec());
@@ -2770,9 +2769,9 @@ fn ones_and_eye_multi_channel_set_only_channel_0() {
 /// OpenCV's `flipND` takes `axis` in `[-ndims, ndims)` and counts a negative axis from the
 /// end (`flip_nd_axis_minus1` flips the columns, `flip_nd_axis_minus2` the rows; 2 and -3 are
 /// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`); purecv maps every negative axis to
-/// "both" and accepts axis 2.
+/// "both" and accepts axis 2. Values: `core_misc.py` keys `flip_nd_axis_minus1`,
+/// `flip_nd_axis_minus2` (flips) and `flip_nd_axis_2`, `flip_nd_axis_minus3` (errors).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn flip_nd_negative_axis_counts_from_the_end() {
     let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
     let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
@@ -2789,6 +2788,44 @@ fn flip_nd_non_negative_axis_matches_opencv() {
     let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
     assert_eq!(flip(0).unwrap().data, vec![4, 5, 6, 1, 2, 3], "axis 0");
     assert_eq!(flip(1).unwrap().data, vec![3, 2, 1, 6, 5, 4], "axis 1");
+}
+
+/// OpenCV's `flipND` raises "given axis is out of range" outside `[-ndims, ndims)`
+/// (`core_misc.py` keys `flip_nd_axis_2`, `flip_nd_axis_minus3`).
+#[test]
+fn flip_nd_axis_out_of_range_is_err() {
+    let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
+    for axis in [2, 3, i32::MAX, -3, -4, i32::MIN] {
+        assert!(
+            purecv::core::structural::flip_nd(&m, axis).is_err(),
+            "axis {axis}"
+        );
+    }
+}
+
+/// `cv::sum` and `cv::mean` assert `cn <= 4`: `core_stats.py` keys `five_channel_sum`
+/// (`cv2.sumElems`) and `five_channel_mean` both raise `cn <= 4 && func != 0`. Four channels
+/// still work.
+#[test]
+fn sum_mean_reject_more_than_four_channels() {
+    let five = Matrix::from_vec(1, 2, 5, vec![1.0f32; 10]);
+    assert!(sum(&five).is_err());
+    assert!(mean(&five).is_err());
+    let four = Matrix::from_vec(1, 2, 4, vec![1.0f32; 8]);
+    assert_eq!(sum(&four).unwrap().v, [2.0; 4]);
+    assert_eq!(mean(&four).unwrap().v, [1.0; 4]);
+}
+
+/// `cv::determinant` asserts a square single-channel matrix: `core_misc.py` key
+/// `determinant_non_square` raises `mat.rows == mat.cols && ...`. The 2x2 f32 and 4x4 values
+/// stay as in `gemm_determinant_solve_trace_mahalanobis_match_opencv`. (OpenCV also rejects
+/// integer depths, `determinant_u8`; purecv keeps accepting them.)
+#[test]
+fn determinant_rejects_non_square_and_multi_channel() {
+    let non_square = Matrix::from_vec(2, 3, 1, vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert!(determinant(&non_square).is_err());
+    let two_channel = Matrix::from_vec(2, 2, 2, vec![1.0f32; 8]);
+    assert!(determinant(&two_channel).is_err());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -3657,9 +3694,9 @@ fn gemm_determinant_solve_trace_mahalanobis_match_opencv() {
         ],
     );
     let sing = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 2.0, 4.0]);
-    assert!((determinant(&s) - 10.0).abs() < 1e-12);
-    assert!((determinant(&s4) + 20.0).abs() < 1e-12);
-    assert_eq!(determinant(&sing), 0.0);
+    assert!((determinant(&s).unwrap() - 10.0).abs() < 1e-12);
+    assert!((determinant(&s4).unwrap() + 20.0).abs() < 1e-12);
+    assert_eq!(determinant(&sing).unwrap(), 0.0);
 
     let mut inv = Matrix::<f64>::new(2, 2, 1);
     invert(&s, &mut inv, DecompTypes::DECOMP_LU).unwrap();
@@ -3709,9 +3746,9 @@ fn set_identity_and_psnr_match_opencv() {
     assert!((psnr(&rgb, &rgb3).unwrap() - 38.58837851428585).abs() < 1e-6);
 }
 
-/// OpenCV `PSNR` of identical images is `20*log10(R/DBL_EPSILON)` = 361.2, not infinity.
+/// OpenCV `PSNR` of identical images is `20*log10(R/DBL_EPSILON)` = 361.2, not infinity
+/// (`core_misc.py` key `psnr_identical`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn psnr_identical_inputs_is_finite() {
     let rgb = Matrix::from_vec(1, 2, 3, vec![10u8, 20, 30, 40, 50, 60]);
     assert!((psnr(&rgb, &rgb).unwrap() - 361.20199909921956).abs() < 1e-6);
@@ -4577,9 +4614,9 @@ mod fft {
     }
 
     /// OpenCV returns 1 for 0 and -1 for negative sizes and for sizes above its table
-    /// (>= 2125764000). purecv returns 0, 0 and a computed value.
+    /// (>= 2125764000): `core_dft_dct.py` key `get_optimal_dft_size` (`0`, `-5`, `2125764000`,
+    /// `2147483647`).
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see #218"]
     fn get_optimal_dft_size_edges_match_opencv() {
         assert_eq!(get_optimal_dft_size(0), 1);
         assert_eq!(get_optimal_dft_size(-5), -1);

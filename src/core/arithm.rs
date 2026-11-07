@@ -1058,7 +1058,29 @@ where
 /// Calculates the sum of array elements.
 ///
 /// Returns a Scalar with the sum of each channel.
-pub fn sum<T>(src: &Matrix<T>) -> Scalar<f64>
+///
+/// # Errors
+/// Returns `PureCvError::InvalidInput` when `src` has more than four channels, where OpenCV's
+/// [`cv::sum`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/sum.dispatch.cpp#L184-L203)
+/// asserts `cn <= 4`.
+pub fn sum<T>(src: &Matrix<T>) -> Result<Scalar<f64>>
+where
+    T: Num + ToPrimitive + Copy + Send + Sync + SimdElement + 'static,
+{
+    if src.channels > 4 {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "sum: at most 4 channels are supported, got {}",
+            src.channels
+        );
+    }
+    Ok(sum_first_four(src))
+}
+
+/// The sum of the first four channels, without the channel-count check. `mean_std_dev` keeps
+/// its first-four-channels behaviour through this.
+fn sum_first_four<T>(src: &Matrix<T>) -> Scalar<f64>
 where
     T: Num + ToPrimitive + Copy + Send + Sync + SimdElement + 'static,
 {
@@ -1116,11 +1138,31 @@ where
 /// Calculates the mean of matrix elements.
 ///
 /// Returns a Scalar with the mean of each channel.
-pub fn mean<T>(src: &Matrix<T>) -> Scalar<f64>
+///
+/// # Errors
+/// Returns `PureCvError::InvalidInput` when `src` has more than four channels, where OpenCV's
+/// [`cv::mean`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mean.dispatch.cpp#L125-L139)
+/// asserts `cn <= 4`.
+pub fn mean<T>(src: &Matrix<T>) -> Result<Scalar<f64>>
 where
     T: DataType + Num + ToPrimitive + Copy + Send + Sync + SimdElement + 'static,
 {
-    let s = sum(src);
+    if src.channels > 4 {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "mean: at most 4 channels are supported, got {}",
+            src.channels
+        );
+    }
+    Ok(mean_first_four(src))
+}
+
+fn mean_first_four<T>(src: &Matrix<T>) -> Scalar<f64>
+where
+    T: Num + ToPrimitive + Copy + Send + Sync + SimdElement + 'static,
+{
+    let s = sum_first_four(src);
     let total_pixels = (src.rows * src.cols) as f64;
     Scalar::new(
         s.v[0] / total_pixels,
@@ -1135,7 +1177,7 @@ pub fn mean_std_dev<T>(src: &Matrix<T>) -> (Scalar<f64>, Scalar<f64>)
 where
     T: DataType + Num + ToPrimitive + Copy + Send + Sync + SimdElement + 'static,
 {
-    let m = mean(src);
+    let m = mean_first_four(src);
     let mut sq_sum = [0.0f64; 4];
     let total_pixels = (src.rows * src.cols) as f64;
 
@@ -2427,23 +2469,42 @@ where
 ///
 /// * `src` - Input square single-channel matrix.
 ///
+/// # Errors
+/// Returns `PureCvError::InvalidInput` for a non-square or multi-channel matrix, where
+/// [`cv::determinant`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/lapack.cpp#L715-L781)
+/// asserts.
+///
 /// # Example
 ///
 /// ```rust
 /// use purecv::core::{Matrix, determinant};
 ///
 /// let mat = Matrix::from_vec(2, 2, 1, vec![1.0, 2.0, 3.0, 4.0]);
-/// let det = determinant(&mat);
+/// let det = determinant(&mat).unwrap();
 /// assert_eq!(det, -2.0); // 1*4 - 2*3 = -2
 /// ```
-pub fn determinant<T>(src: &Matrix<T>) -> f64
+pub fn determinant<T>(src: &Matrix<T>) -> Result<f64>
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
 {
     if src.rows != src.cols || src.channels != 1 {
-        return 0.0;
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "determinant: expected a square single-channel matrix, got {}×{}×{}",
+            src.rows,
+            src.cols,
+            src.channels
+        );
     }
+    Ok(determinant_square(src))
+}
 
+/// The determinant of a square single-channel matrix (checked by [`determinant`]).
+fn determinant_square<T>(src: &Matrix<T>) -> f64
+where
+    T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
+{
     let n = src.rows;
     if n == 0 {
         return 0.0;
@@ -2580,7 +2641,7 @@ where
     set_identity(&mut identity, Scalar::new(1.0, 0.0, 0.0, 0.0));
 
     if solve(src, &identity, dst, flags)? {
-        Ok(determinant(src))
+        determinant(src)
     } else {
         dst.data.fill(0.0);
         Ok(0.0)
@@ -4184,12 +4245,12 @@ mod tests {
     fn test_determinant() {
         let mut mat = Matrix::<f32>::new(2, 2, 1);
         mat.data = vec![1.0, 2.0, 3.0, 4.0];
-        assert_eq!(determinant(&mat), -2.0);
+        assert_eq!(determinant(&mat).unwrap(), -2.0);
 
         let mut mat3 = Matrix::<f32>::new(3, 3, 1);
         mat3.data = vec![1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0];
         // det = 1*(0-24) - 2*(0-20) + 3*(0-5) = -24 + 40 - 15 = 1.0
-        assert_eq!(determinant(&mat3), 1.0);
+        assert_eq!(determinant(&mat3).unwrap(), 1.0);
     }
 
     #[test]
