@@ -2545,6 +2545,28 @@ fn normalize_minmax_swapped_bounds_match_sorted_bounds() {
     assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
 }
 
+/// `convert_to_scaled` runs on the Rayon pool with the `parallel` feature: a matrix large enough
+/// to be split keeps its element order and shape, in both working precisions. The expected
+/// values follow from the formula, the scaling itself is measured in the `convert_to` tests.
+#[test]
+fn convert_to_scaled_keeps_the_order_of_a_large_matrix() {
+    let data: Vec<u8> = (0..300 * 200 * 3).map(|i| (i % 251) as u8).collect();
+    let src = Matrix::from_vec(300, 200, 3, data.clone());
+    let narrow = src.convert_to_scaled::<i16>(2.0, -3.0).unwrap();
+    let wide = src.convert_to_scaled::<f64>(0.5, 0.25).unwrap();
+    assert_eq!((narrow.rows, narrow.cols, narrow.channels), (300, 200, 3));
+    assert_eq!(
+        narrow.data,
+        data.iter().map(|&x| 2 * x as i16 - 3).collect::<Vec<i16>>()
+    );
+    assert_eq!(
+        wide.data,
+        data.iter()
+            .map(|&x| x as f64 * 0.5 + 0.25)
+            .collect::<Vec<f64>>()
+    );
+}
+
 /// `rtype` goes through `CV_MAT_DEPTH`, so the channel bits of a full type code do not matter:
 /// `core_stats.py`, `normalize`, key `f32_dtype_CV_32FC3` keeps `f32` and gives the plain
 /// result. `CV_8UC3` has another depth, which a `Matrix<f32>` destination cannot hold, so it is

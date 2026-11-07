@@ -40,6 +40,8 @@ use crate::core::types::Scalar;
 use crate::cv_bail;
 use alloc::{vec, vec::Vec};
 use core::any::TypeId;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Converts one element with `saturate_cast` semantics, staying in integer
 /// arithmetic when `x` is an integer value so that 64-bit values above 2⁵³
@@ -69,6 +71,20 @@ fn cast_element<T: num_traits::ToPrimitive, U: SaturateCast>(x: T) -> U {
         }
     }
     U::saturate_from_f64(f)
+}
+
+/// `src.map(f).collect()`, on the Rayon pool with the `parallel` feature.
+#[cfg(feature = "parallel")]
+#[inline]
+fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -> Vec<U> {
+    src.par_iter().map(|&x| f(x)).collect()
+}
+
+/// `src.map(f).collect()`, on the Rayon pool with the `parallel` feature.
+#[cfg(not(feature = "parallel"))]
+#[inline]
+fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -> Vec<U> {
+    src.iter().map(|&x| f(x)).collect()
 }
 
 /// Matrix depth: number of bits per element and its signedness/type.
@@ -611,8 +627,8 @@ impl<T: Default + Clone> Matrix<T> {
     /// ```
     pub fn convert_to_scaled<U>(&self, alpha: f64, beta: f64) -> Result<Matrix<U>>
     where
-        U: SaturateCast + Default + Clone,
-        T: num_traits::ToPrimitive + Copy + 'static,
+        U: SaturateCast + Default + Clone + Send,
+        T: num_traits::ToPrimitive + Copy + Sync + 'static,
     {
         if alpha == 1.0 && beta == 0.0 {
             return self.convert_to();
@@ -627,22 +643,16 @@ impl<T: Default + Clone> Matrix<T> {
                     src_bytes == 8 || TypeId::of::<T>() == TypeId::of::<i32>()
                 });
         let out_data: Vec<U> = if wide {
-            self.data
-                .iter()
-                .map(|&x| {
-                    let v = x.to_f64().unwrap_or(f64::NAN);
-                    U::saturate_from_f64(v * alpha + beta)
-                })
-                .collect()
+            map_elements(&self.data, |x| {
+                let v = x.to_f64().unwrap_or(f64::NAN);
+                U::saturate_from_f64(v * alpha + beta)
+            })
         } else {
             let (a, b) = (alpha as f32, beta as f32);
-            self.data
-                .iter()
-                .map(|&x| {
-                    let v = x.to_f32().unwrap_or(f32::NAN);
-                    U::saturate_from_f32(v * a + b)
-                })
-                .collect()
+            map_elements(&self.data, |x| {
+                let v = x.to_f32().unwrap_or(f32::NAN);
+                U::saturate_from_f32(v * a + b)
+            })
         };
         Ok(Matrix::from_vec(
             self.rows,

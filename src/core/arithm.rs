@@ -1388,7 +1388,7 @@ pub fn normalize_to<T, U>(
 ) -> Result<()>
 where
     T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + 'static,
-    U: SaturateCast + Default + Clone,
+    U: SaturateCast + Default + Clone + Send,
 {
     if let Some(m) = mask {
         if m.rows != src.rows || m.cols != src.cols || m.channels != 1 {
