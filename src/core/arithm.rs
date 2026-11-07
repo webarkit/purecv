@@ -2659,7 +2659,12 @@ where
     if solve(src, &identity, dst, flags)? {
         Ok(1.0)
     } else {
-        dst.data.fill(0.0);
+        // OpenCV creates `dst` as n x n before it decomposes, so it is n x n even when singular.
+        dst.rows = n;
+        dst.cols = n;
+        dst.channels = 1;
+        dst.data.clear();
+        dst.data.resize(n * n, 0.0);
         Ok(0.0)
     }
 }

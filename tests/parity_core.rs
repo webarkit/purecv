@@ -3782,6 +3782,20 @@ fn invert_singular_returns_zero_and_zero_matrix() {
         0.0
     );
     assert_eq!(inv3.data, vec![0.0; 9]);
+
+    // OpenCV creates `dst` as n x n first (`core_invert.py` calls cv2.invert with no preset
+    // output; every singular key comes back n x n), so an empty or wrong-sized `dst` is reshaped.
+    for mut dst in [
+        Matrix::<f64>::new(0, 0, 1),
+        Matrix::from_vec(1, 1, 1, vec![5.0f64]),
+    ] {
+        assert_eq!(
+            invert(&sing, &mut dst, DecompTypes::DECOMP_LU).unwrap(),
+            0.0
+        );
+        assert_eq!((dst.rows, dst.cols, dst.channels), (2, 2, 1));
+        assert_eq!(dst.data, vec![0.0; 4]);
+    }
 }
 
 #[test]
