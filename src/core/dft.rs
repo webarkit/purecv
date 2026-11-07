@@ -325,11 +325,11 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
 
 /// Computes the Inverse Discrete Fourier Transform of a 1D or 2D array.
 ///
-/// This is a convenience wrapper around `dft` with the `DFT_INVERSE` flag.
-/// By default, it also scales the output (`DFT_SCALE`) to match OpenCV's `idft` behavior
-/// when passing no additional flags, but you can override formatting by passing explicit flags.
+/// This is `dft(src, flags | DFT_INVERSE, nonzero_rows)`, as in OpenCV. The output is **not**
+/// scaled unless `DFT_SCALE` is passed in `flags`; `DFT_SCALE` divides by the element count
+/// (by the row length with `DFT_ROWS`).
 pub fn idft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Result<Matrix<T>> {
-    dft(src, flags | DFT_INVERSE | DFT_SCALE, nonzero_rows)
+    dft(src, flags | DFT_INVERSE, nonzero_rows)
 }
 
 // ---------------------------------------------------------------------------

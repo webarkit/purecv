@@ -30,6 +30,9 @@ SQ4 = np.array(
     dtype=np.float32,
 )
 
+# 1x4 two-channel (complex) input for the idft scaling rows.
+COMPLEX_1X4 = np.array([[[1.0, 2.0], [3.0, -1.0], [0.5, 4.0], [-2.0, 1.0]]], dtype=np.float32)
+
 
 def attempt(fn):
     try:
@@ -55,6 +58,11 @@ def main() -> None:
         "complex_input_inverse_no_scale": tolist(cv2.dft(complex_spec, flags=cv2.DFT_INVERSE)),
         "idft_default_no_scale": tolist(cv2.idft(complex_spec)),
         "idft_scale": tolist(cv2.idft(complex_spec, flags=cv2.DFT_SCALE)),
+        # #224: idft never scales unless DFT_SCALE is passed; DFT_SCALE divides by the element count.
+        "idft_scale_real_fixture_default": tolist(cv2.idft(SRC)),
+        "idft_scale_real_fixture_scale": tolist(cv2.idft(SRC, flags=cv2.DFT_SCALE)),
+        "idft_scale_complex_1x4_default": tolist(cv2.idft(COMPLEX_1X4)),
+        "idft_scale_complex_1x4_scale": tolist(cv2.idft(COMPLEX_1X4, flags=cv2.DFT_SCALE)),
         "idft_real_output": tolist(cv2.idft(complex_spec, flags=cv2.DFT_REAL_OUTPUT)),
         "idft_real_output_scale": tolist(cv2.idft(complex_spec, flags=cv2.DFT_REAL_OUTPUT | cv2.DFT_SCALE)),
         "idft_real_output_rows_scale": tolist(

@@ -5190,9 +5190,8 @@ mod fft {
     }
 
     /// OpenCV's `idft(src, flags)` is `dft(src, flags | DFT_INVERSE)`: it does **not** scale
-    /// unless DFT_SCALE is passed. purecv's `idft` always adds DFT_SCALE.
+    /// unless DFT_SCALE is passed (core_dft_dct.py, key `idft_default_no_scale`).
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see #224"]
     fn idft_does_not_scale_by_default() {
         let spec = dft(&src(), 0, 0).unwrap();
         let back = idft(&spec, 0, 0).unwrap();
@@ -5201,6 +5200,27 @@ mod fft {
             &[12.0, 0.0, 24.0, 0.0],
             1e-4,
             "idft default",
+        );
+    }
+
+    /// `DFT_SCALE` divides by the element count (core_dft_dct.py, keys
+    /// `idft_scale_complex_1x4_default` and `idft_scale_complex_1x4_scale`).
+    #[test]
+    fn idft_scale_divides_by_element_count() {
+        let src = Matrix::<f32>::from_vec(1, 4, 2, vec![1.0, 2.0, 3.0, -1.0, 0.5, 4.0, -2.0, 1.0]);
+        let unscaled = idft(&src, 0, 0).unwrap();
+        assert_close(
+            &as_f64(&unscaled),
+            &[2.5, 6.0, 2.5, 3.0, 0.5, 6.0, -1.5, -7.0],
+            1e-4,
+            "idft complex default",
+        );
+        let scaled = idft(&src, DFT_SCALE, 0).unwrap();
+        assert_close(
+            &as_f64(&scaled),
+            &[0.625, 1.5, 0.625, 0.75, 0.125, 1.5, -0.375, -1.75],
+            1e-4,
+            "idft complex scale",
         );
     }
 
