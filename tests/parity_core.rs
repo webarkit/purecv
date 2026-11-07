@@ -2569,6 +2569,50 @@ fn convert_to_scaled_keeps_the_order_of_a_large_matrix() {
     );
 }
 
+/// Without a mask `normalize_to` reshapes a destination of the wrong shape and overwrites one
+/// of the right shape; with a mask on three channels a selected pixel writes all its channels
+/// and the others stay. A large mask covers the parallel path. Values follow from the formula
+/// `(x - 0) * 255 / 250`, the rounding itself is measured in the tests around this one.
+#[test]
+fn normalize_to_writes_the_destination_in_place() {
+    let src = row(&[0u8, 50, 250]);
+    let expected = vec![0.0f32, 51.0, 255.0];
+    let mut wrong_shape = Matrix::<f32>::new(2, 2, 2);
+    normalize_to(&src, &mut wrong_shape, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(
+        (wrong_shape.rows, wrong_shape.cols, wrong_shape.channels),
+        (1, 3, 1)
+    );
+    assert_eq!(wrong_shape.data, expected);
+    let mut same_shape = Matrix::from_vec(1, 3, 1, vec![9.0f32; 3]);
+    normalize_to(&src, &mut same_shape, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+    assert_eq!(same_shape.data, expected);
+
+    // The min and max come from the selected pixels 0 and 2 of every three: 0 and 250.
+    let (rows, cols) = (300, 200);
+    let n = rows * cols;
+    let data: Vec<u8> = (0..n)
+        .flat_map(|i| match i % 3 {
+            0 => [0u8, 50, 100],
+            1 => [255, 255, 255],
+            _ => [250, 200, 150],
+        })
+        .collect();
+    let mask_data: Vec<u8> = (0..n).map(|i| u8::from(i % 3 != 1)).collect();
+    let big = Matrix::from_vec(rows, cols, 3, data.clone());
+    let mask = Matrix::from_vec(rows, cols, 1, mask_data);
+    let mut dst = Matrix::from_vec(rows, cols, 3, vec![7.0f64; n * 3]);
+    normalize_to(&big, &mut dst, 0.0, 255.0, NormTypes::MinMax, Some(&mask)).unwrap();
+    for (i, px) in dst.data.chunks_exact(3).enumerate() {
+        let want: [f64; 3] = match i % 3 {
+            0 => [0.0, 51.0, 102.0],
+            1 => [7.0, 7.0, 7.0],
+            _ => [255.0, 204.0, 153.0],
+        };
+        assert_eq!(px, want, "pixel {i}");
+    }
+}
+
 /// `rtype` goes through `CV_MAT_DEPTH`, so the channel bits of a full type code do not matter:
 /// `core_stats.py`, `normalize`, key `f32_dtype_CV_32FC3` keeps `f32` and gives the plain
 /// result. `CV_8UC3` has another depth, which a `Matrix<f32>` destination cannot hold, so it is

@@ -87,6 +87,67 @@ fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -
     src.iter().map(|&x| f(x)).collect()
 }
 
+/// `dst[i] = f(src[i])` for every `i` that `selected` accepts, on the Rayon pool with the
+/// `parallel` feature.
+#[cfg(feature = "parallel")]
+#[inline]
+fn write_elements<T: Copy + Sync, U: Send>(
+    src: &[T],
+    dst: &mut [U],
+    selected: impl Fn(usize) -> bool + Sync,
+    f: impl Fn(T) -> U + Sync,
+) {
+    dst.par_iter_mut()
+        .zip(src.par_iter())
+        .enumerate()
+        .for_each(|(i, (d, &s))| {
+            if selected(i) {
+                *d = f(s);
+            }
+        });
+}
+
+/// `dst[i] = f(src[i])` for every `i` that `selected` accepts, sequentially: the fallback
+/// without the `parallel` feature.
+#[cfg(not(feature = "parallel"))]
+#[inline]
+fn write_elements<T: Copy + Sync, U: Send>(
+    src: &[T],
+    dst: &mut [U],
+    selected: impl Fn(usize) -> bool + Sync,
+    f: impl Fn(T) -> U + Sync,
+) {
+    for (i, (d, &s)) in dst.iter_mut().zip(src).enumerate() {
+        if selected(i) {
+            *d = f(s);
+        }
+    }
+}
+
+/// The working precision of `convertTo` with a scale, see [`Matrix::convert_to_scaled`].
+#[inline]
+fn scales_in_f64<T: 'static, U: SaturateCast>() -> bool {
+    let src_bytes = core::mem::size_of::<T>();
+    let dst_bytes = core::mem::size_of::<U>();
+    dst_bytes == 8
+        || (dst_bytes == 4
+            && if U::IS_FLOAT {
+                src_bytes == 8
+            } else {
+                src_bytes == 8 || TypeId::of::<T>() == TypeId::of::<i32>()
+            })
+}
+
+#[inline]
+fn scale_in_f64<T: num_traits::ToPrimitive, U: SaturateCast>(x: T, alpha: f64, beta: f64) -> U {
+    U::saturate_from_f64(x.to_f64().unwrap_or(f64::NAN) * alpha + beta)
+}
+
+#[inline]
+fn scale_in_f32<T: num_traits::ToPrimitive, U: SaturateCast>(x: T, alpha: f32, beta: f32) -> U {
+    U::saturate_from_f32(x.to_f32().unwrap_or(f32::NAN) * alpha + beta)
+}
+
 /// Matrix depth: number of bits per element and its signedness/type.
 /// Follows OpenCV's depth conventions (CV_8U, CV_32F, etc.).
 #[allow(non_camel_case_types)]
@@ -633,26 +694,11 @@ impl<T: Default + Clone> Matrix<T> {
         if alpha == 1.0 && beta == 0.0 {
             return self.convert_to();
         }
-        let src_bytes = core::mem::size_of::<T>();
-        let dst_bytes = core::mem::size_of::<U>();
-        let wide = dst_bytes == 8
-            || (dst_bytes == 4
-                && if U::IS_FLOAT {
-                    src_bytes == 8
-                } else {
-                    src_bytes == 8 || TypeId::of::<T>() == TypeId::of::<i32>()
-                });
-        let out_data: Vec<U> = if wide {
-            map_elements(&self.data, |x| {
-                let v = x.to_f64().unwrap_or(f64::NAN);
-                U::saturate_from_f64(v * alpha + beta)
-            })
+        let out_data: Vec<U> = if scales_in_f64::<T, U>() {
+            map_elements(&self.data, |x| scale_in_f64(x, alpha, beta))
         } else {
             let (a, b) = (alpha as f32, beta as f32);
-            map_elements(&self.data, |x| {
-                let v = x.to_f32().unwrap_or(f32::NAN);
-                U::saturate_from_f32(v * a + b)
-            })
+            map_elements(&self.data, |x| scale_in_f32(x, a, b))
         };
         Ok(Matrix::from_vec(
             self.rows,
@@ -660,6 +706,29 @@ impl<T: Default + Clone> Matrix<T> {
             self.channels,
             out_data,
         ))
+    }
+
+    /// [`Matrix::convert_to_scaled`] into an existing buffer of the same length, writing only
+    /// the elements `selected` accepts. It allocates nothing, which is what keeps a repeated
+    /// `normalize` into the same destination fast.
+    pub(crate) fn convert_scaled_into<U>(
+        &self,
+        dst: &mut [U],
+        alpha: f64,
+        beta: f64,
+        selected: impl Fn(usize) -> bool + Sync,
+    ) where
+        U: SaturateCast + Send,
+        T: num_traits::ToPrimitive + Copy + Sync + 'static,
+    {
+        if alpha == 1.0 && beta == 0.0 {
+            write_elements(&self.data, dst, selected, cast_element);
+        } else if scales_in_f64::<T, U>() {
+            write_elements(&self.data, dst, selected, |x| scale_in_f64(x, alpha, beta));
+        } else {
+            let (a, b) = (alpha as f32, beta as f32);
+            write_elements(&self.data, dst, selected, |x| scale_in_f32(x, a, b));
+        }
     }
 
     /// Swaps the underlying buffer array contents and metadata layout matching dimensions directly with another matrix.

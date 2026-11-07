@@ -1423,11 +1423,24 @@ where
     let (scale, shift) = match norm_type {
         NormTypes::MinMax => {
             let (mut smin, mut smax) = (f64::INFINITY, f64::NEG_INFINITY);
-            for (i, &x) in src.data.iter().enumerate() {
-                if selected(i) {
-                    let v = x.to_f64().unwrap_or(0.0);
-                    smin = smin.min(v);
-                    smax = smax.max(v);
+            // NaN fails both comparisons, so it never becomes a bound.
+            let mut widen = |x: T| {
+                let v = x.to_f64().unwrap_or(0.0);
+                if v < smin {
+                    smin = v;
+                }
+                if v > smax {
+                    smax = v;
+                }
+            };
+            // The unmasked loop is the hot path: no per-element mask test.
+            if mask.is_none() {
+                src.data.iter().for_each(|&x| widen(x));
+            } else {
+                for (i, &x) in src.data.iter().enumerate() {
+                    if selected(i) {
+                        widen(x);
+                    }
                 }
             }
             if smin > smax {
@@ -1463,16 +1476,11 @@ where
         ),
     };
 
-    let converted = src.convert_to_scaled::<U>(scale, shift)?;
+    // Without a mask every element is written; only the shape can need a new buffer.
     if mask.is_none() {
-        *dst = converted;
-    } else {
-        for (i, (d, c)) in dst.data.iter_mut().zip(converted.data).enumerate() {
-            if selected(i) {
-                *d = c;
-            }
-        }
+        dst.create(src.rows, src.cols, src.channels);
     }
+    src.convert_scaled_into(&mut dst.data, scale, shift, selected);
     Ok(())
 }
 
