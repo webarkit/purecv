@@ -1452,7 +1452,7 @@ mod core_tests {
 
     #[test]
     fn test_cv_log2_value() {
-        assert_eq!(CV_LOG2, std::f64::consts::LOG2_E);
+        assert_eq!(CV_LOG2, std::f64::consts::LN_2);
     }
 
     #[test]
@@ -1475,7 +1475,8 @@ mod core_tests {
         assert!((CV_PI / 2.0 - CV_PI_2).abs() < 1e-15);
         assert!((CV_2PI - 2.0 * CV_PI).abs() < 1e-15);
         assert!((CV_PI / 4.0 - CV_PI_4).abs() < 1e-15);
-        assert!((CV_LOG2 * CV_LN2 - 1.0).abs() < 1e-15);
+        // OpenCV's CV_LOG2 is ln 2, the same value as CV_LN2 (cvdef.h).
+        assert_eq!(CV_LOG2, CV_LN2);
     }
 
     #[test]
@@ -1515,7 +1516,7 @@ mod core_tests {
         assert!((CV_2PI - 2.0 * std::f64::consts::PI).abs() < f64::EPSILON);
         assert!((CV_PI_2 - std::f64::consts::FRAC_PI_2).abs() < f64::EPSILON);
         assert!((CV_PI_4 - std::f64::consts::FRAC_PI_4).abs() < f64::EPSILON);
-        assert!((CV_LOG2 - std::f64::consts::LOG2_E).abs() < f64::EPSILON);
+        assert!((CV_LOG2 - std::f64::consts::LN_2).abs() < f64::EPSILON);
         assert!((CV_LN2 - std::f64::consts::LN_2).abs() < f64::EPSILON);
         assert!((CV_SQRT2 - std::f64::consts::SQRT_2).abs() < f64::EPSILON);
         assert!((CV_E - std::f64::consts::E).abs() < f64::EPSILON);

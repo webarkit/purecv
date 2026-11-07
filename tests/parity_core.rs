@@ -2744,7 +2744,6 @@ fn min_max_loc_matches_opencv() {
 
 /// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #226"]
 fn cv_log2_is_ln_2() {
     assert_eq!(purecv::core::constants::CV_LOG2, core::f64::consts::LN_2);
 }

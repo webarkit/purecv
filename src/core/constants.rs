@@ -51,8 +51,11 @@ pub const CV_2PI: f64 = 2.0 * core::f64::consts::PI;
 /// Pi divided by 4 (same as `core::f64::consts::FRAC_PI_4`).
 pub const CV_PI_4: f64 = core::f64::consts::FRAC_PI_4;
 
-/// Log base 2 of e (same as `core::f64::consts::LOG2_E`).
-pub const CV_LOG2: f64 = core::f64::consts::LOG2_E;
+/// Natural logarithm of 2, as in OpenCV's `cvdef.h` (`CV_LOG2 0.69314718055994530941723212145818`).
+///
+/// This is `ln 2`, not `log2(e)`; the two are reciprocals. Use `core::f64::consts::LOG2_E` for
+/// the latter.
+pub const CV_LOG2: f64 = core::f64::consts::LN_2;
 
 /// Natural logarithm of 2 (same as `core::f64::consts::LN_2`).
 pub const CV_LN2: f64 = core::f64::consts::LN_2;
