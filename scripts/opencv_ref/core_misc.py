@@ -71,8 +71,92 @@ def main() -> None:
         "wrap_oversized_border": tolist(cv2.copyMakeBorder(img, 5, 0, 0, 0, cv2.BORDER_WRAP)),
     }
 
+    # --- copyMakeBorder, #222: every border code on multi-channel input, the BORDER_ISOLATED (16)
+    # flag, borders wider than the image, BORDER_TRANSPARENT, unknown codes, negative sizes, and
+    # the `value` argument of BORDER_CONSTANT on 1..4 and on more than 4 channels.
+    # copy.cpp: `borderType &= ~BORDER_ISOLATED`, then a switch through borderInterpolate; an
+    # all-zero border returns a plain copy before the border type is looked at.
+    img3 = np.array(
+        [[[1, 2, 3], [4, 5, 6], [7, 8, 9]], [[10, 11, 12], [13, 14, 15], [16, 17, 18]]], dtype=np.uint8
+    )
+    img2f = np.array([[[1.5, -2.5], [3.25, 4.0], [5.0, 6.5]], [[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]], dtype=np.float32)
+    codes = {
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE,
+        "reflect": cv2.BORDER_REFLECT,
+        "wrap": cv2.BORDER_WRAP,
+        "reflect_101": cv2.BORDER_REFLECT_101,
+    }
+    cmb = {
+        "img_3ch": tolist(img3),
+        "img_2ch_f32": tolist(img2f),
+        "sizes_top_bottom_left_right": [2, 1, 2, 1],
+        "value": [9, 9, 9, 9],
+        "oversized_sizes_top_bottom_left_right": [5, 4, 7, 8],
+    }
+    for name, code in codes.items():
+        cmb[f"3ch_{name}"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, code | cv2.BORDER_ISOLATED, value=(9, 9, 9, 9)))
+        cmb[f"f32_2ch_{name}"] = tolist(cv2.copyMakeBorder(img2f, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        # borders wider than the image: top = 5 on 2 rows, then all four sides oversized
+        cmb[f"3ch_{name}_top5"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 5, 0, 0, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_left7"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 7, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_oversized_all"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 5, 4, 7, 8, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_oversized_all_isolated"] = attempt(
+            lambda code=code: cv2.copyMakeBorder(img3, 5, 4, 7, 8, code | cv2.BORDER_ISOLATED, value=(9, 9, 9, 9))
+        )
+        # all four sides oversized: shape, sum and position-weighted sum (sum of v[i] * (i + 1)) of
+        # the flattened result, so the test pins every pixel without a 600-number literal
+        wide = cv2.copyMakeBorder(img3, 5, 4, 7, 8, code, value=(9, 9, 9, 9))
+        cmb[f"3ch_{name}_oversized_all_checksum"] = [
+            list(wide.shape),
+            int(wide.astype(np.int64).sum()),
+            int((wide.astype(np.int64).ravel() * (np.arange(wide.size) + 1)).sum()),
+        ]
+        cmb[f"1x1_{name}_all2"] = attempt(lambda code=code: cv2.copyMakeBorder(np.array([[7]], np.uint8), 2, 2, 2, 2, code, value=3))
+        cmb[f"1row_{name}_top3_bottom3"] = attempt(
+            lambda code=code: cv2.copyMakeBorder(np.array([[1, 2, 3]], np.uint8), 3, 3, 0, 0, code, value=3)
+        )
+    # the flag alone, transparent, and codes that are not a BorderTypes value
+    for code in (5, 5 | 16, 6, 7, 8, 32, 33, 99, 16, -1, -16):
+        cmb[f"code_{code}"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_top_only"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 2, 0, 0, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_left_only"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 2, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_zero_borders"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 0, 0, code, value=(9, 9, 9, 9)))
+    cmb["code_17_is_replicate_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, 17, value=(9, 9, 9, 9)))
+    cmb["code_20_is_reflect_101_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, 20, value=(9, 9, 9, 9)))
+    # negative sizes
+    for i, side in enumerate(("top", "bottom", "left", "right")):
+        sizes = [1, 1, 1, 1]
+        sizes[i] = -1
+        cmb[f"negative_{side}"] = attempt(lambda sizes=sizes: cv2.copyMakeBorder(img3, *sizes, cv2.BORDER_CONSTANT, value=(9, 9, 9, 9)))
+        cmb[f"negative_{side}_replicate"] = attempt(lambda sizes=sizes: cv2.copyMakeBorder(img3, *sizes, cv2.BORDER_REPLICATE))
+    # empty source
+    cmb["empty_src_constant"] = attempt(lambda: cv2.copyMakeBorder(np.zeros((0, 3), np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=5))
+    cmb["empty_src_replicate"] = attempt(lambda: cv2.copyMakeBorder(np.zeros((0, 3), np.uint8), 1, 1, 1, 1, cv2.BORDER_REPLICATE))
+    # BORDER_CONSTANT `value` on 1..4 channels: the scalar is cast per channel, channels beyond
+    # the scalar's four are not an issue, a bare number is (v, 0, 0, 0)
+    for cn in (1, 2, 3, 4):
+        src_cn = np.arange(1, 1 + 2 * 2 * cn, dtype=np.uint8).reshape(2, 2, cn)
+        cmb[f"value_{cn}ch_src"] = tolist(src_cn)
+        cmb[f"value_{cn}ch_1234"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(11, 22, 33, 44)))
+        cmb[f"value_{cn}ch_bare_9"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=9))
+        cmb[f"value_{cn}ch_default"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT))
+        cmb[f"value_{cn}ch_ignored_by_replicate"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_REPLICATE, value=(11, 22, 33, 44)))
+    # more than four channels: `CV_Assert(value[0] == value[1] && value[0] == value[2] && value[0] == value[3])`
+    for cn in (5, 6, 8):
+        src_cn = np.arange(1, 1 + 1 * 2 * cn, dtype=np.uint8).reshape(1, 2, cn)
+        cmb[f"value_{cn}ch_src"] = tolist(src_cn)
+        cmb[f"value_{cn}ch_all_equal_9"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(9, 9, 9, 9)))
+        cmb[f"value_{cn}ch_1234"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(1, 2, 3, 4)))
+        cmb[f"value_{cn}ch_bare_9"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=9))
+        cmb[f"value_{cn}ch_default"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT))
+        cmb[f"value_{cn}ch_1234_replicate"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_REPLICATE, value=(1, 2, 3, 4)))
+        cmb[f"value_{cn}ch_1234_zero_borders"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 0, 0, 0, 0, cv2.BORDER_CONSTANT, value=(1, 2, 3, 4)))
+    results["copy_make_border_codes"] = cmb
+
     # --- flip / rotate / transpose / repeat
-    m23 = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)
+    m23 =np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)
     results["structural"] = {
         "src": tolist(m23),
         "flip_0": tolist(cv2.flip(m23, 0)),

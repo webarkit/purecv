@@ -3089,10 +3089,11 @@ fn border_interpolate_matches_opencv() {
     }
 }
 
-/// `copy_make_border` takes a raw `i32` whose value 1 means BORDER_REFLECT; OpenCV's
-/// `BorderTypes` has REPLICATE = 1, REFLECT = 2 and REFLECT_101 = 4 (the default).
+/// `copy_make_border` takes a raw `i32` that is an OpenCV `BorderTypes` value: REPLICATE = 1,
+/// REFLECT = 2 and REFLECT_101 = 4 (the default). It used to read 1 as REFLECT.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border.reflect_101` and
+/// `copy_make_border.replicate`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #222"]
 fn copy_make_border_uses_opencv_border_codes() {
     let src = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 3, 4, 5, 6]);
     let reflect_101 = copy_make_border(&src, 2, 1, 2, 1, 4, Scalar::all(9)).unwrap();
@@ -3113,8 +3114,9 @@ fn copy_make_border_uses_opencv_border_codes() {
     );
 }
 
-/// With purecv's own codes, 0 is BORDER_CONSTANT and 1 is BORDER_REFLECT; those two
-/// results equal OpenCV's.
+/// BORDER_CONSTANT (0) and BORDER_REFLECT (2) on one channel.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border.constant` and
+/// `copy_make_border.reflect`.
 #[test]
 fn copy_make_border_constant_and_reflect_values_match_opencv() {
     let src = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 3, 4, 5, 6]);
@@ -3126,7 +3128,7 @@ fn copy_make_border_constant_and_reflect_values_match_opencv() {
             9, 9
         ]
     );
-    let reflect = copy_make_border(&src, 2, 1, 2, 1, 1, Scalar::all(9)).unwrap();
+    let reflect = copy_make_border(&src, 2, 1, 2, 1, 2, Scalar::all(9)).unwrap();
     assert_eq!(
         reflect.data,
         vec![
@@ -3134,6 +3136,428 @@ fn copy_make_border_constant_and_reflect_values_match_opencv() {
             6, 6
         ]
     );
+}
+
+/// The 2 x 3 x 3 source of the `copy_make_border_codes.3ch_*` keys of
+/// `scripts/opencv_ref/core_misc.py` (`img3`: 1..=18 in order).
+fn border_img3() -> Matrix<u8> {
+    Matrix::from_vec(2, 3, 3, (1u8..=18).collect())
+}
+
+/// `copy_make_border_codes.3ch_<code>` (top 2, bottom 1, left 2, right 1, value 9) of
+/// `scripts/opencv_ref/core_misc.py`, keyed by the BorderTypes value.
+fn border_img3_expected() -> Vec<(i32, Vec<u8>)> {
+    vec![
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4,
+                5, 6, 7, 8, 9, 7, 8, 9, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 10,
+                11, 12, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 10, 11, 12, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 4, 5, 6, 1,
+                2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 4, 5, 6, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8,
+                9, 7, 8, 9, 13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+                13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 13, 14, 15, 16, 17, 18, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 10, 11, 12, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 1, 2, 3, 13, 14, 15, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 10, 11,
+                12, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3,
+            ],
+        ),
+        (
+            4,
+            vec![
+                7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6, 16, 17, 18, 13, 14, 15, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 13, 14, 15, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 4, 5, 6, 16, 17, 18, 13, 14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18, 13, 14,
+                15, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6,
+            ],
+        ),
+    ]
+}
+
+/// Every border code on a 3-channel u8 image and a 2-channel f32 image, with and without the
+/// BORDER_ISOLATED (16) flag. A plain `Matrix` is never a sub-matrix, so the flag changes nothing.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.3ch_<code>`,
+/// `3ch_<code>_isolated`, `f32_2ch_<code>` and `code_17_is_replicate_isolated`,
+/// `code_20_is_reflect_101_isolated`.
+#[test]
+fn copy_make_border_all_codes_match_opencv() {
+    let src = border_img3();
+    for (code, expected) in border_img3_expected() {
+        let plain = copy_make_border(&src, 2, 1, 2, 1, code, Scalar::all(9)).unwrap();
+        assert_eq!((plain.rows, plain.cols, plain.channels), (5, 6, 3));
+        assert_eq!(plain.data, expected, "code {code}");
+        let isolated = copy_make_border(&src, 2, 1, 2, 1, code | 16, Scalar::all(9)).unwrap();
+        assert_eq!(isolated.data, expected, "code {code} | BORDER_ISOLATED");
+    }
+    // The flag alone is BORDER_CONSTANT (16 & !16 == 0): `code_16` has the code-0 data.
+    let flag_only = copy_make_border(&src, 2, 1, 2, 1, 16, Scalar::all(9)).unwrap();
+    assert_eq!(flag_only.data, border_img3_expected()[0].1);
+
+    let f32_src = Matrix::from_vec(
+        2,
+        3,
+        2,
+        vec![
+            1.5f32, -2.5, 3.25, 4.0, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ],
+    );
+    let f32_expected: [(i32, Vec<f32>); 5] = [
+        (
+            0,
+            vec![
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0,
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, -2.5, 3.25, 4.0,
+                5.0, 6.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 9.0, 9.0,
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1.5, -2.5, 1.5, -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 1.5, -2.5, 1.5,
+                -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 1.5, -2.5, 1.5, -2.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 7.0, 8.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+                11.0, 12.0, 7.0, 8.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0,
+            ],
+        ),
+        (
+            2,
+            vec![
+                9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0, 3.25, 4.0, 1.5,
+                -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 11.0, 12.0, 9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0,
+            ],
+        ),
+        (
+            3,
+            vec![
+                3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 9.0, 10.0, 11.0,
+                12.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 7.0, 8.0, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 9.0, 10.0, 11.0, 12.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 7.0, 8.0, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5,
+            ],
+        ),
+        (
+            4,
+            vec![
+                5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 3.25, 4.0, 11.0, 12.0, 9.0,
+                10.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 9.0, 10.0, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 3.25, 4.0, 11.0, 12.0, 9.0, 10.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 9.0, 10.0, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 3.25, 4.0,
+            ],
+        ),
+    ];
+    for (code, expected) in f32_expected {
+        let out = copy_make_border(&f32_src, 2, 1, 2, 1, code, Scalar::all(9.0)).unwrap();
+        assert_eq!(out.data, expected, "f32 code {code}");
+    }
+
+    // 17 = REPLICATE | ISOLATED and 20 = REFLECT_101 | ISOLATED.
+    let replicate = copy_make_border(&src, 2, 1, 2, 1, 17, Scalar::all(9)).unwrap();
+    assert_eq!(replicate.data, border_img3_expected()[1].1);
+    let reflect_101 = copy_make_border(&src, 2, 1, 2, 1, 20, Scalar::all(9)).unwrap();
+    assert_eq!(reflect_101.data, border_img3_expected()[4].1);
+}
+
+/// Borders wider than the image on every code: the old implementation indexed out of bounds
+/// (`top - 1 - y` underflowed past one image height). OpenCV's `borderInterpolate` folds
+/// repeatedly.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.3ch_<code>_top5`,
+/// `3ch_<code>_left7`, `3ch_<code>_oversized_all_checksum`, `1x1_<code>_all2` and
+/// `1row_<code>_top3_bottom3`.
+#[test]
+fn copy_make_border_wider_than_image_matches_opencv() {
+    let src = border_img3();
+    // top = 5 on 2 rows -> 7 rows of 3 pixels
+    let top5: [(i32, Vec<u8>); 5] = [
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4,
+                5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            4,
+            vec![
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+    ];
+    for (code, expected) in top5 {
+        let out = copy_make_border(&src, 5, 0, 0, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!((out.rows, out.cols), (7, 3));
+        assert_eq!(out.data, expected, "top 5, code {code}");
+    }
+
+    // left = 7 on 3 columns -> 2 rows of 10 pixels
+    let left7: [(i32, Vec<u8>); 5] = [
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 12,
+                13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 4, 5, 6, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 13, 14, 15, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            4,
+            vec![
+                4, 5, 6, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 13, 14, 15, 16, 17, 18, 13, 14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18, 13,
+                14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+    ];
+    for (code, expected) in left7 {
+        let out = copy_make_border(&src, 0, 0, 7, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!((out.rows, out.cols), (2, 10));
+        assert_eq!(out.data, expected, "left 7, code {code}");
+    }
+
+    // All four sides wider than the image: top 5, bottom 4, left 7, right 8 -> 11 x 18 x 3.
+    // (sum of the data, sum of data[i] * (i + 1))
+    let checksums: [(i32, i64, i64); 5] = [
+        (0, 5355, 1_595_649),
+        (1, 5499, 2_053_917),
+        (2, 5400, 1_690_974),
+        (3, 5886, 1_749_699),
+        (4, 5985, 1_781_082),
+    ];
+    for (code, sum, weighted) in checksums {
+        for flags in [0, 16] {
+            let out = copy_make_border(&src, 5, 4, 7, 8, code | flags, Scalar::all(9)).unwrap();
+            assert_eq!((out.rows, out.cols, out.channels), (11, 18, 3));
+            let got_sum: i64 = out.data.iter().map(|&v| i64::from(v)).sum();
+            let got_weighted: i64 = out
+                .data
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| i64::from(v) * (i as i64 + 1))
+                .sum();
+            assert_eq!(
+                (got_sum, got_weighted),
+                (sum, weighted),
+                "all sides oversized, code {code} | {flags}"
+            );
+        }
+    }
+
+    // A 1 x 1 image with two pixels of border on every side is one value for every code but
+    // CONSTANT; a 1 x 3 image with 3 rows above and below repeats the row.
+    let one = Matrix::from_vec(1, 1, 1, vec![7u8]);
+    let row = Matrix::from_vec(1, 3, 1, vec![1u8, 2, 3]);
+    for code in 0..=4 {
+        let out = copy_make_border(&one, 2, 2, 2, 2, code, Scalar::all(3)).unwrap();
+        let mut expected = vec![if code == 0 { 3u8 } else { 7 }; 25];
+        if code == 0 {
+            expected[12] = 7;
+        }
+        assert_eq!(out.data, expected, "1x1, code {code}");
+
+        let out = copy_make_border(&row, 3, 3, 0, 0, code, Scalar::all(3)).unwrap();
+        let expected: Vec<u8> = if code == 0 {
+            [[3u8; 9].as_slice(), &[1, 2, 3], &[3; 9]].concat()
+        } else {
+            [1u8, 2, 3].repeat(7)
+        };
+        assert_eq!(out.data, expected, "1x3, code {code}");
+    }
+}
+
+/// BORDER_TRANSPARENT (5) and the codes that are not a BorderTypes value make
+/// `borderInterpolate` raise "Unknown/unsupported border type" as soon as there is a border to
+/// fill; OpenCV returns a plain copy first when every border is 0 (the border type is not looked
+/// at). Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.code_<n>`,
+/// `code_<n>_top_only`, `code_<n>_left_only` and `code_<n>_zero_borders`.
+#[test]
+fn copy_make_border_transparent_is_err() {
+    let src = border_img3();
+    for code in [5, 5 | 16, 6, 7, 8, 32, 33, 99, -1, -16] {
+        for (top, bottom, left, right) in [(2, 1, 2, 1), (2, 0, 0, 0), (0, 0, 2, 0)] {
+            let r = copy_make_border(&src, top, bottom, left, right, code, Scalar::all(9));
+            assert!(
+                matches!(r, Err(PureCvError::InvalidInput(_))),
+                "code {code}, borders {top}/{bottom}/{left}/{right}: {r:?}"
+            );
+        }
+        let copy = copy_make_border(&src, 0, 0, 0, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!(copy.data, src.data, "zero borders, code {code}");
+        assert_eq!((copy.rows, copy.cols, copy.channels), (2, 3, 3));
+    }
+}
+
+/// `value` is used only by BORDER_CONSTANT. A 1- to 4-channel image takes channel `c` of the
+/// scalar (a bare number is `(v, 0, 0, 0)`); a 5-or-more-channel image asserts
+/// `value[0] == value[1] == value[2] == value[3]` and fills every channel with it.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.value_<n>ch_*`.
+#[test]
+fn copy_make_border_value_matches_opencv() {
+    let v1234 = Scalar::new(11u8, 22, 33, 44);
+    let bare9 = Scalar::from_value(9u8);
+    for cn in 1usize..=4 {
+        let src = Matrix::from_vec(2, 2, cn, (1..=(4 * cn) as u8).collect());
+        let fill = |s: Scalar<u8>| -> Vec<u8> {
+            // 4 x 4 pixels: a one-pixel frame of the scalar around the source
+            let mut out = Vec::new();
+            for y in 0..4 {
+                for x in 0..4 {
+                    if (1..=2).contains(&y) && (1..=2).contains(&x) {
+                        let i = ((y - 1) * 2 + (x - 1)) * cn;
+                        out.extend_from_slice(&src.data[i..i + cn]);
+                    } else {
+                        out.extend_from_slice(&s.v[..cn]);
+                    }
+                }
+            }
+            out
+        };
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, v1234).unwrap();
+        assert_eq!(out.data, fill(v1234), "{cn} channels, (11, 22, 33, 44)");
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, bare9).unwrap();
+        assert_eq!(out.data, fill(bare9), "{cn} channels, bare 9");
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::default()).unwrap();
+        assert_eq!(out.data, fill(Scalar::default()), "{cn} channels, default");
+        // REPLICATE ignores `value`
+        let a = copy_make_border(&src, 1, 1, 1, 1, 1, v1234).unwrap();
+        let b = copy_make_border(&src, 1, 1, 1, 1, 1, bare9).unwrap();
+        assert_eq!(a.data, b.data);
+    }
+    // spot-check the 3-channel layout against the script's literal rows
+    let src3 = Matrix::from_vec(2, 2, 3, (1u8..=12).collect());
+    let out = copy_make_border(&src3, 1, 1, 1, 1, 0, v1234).unwrap();
+    assert_eq!(
+        &out.data[12..24],
+        &[11, 22, 33, 1, 2, 3, 4, 5, 6, 11, 22, 33]
+    );
+    let out = copy_make_border(&src3, 1, 1, 1, 1, 0, bare9).unwrap();
+    assert_eq!(&out.data[12..24], &[9, 0, 0, 1, 2, 3, 4, 5, 6, 9, 0, 0]);
+
+    // more than four channels
+    for cn in [5usize, 6, 8] {
+        let src = Matrix::from_vec(1, 2, cn, (1..=(2 * cn) as u8).collect());
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::all(9)).unwrap();
+        let mut expected = vec![9u8; 4 * cn];
+        expected.extend([9u8].repeat(cn));
+        expected.extend_from_slice(&src.data);
+        expected.extend([9u8].repeat(cn));
+        expected.extend([9u8].repeat(4 * cn));
+        assert_eq!(out.data, expected, "{cn} channels, all four equal");
+        // (1, 2, 3, 4) and a bare number are not equal in all four slots
+        for bad in [v1234, bare9] {
+            let r = copy_make_border(&src, 1, 1, 1, 1, 0, bad);
+            assert!(
+                matches!(r, Err(PureCvError::InvalidInput(_))),
+                "{cn}: {r:?}"
+            );
+        }
+        // the default scalar is four zeros
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::default()).unwrap();
+        assert_eq!(out.data[..cn], vec![0u8; cn][..]);
+        // REPLICATE and a zero border do not look at `value`
+        // (`value_<n>ch_1234_replicate`: the middle row is p0 p0 p1 p1)
+        let out = copy_make_border(&src, 1, 1, 1, 1, 1, v1234).unwrap();
+        let (p0, p1) = src.data.split_at(cn);
+        assert_eq!(
+            &out.data[4 * cn..8 * cn],
+            &[p0, p0, p1, p1].concat()[..],
+            "{cn} channels, replicate"
+        );
+        let out = copy_make_border(&src, 0, 0, 0, 0, 0, v1234).unwrap();
+        assert_eq!(out.data, src.data);
+    }
+}
+
+/// An empty source: BORDER_CONSTANT fills (`empty_src_constant`); the other codes have nothing to
+/// copy from. OpenCV does not define that result (its `empty_src_replicate` output is
+/// uninitialised memory), so purecv returns an error instead of looping or indexing.
+#[test]
+fn copy_make_border_empty_source() {
+    let empty = Matrix::<u8>::new(0, 3, 1);
+    let out = copy_make_border(&empty, 1, 1, 1, 1, 0, Scalar::all(5)).unwrap();
+    assert_eq!((out.rows, out.cols), (2, 5));
+    assert_eq!(out.data, vec![5u8; 10]);
+    for code in 1..=4 {
+        let r = copy_make_border(&empty, 1, 1, 1, 1, code, Scalar::all(5));
+        assert!(
+            matches!(r, Err(PureCvError::InvalidInput(_))),
+            "{code}: {r:?}"
+        );
+    }
 }
 
 #[test]

@@ -38,7 +38,8 @@ use alloc::vec::Vec;
 
 use crate::core::error::Result;
 use crate::core::logging::tags;
-use crate::core::types::Scalar;
+use crate::core::types::{BorderTypes, Scalar};
+use crate::core::utils::border_interpolate;
 use crate::core::Matrix;
 use crate::{cv_bail, cv_err};
 
@@ -314,11 +315,36 @@ where
     Ok(())
 }
 
-/// Forms a border around an image.
+/// Forms a border around an image (OpenCV's `copyMakeBorder`).
 ///
-/// border_type:
-///  0 - BORDER_CONSTANT: iiiiii|abcdefgh|iiiiiii with some value
-///  1 - BORDER_REFLECT: fedcba|abcdefgh|hgfedcb
+/// `border_type` is an OpenCV [`BorderTypes`] value, optionally or-ed with
+/// `BorderTypes::Isolated` (16), which has no effect here because a [`Matrix`] is never a
+/// sub-matrix of a larger one:
+///
+/// * `0` - `Constant`: `iiiiii|abcdefgh|iiiiiii` with `value`
+/// * `1` - `Replicate`: `aaaaaa|abcdefgh|hhhhhhh`
+/// * `2` - `Reflect`: `fedcba|abcdefgh|hgfedcb`
+/// * `3` - `Wrap`: `cdefgh|abcdefgh|abcdefg`
+/// * `4` - `Reflect101`: `gfedcb|abcdefgh|gfedcba`
+///
+/// A border may be wider than the image: the pattern keeps folding through
+/// [`border_interpolate`](crate::core::utils::border_interpolate).
+///
+/// `value` is used by `Constant` only. Channel `c` of a one- to four-channel image takes
+/// `value.v[c]`. An image with more than four channels needs all four `value.v` entries equal
+/// and fills every channel with it, as OpenCV does.
+///
+/// # Errors
+///
+/// * `InvalidInput` for `Transparent` and for any other code that is not a `BorderTypes` value
+///   (with or without the isolated flag), like OpenCV's "Unknown/unsupported border type". As in
+///   OpenCV, the code is not looked at when all four borders are 0: the result is a copy of
+///   `src`.
+/// * `InvalidInput` for `Constant` on more than four channels with unequal `value` entries.
+/// * `InvalidInput` for a non-`Constant` border on an image with no rows or no columns.
+/// * `InvalidDimensions` when the result would not fit in an `i32` row/column count.
+///
+/// The sizes are unsigned, so OpenCV's negative-size assertion cannot occur.
 pub fn copy_make_border<T>(
     src: &Matrix<T>,
     top: usize,
@@ -329,114 +355,127 @@ pub fn copy_make_border<T>(
     value: Scalar<T>,
 ) -> Result<Matrix<T>>
 where
-    T: Copy + Send + Sync + Default + 'static,
+    T: Copy + PartialEq + Send + Sync + Default + 'static,
 {
-    let dst_rows = src.rows + top + bottom;
-    let dst_cols = src.cols + left + right;
-    let mut dst = Matrix::<T>::new(dst_rows, dst_cols, src.channels);
     let channels = src.channels;
+    let dst_size = src
+        .rows
+        .checked_add(top)
+        .and_then(|r| r.checked_add(bottom))
+        .zip(
+            src.cols
+                .checked_add(left)
+                .and_then(|c| c.checked_add(right)),
+        )
+        .filter(|&(r, c)| {
+            i32::try_from(r).is_ok()
+                && i32::try_from(c).is_ok()
+                && r.checked_mul(c)
+                    .and_then(|n| n.checked_mul(channels))
+                    .is_some()
+        });
+    let Some((dst_rows, dst_cols)) = dst_size else {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "copy_make_border: the bordered image does not fit ({} + {} + {} rows, {} + {} + {} cols)",
+            top,
+            src.rows,
+            bottom,
+            left,
+            src.cols,
+            right
+        );
+    };
 
-    #[cfg(feature = "parallel")]
-    {
-        dst.data
-            .par_chunks_mut(dst_cols * channels)
-            .enumerate()
-            .for_each(|(y_dst, row_dst)| {
-                for x_dst in 0..dst_cols {
-                    let (y_src, is_border_y) = if y_dst < top {
-                        if border_type == 1 {
-                            (top - 1 - y_dst, false)
-                        } else {
-                            (0, true)
-                        }
-                    } else if y_dst >= top + src.rows {
-                        if border_type == 1 {
-                            (src.rows - 1 - (y_dst - (top + src.rows)), false)
-                        } else {
-                            (0, true)
-                        }
-                    } else {
-                        (y_dst - top, false)
-                    };
-
-                    let (x_src, is_border_x) = if x_dst < left {
-                        if border_type == 1 {
-                            (left - 1 - x_dst, false)
-                        } else {
-                            (0, true)
-                        }
-                    } else if x_dst >= left + src.cols {
-                        if border_type == 1 {
-                            (src.cols - 1 - (x_dst - (left + src.cols)), false)
-                        } else {
-                            (0, true)
-                        }
-                    } else {
-                        (x_dst - left, false)
-                    };
-
-                    if (is_border_x || is_border_y) && border_type == 0 {
-                        for c in 0..channels {
-                            row_dst[x_dst * channels + c] = value.v[c];
-                        }
-                    } else {
-                        let src_idx = (y_src * src.cols + x_src) * channels;
-                        for c in 0..channels {
-                            row_dst[x_dst * channels + c] = src.data[src_idx + c];
-                        }
-                    }
-                }
-            });
+    // copy.cpp returns a plain copy before it looks at the border type.
+    if top == 0 && bottom == 0 && left == 0 && right == 0 {
+        return Ok(src.clone());
     }
 
-    #[cfg(not(feature = "parallel"))]
-    {
-        for y_dst in 0..dst_rows {
-            for x_dst in 0..dst_cols {
-                let (y_src, is_border_y) = if y_dst < top {
-                    if border_type == 1 {
-                        (top - 1 - y_dst, false)
-                    } else {
-                        (0, true)
-                    }
-                } else if y_dst >= top + src.rows {
-                    if border_type == 1 {
-                        (src.rows - 1 - (y_dst - (top + src.rows)), false)
-                    } else {
-                        (0, true)
-                    }
-                } else {
-                    (y_dst - top, false)
-                };
+    let border = match border_type & !(BorderTypes::Isolated as i32) {
+        0 => BorderTypes::Constant,
+        1 => BorderTypes::Replicate,
+        2 => BorderTypes::Reflect,
+        3 => BorderTypes::Wrap,
+        4 => BorderTypes::Reflect101,
+        _ => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "copy_make_border: unknown or unsupported border type {}",
+            border_type
+        ),
+    };
+    let is_constant = border == BorderTypes::Constant;
+    if !is_constant && (src.rows == 0 || src.cols == 0) {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "copy_make_border: border type {} needs a non-empty image, got {}x{}",
+            border_type,
+            src.rows,
+            src.cols
+        );
+    }
 
-                let (x_src, is_border_x) = if x_dst < left {
-                    if border_type == 1 {
-                        (left - 1 - x_dst, false)
-                    } else {
-                        (0, true)
-                    }
-                } else if x_dst >= left + src.cols {
-                    if border_type == 1 {
-                        (src.cols - 1 - (x_dst - (left + src.cols)), false)
-                    } else {
-                        (0, true)
-                    }
-                } else {
-                    (x_dst - left, false)
-                };
+    // The pixel written wherever the border is constant.
+    let mut fill = alloc::vec![T::default(); channels];
+    if is_constant {
+        if channels > 4 && !value.v.iter().all(|&v| v == value.v[0]) {
+            cv_bail!(
+                tags::CORE,
+                InvalidInput,
+                "copy_make_border: BORDER_CONSTANT on {} channels needs value[0] == value[1] == value[2] == value[3]",
+                channels
+            );
+        }
+        for (c, f) in fill.iter_mut().enumerate() {
+            *f = value.v[if channels > 4 { 0 } else { c }];
+        }
+    }
 
-                if (is_border_x || is_border_y) && border_type == 0 {
-                    for c in 0..channels {
-                        dst.data[(y_dst * dst_cols + x_dst) * channels + c] = value.v[c];
-                    }
-                } else {
-                    let src_idx = (y_src * src.cols + x_src) * channels;
-                    for c in 0..channels {
-                        dst.data[(y_dst * dst_cols + x_dst) * channels + c] = src.data[src_idx + c];
-                    }
+    let mut dst = Matrix::<T>::new(dst_rows, dst_cols, channels);
+    if dst.data.is_empty() {
+        return Ok(dst);
+    }
+
+    // Both sizes fit in an i32 (checked above). `col_map[x]` is the source column of destination
+    // column `x`, or -1 where the border is constant.
+    let src_rows = src.rows as i32;
+    let src_cols = src.cols as i32;
+    let col_map: Vec<i32> = (0..dst_cols)
+        .map(|x| border_interpolate(x as i32 - left as i32, src_cols, border))
+        .collect();
+
+    let fill_row = |y: usize, row: &mut [T]| {
+        let src_y = border_interpolate(y as i32 - top as i32, src_rows, border);
+        if src_y < 0 {
+            for px in row.chunks_exact_mut(channels) {
+                px.copy_from_slice(&fill);
+            }
+            return;
+        }
+        let src_row = &src.data[src_y as usize * src.cols * channels..][..src.cols * channels];
+        row[left * channels..(left + src.cols) * channels].copy_from_slice(src_row);
+        for (x, px) in row.chunks_exact_mut(channels).enumerate() {
+            if x < left || x >= left + src.cols {
+                match usize::try_from(col_map[x]) {
+                    Ok(sx) => px.copy_from_slice(&src_row[sx * channels..][..channels]),
+                    Err(_) => px.copy_from_slice(&fill),
                 }
             }
         }
+    };
+
+    #[cfg(feature = "parallel")]
+    dst.data
+        .par_chunks_mut(dst_cols * channels)
+        .enumerate()
+        .for_each(|(y, row)| fill_row(y, row));
+
+    #[cfg(not(feature = "parallel"))]
+    for (y, row) in dst.data.chunks_mut(dst_cols * channels).enumerate() {
+        fill_row(y, row);
     }
 
     Ok(dst)
