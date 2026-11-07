@@ -237,7 +237,8 @@ def main() -> None:
         "i32_min_in_m2147483647.5_0": in_range([i32_min], np.int32, -2147483647.5, 0),
     }
     # A bound that does not fit an int: cvFloor and cvCeil give INT_MIN on this x86-64 build
-    # (cvtsd2si), and cvCeil(maxVal) - 1 then wraps to INT_MAX.
+    # (cvtsd2si), and cvCeil(maxVal) - 1 then wraps to INT_MAX. A build-dependent record, not a
+    # target: purecv saturates these bounds instead.
     results["check_range"]["integer_unrepresentable_bounds"] = {
         "u8_5_in_nan_10": in_range([5], np.uint8, nan, 10),
         "u8_5_in_0_nan": in_range([5], np.uint8, 0, nan),

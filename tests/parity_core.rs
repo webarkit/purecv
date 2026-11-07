@@ -3682,27 +3682,30 @@ fn check_range_rounds_integer_bounds() {
     assert!(check_range(&row(&[i32::MIN]), -2147483647.5, 0.0));
 }
 
-/// A bound that does not fit an `int` converts to `INT_MIN`, and `cvCeil(max) - 1` then wraps
-/// to `INT_MAX`, so such a bound stops bounding: `core_misc.py`,
+/// purecv's own behaviour, not a parity target: an integer bound that does not fit an `int`
+/// saturates like `SaturateCast` (NaN gives 0, the rest clamps to the `i32` range). OpenCV's
+/// result here is build-dependent: an out-of-range conversion and a signed overflow in
+/// `cvCeil(maxVal) - 1`. For the record, the measured x86-64 wheel answers true on every row
+/// below except `[1e10, 5)` on `[5]`, where it agrees: `core_misc.py`,
 /// `check_range.integer_unrepresentable_bounds`.
 #[test]
-fn check_range_integer_bounds_outside_int_behave_like_the_reference_build() {
+fn check_range_out_of_int_bounds_saturate() {
     let (inf, nan) = (f64::INFINITY, f64::NAN);
     let five = row(&[5u8]);
+    // NaN is 0: `[0, 9]`, then `[0, -1]`.
     assert!(check_range(&five, nan, 10.0));
-    assert!(check_range(&five, 0.0, nan));
-    assert!(check_range(&five, nan, nan));
-    assert!(check_range(&five, inf, inf));
-    assert!(check_range(&five, -inf, -inf));
-    assert!(check_range(&five, inf, -inf));
-    assert!(check_range(&five, -inf, inf));
-    assert!(check_range(&five, 1e10, 1e11));
+    assert!(!check_range(&five, 0.0, nan));
+    assert!(!check_range(&five, nan, nan));
+    assert!(!check_range(&five, inf, inf));
+    assert!(!check_range(&five, -inf, -inf));
+    assert!(!check_range(&five, inf, -inf));
+    assert!(!check_range(&five, 1e10, 1e11));
     assert!(!check_range(&five, 1e10, 5.0));
-    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 1e10, 5.0));
-    assert!(check_range(&five, 0.0, -1e10));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 1e10, 5.0));
+    assert!(!check_range(&five, 0.0, -1e10));
     let five = row(&[5i32]);
-    assert!(check_range(&five, -2147483649.0, -2147483648.0));
-    assert!(check_range(&five, 2147483648.0, 2147483649.0));
+    assert!(!check_range(&five, -2147483649.0, -2147483648.0));
+    assert!(!check_range(&five, 2147483648.0, 2147483649.0));
 }
 
 /// The floating depths share `[min, max)` over the sign-toggled bit patterns, so -0 sorts

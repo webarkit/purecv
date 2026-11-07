@@ -2294,8 +2294,9 @@ where
 /// * On `u8`, `i8`, `u16`, `i16` and `i32` the range is `[floor(min_val), ceil(max_val) - 1]`,
 ///   inclusive at both ends, so a fractional lower bound rounds down. Rounded bounds that are
 ///   empty, or that lie outside the element type, answer `false` even on an empty matrix. A
-///   bound that does not fit an `i32`, or NaN, stops bounding: it converts to `i32::MIN` as on
-///   the x86-64 reference build (where the upper bound's `- 1` then wraps to `i32::MAX`).
+///   bound that does not fit an `i32` saturates to the `i32` range and NaN converts to `0`,
+///   like `SaturateCast`; OpenCV's result there is a build-dependent signed overflow, not
+///   ported.
 /// * Any other element type has no OpenCV depth and is treated like `f64`.
 ///
 /// # Arguments
@@ -2369,15 +2370,13 @@ fn check_integer_range<T>(
 where
     T: ToPrimitive + Copy,
 {
-    let lower = if min_val <= f64::from(i32::MIN) {
-        i32::MIN
-    } else {
-        c_int(min_val.floor())
-    };
+    // `as` saturates and maps NaN to 0, like `SaturateCast`; OpenCV's conversions of a bound
+    // outside the `int` range are build-dependent and not ported.
+    let lower = min_val.floor() as i32;
     let upper = if max_val > f64::from(i32::MAX) {
         i32::MAX
     } else {
-        c_int(max_val.ceil()).wrapping_sub(1)
+        (max_val.ceil() as i32).saturating_sub(1)
     };
     if lower > depth_max || upper < depth_min || upper < lower {
         return false;
@@ -2385,16 +2384,6 @@ where
     src.data
         .iter()
         .all(|val| val.to_i32().is_some_and(|v| lower <= v && v <= upper))
-}
-
-/// A C `(int)` conversion as on x86-64, where a NaN or out-of-range value gives `INT_MIN`;
-/// `as` would saturate instead.
-fn c_int(value: f64) -> i32 {
-    if (-2147483648.0..2147483648.0).contains(&value) {
-        value as i32
-    } else {
-        i32::MIN
-    }
 }
 
 /// `(float)bound` as an `f64`. A NaN stays as it is: an `as` cast does not pin its sign.
