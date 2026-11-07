@@ -1753,7 +1753,40 @@ where
     }
 }
 
+/// Checks whether any array element is non-zero (OpenCV `hasNonZero`).
+///
+/// The input matrix must be single-channel (OpenCV asserts `cn == 1`). An empty
+/// matrix has no non-zero element, so the result is `false`.
+///
+/// # Errors
+///
+/// Returns an error if `src` has more than one channel.
+pub fn has_non_zero<T>(src: &Matrix<T>) -> Result<bool>
+where
+    T: Num + Copy + Send + Sync + 'static,
+{
+    if src.channels != 1 {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "has_non_zero: requires a single-channel matrix, got {} channels",
+            src.channels
+        );
+    }
+    #[cfg(feature = "parallel")]
+    {
+        Ok(src.data.par_iter().any(|&x| !x.is_zero()))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        Ok(src.data.iter().any(|&x| !x.is_zero()))
+    }
+}
+
 /// Checks if the array contains no zero elements.
+///
+/// This is a purecv-only predicate: OpenCV has no counterpart, and it is not
+/// the negation of [`has_non_zero`] (which asks whether *any* element is non-zero).
 ///
 /// This provides rapid evaluation checking if no exact 'zero' value exists throughout
 /// the matrix structure natively mapping to OpenCV's iteration check mechanisms without relying on FFI bindings.

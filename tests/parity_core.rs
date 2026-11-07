@@ -2792,6 +2792,44 @@ fn flip_nd_non_negative_axis_matches_opencv() {
 }
 
 // ---------------------------------------------------------------------------------------
+// has_non_zero (core_stats.py, key `non_zero`)
+// ---------------------------------------------------------------------------------------
+
+/// `hasNonZero` matches OpenCV 4.10.0: `core_stats.py` key `non_zero`
+/// (`has_non_zero`, `has_non_zero_all_zero`, `has_non_zero_all_nonzero`).
+#[test]
+fn has_non_zero_matches_opencv() {
+    let z = Matrix::from_vec(2, 3, 1, vec![0u8, 3, 0, 1, 0, 0]);
+    assert!(has_non_zero(&z).unwrap());
+    assert!(!has_non_zero(&Matrix::<u8>::zeros(2, 2, 1)).unwrap());
+    assert!(has_non_zero(&Matrix::<u8>::ones(2, 2, 1)).unwrap());
+}
+
+/// `hasNonZero` on a multi-channel input asserts `cn == 1`: `core_stats.py` key `non_zero`,
+/// `has_non_zero_multi_channel` is `cv2.error: -215 cn==1`.
+#[test]
+fn has_non_zero_rejects_multi_channel() {
+    let bgr = Matrix::from_vec(1, 2, 3, vec![1u8, 2, 3, 4, 5, 6]);
+    assert!(has_non_zero(&bgr).is_err());
+}
+
+/// An empty matrix has no non-zero element: `core_stats.py` key `non_zero`,
+/// `has_non_zero_empty` is `false` (measured on a 0x3 `uint8` array).
+#[test]
+fn has_non_zero_empty_is_false() {
+    let e = Matrix::<u8>::zeros(0, 3, 1);
+    assert!(!has_non_zero(&e).unwrap());
+}
+
+/// `has_no_zero` is purecv-only (OpenCV has no counterpart) and keeps its predicate:
+/// true when no element is zero.
+#[test]
+fn has_no_zero_keeps_its_predicate() {
+    assert!(has_no_zero(&Matrix::from_vec(1, 3, 1, vec![1u8, 2, 3])).unwrap());
+    assert!(!has_no_zero(&Matrix::from_vec(1, 3, 1, vec![1u8, 0, 3])).unwrap());
+}
+
+// ---------------------------------------------------------------------------------------
 // reduce (core_stats.py)
 // ---------------------------------------------------------------------------------------
 

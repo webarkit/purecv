@@ -205,6 +205,7 @@ def main() -> None:
         "has_non_zero_all_nonzero": bool(cv2.hasNonZero(np.ones((2, 2), np.uint8))),
         "count_multi_channel": attempt(lambda: cv2.countNonZero(bgr)),
         "has_non_zero_multi_channel": attempt(lambda: cv2.hasNonZero(bgr)),
+        "has_non_zero_empty": attempt(lambda: bool(cv2.hasNonZero(np.zeros((0, 3), np.uint8)))),
     }
 
     dump("core_stats.py", results)
