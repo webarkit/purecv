@@ -2284,14 +2284,25 @@ where
 
 /// Checks if array elements lie within a specified range.
 ///
-/// The function checks if every element of the input matrix is within the half-open range
-/// `[min_val, max_val)`, as OpenCV's `checkRange` does. NaN elements are never in range.
+/// Follows OpenCV's
+/// [`checkRange`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/mathfuncs.cpp#L1508-L1622):
+///
+/// * On `f32` and `f64` the range is `[min_val, max_val)`, ordered like
+///   [`f64::total_cmp`]: `-0.0` sorts below `0.0`, NaN elements are out of range against
+///   finite bounds, and a positive NaN bound sorts above `+inf`. `f32` first clamps its bounds
+///   to `+-f32::MAX` and rounds them to `f32`, so infinite elements and `f32::MAX` always fail.
+/// * On `u8`, `i8`, `u16`, `i16` and `i32` the range is `[floor(min_val), ceil(max_val) - 1]`,
+///   inclusive at both ends, so a fractional lower bound rounds down. Rounded bounds that are
+///   empty, or that lie outside the element type, answer `false` even on an empty matrix. A
+///   bound that does not fit an `i32`, or NaN, stops bounding: it converts to `i32::MIN` as on
+///   the x86-64 reference build (where the upper bound's `- 1` then wraps to `i32::MAX`).
+/// * Any other element type has no OpenCV depth and is treated like `f64`.
 ///
 /// # Arguments
 ///
 /// * `src` - Input matrix.
-/// * `min_val` - Lower boundary of the range (inclusive).
-/// * `max_val` - Upper boundary of the range (exclusive).
+/// * `min_val` - Lower boundary of the range.
+/// * `max_val` - Upper boundary of the range.
 ///
 /// # Example
 ///
@@ -2306,10 +2317,93 @@ pub fn check_range<T>(src: &Matrix<T>, min_val: f64, max_val: f64) -> bool
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
 {
+    if let Some(depth_limits) = integer_depth_limits::<T>() {
+        return check_integer_range(src, depth_limits, min_val, max_val);
+    }
+    let (lower, upper) = if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
+        // `std::max` and `std::min` keep a NaN first operand, unlike `f64::max` and `f64::min`.
+        let flt_max = f64::from(f32::MAX);
+        let lower = if min_val < -flt_max {
+            -flt_max
+        } else {
+            min_val
+        };
+        let upper = if max_val > flt_max { flt_max } else { max_val };
+        (round_bound_to_f32(lower), round_bound_to_f32(upper))
+    } else {
+        (min_val, max_val)
+    };
+    // `total_cmp` is the order of OpenCV's `CV_TOGGLE_FLT` and `CV_TOGGLE_DBL`, and widening an
+    // `f32` to `f64` preserves it.
     src.data.iter().all(|&val| {
         let v = val.to_f64().unwrap_or(0.0);
-        min_val <= v && v < max_val
+        v.total_cmp(&lower).is_ge() && v.total_cmp(&upper).is_lt()
     })
+}
+
+/// The `(min, max)` of an element type with an OpenCV integer depth, else `None`.
+fn integer_depth_limits<T: 'static>() -> Option<(i32, i32)> {
+    let id = core::any::TypeId::of::<T>();
+    if id == core::any::TypeId::of::<u8>() {
+        Some((u8::MIN.into(), u8::MAX.into()))
+    } else if id == core::any::TypeId::of::<i8>() {
+        Some((i8::MIN.into(), i8::MAX.into()))
+    } else if id == core::any::TypeId::of::<u16>() {
+        Some((u16::MIN.into(), u16::MAX.into()))
+    } else if id == core::any::TypeId::of::<i16>() {
+        Some((i16::MIN.into(), i16::MAX.into()))
+    } else if id == core::any::TypeId::of::<i32>() {
+        Some((i32::MIN, i32::MAX))
+    } else {
+        None
+    }
+}
+
+/// `checkRange` on an integer depth, with its `int` conversions of the bounds.
+fn check_integer_range<T>(
+    src: &Matrix<T>,
+    (depth_min, depth_max): (i32, i32),
+    min_val: f64,
+    max_val: f64,
+) -> bool
+where
+    T: ToPrimitive + Copy,
+{
+    let lower = if min_val <= f64::from(i32::MIN) {
+        i32::MIN
+    } else {
+        c_int(min_val.floor())
+    };
+    let upper = if max_val > f64::from(i32::MAX) {
+        i32::MAX
+    } else {
+        c_int(max_val.ceil()).wrapping_sub(1)
+    };
+    if lower > depth_max || upper < depth_min || upper < lower {
+        return false;
+    }
+    src.data
+        .iter()
+        .all(|val| val.to_i32().is_some_and(|v| lower <= v && v <= upper))
+}
+
+/// A C `(int)` conversion as on x86-64, where a NaN or out-of-range value gives `INT_MIN`;
+/// `as` would saturate instead.
+fn c_int(value: f64) -> i32 {
+    if (-2147483648.0..2147483648.0).contains(&value) {
+        value as i32
+    } else {
+        i32::MIN
+    }
+}
+
+/// `(float)bound` as an `f64`. A NaN stays as it is: an `as` cast does not pin its sign.
+fn round_bound_to_f32(bound: f64) -> f64 {
+    if bound.is_nan() {
+        bound
+    } else {
+        f64::from(bound as f32)
+    }
 }
 
 /// Computes the scalar dot product of two matrices (vectors).

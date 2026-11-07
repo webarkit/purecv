@@ -3604,7 +3604,7 @@ fn flip_rotate_transpose_repeat_match_opencv() {
 // check_range / compare / in_range / lut / sort (core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`. purecv is inclusive.
+/// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`.
 #[test]
 fn check_range_upper_bound_is_exclusive() {
     let a = row(&[0u8, 100, 255]);
@@ -3624,6 +3624,143 @@ fn check_range_lower_bound_is_inclusive() {
 fn check_range_nan_and_inside_values_match_opencv() {
     assert!(!check_range(&row(&[0.0f32, f32::NAN]), -f64::MAX, f64::MAX));
     assert!(check_range(&row(&[0.0f32, 1.0, 255.0]), 0.0, 255.5));
+}
+
+/// Integer depths check `[cvFloor(min), cvCeil(max) - 1]`, both inclusive, and the early-outs
+/// on the rounded bounds answer false even on an empty matrix: `core_misc.py`,
+/// `check_range.integer_rounding`.
+#[test]
+fn check_range_rounds_integer_bounds() {
+    assert!(check_range(&row(&[0u8, 254]), 0.5, 254.5));
+    assert!(check_range(&row(&[0u8]), 0.5, 256.0));
+    assert!(check_range(&row(&[5i16]), 5.5, 10.0));
+    assert!(check_range(&row(&[-1i32]), -0.5, 10.0));
+    assert!(check_range(&row(&[254u8]), 0.0, 254.5));
+    assert!(!check_range(&row(&[255u8]), 0.0, 254.5));
+    assert!(!check_range(&row(&[254u8]), 0.0, 254.0));
+    assert!(!check_range(&row(&[5u8]), 10.0, 5.0));
+    assert!(!check_range(&row(&[5u8]), 5.0, 5.0));
+    assert!(check_range(&row(&[5u8]), 5.2, 5.1));
+    assert!(check_range(&row(&[5u8]), 5.5, 5.6));
+
+    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 0.0, 256.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 10.0, 5.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 5.0, 5.0));
+    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 5.2, 5.1));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 300.0, 400.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), -10.0, -5.0));
+    assert!(!check_range(&Matrix::<i8>::zeros(0, 3, 1), 200.0, 300.0));
+    assert!(!check_range(&Matrix::<i8>::zeros(0, 3, 1), -300.0, -200.0));
+    assert!(!check_range(
+        &Matrix::<u16>::zeros(0, 3, 1),
+        70000.0,
+        80000.0
+    ));
+    assert!(!check_range(
+        &Matrix::<i16>::zeros(0, 3, 1),
+        40000.0,
+        50000.0
+    ));
+    assert!(!check_range(&Matrix::<i32>::zeros(0, 3, 1), 10.0, 5.0));
+
+    assert!(!check_range(&row(&[i32::MAX]), 0.0, 2147483647.0));
+    assert!(check_range(&row(&[i32::MAX]), 0.0, 2147483648.0));
+    assert!(check_range(&row(&[i32::MAX]), 0.0, 2147483647.5));
+    assert!(check_range(&row(&[i32::MAX]), -f64::MAX, f64::MAX));
+    assert!(check_range(&row(&[i32::MIN]), -f64::MAX, f64::MAX));
+    assert!(check_range(&row(&[i32::MIN]), -2147483647.5, 0.0));
+}
+
+/// A bound that does not fit an `int` converts to `INT_MIN`, and `cvCeil(max) - 1` then wraps
+/// to `INT_MAX`, so such a bound stops bounding: `core_misc.py`,
+/// `check_range.integer_unrepresentable_bounds`.
+#[test]
+fn check_range_integer_bounds_outside_int_behave_like_the_reference_build() {
+    let (inf, nan) = (f64::INFINITY, f64::NAN);
+    let five = row(&[5u8]);
+    assert!(check_range(&five, nan, 10.0));
+    assert!(check_range(&five, 0.0, nan));
+    assert!(check_range(&five, nan, nan));
+    assert!(check_range(&five, inf, inf));
+    assert!(check_range(&five, -inf, -inf));
+    assert!(check_range(&five, inf, -inf));
+    assert!(check_range(&five, -inf, inf));
+    assert!(check_range(&five, 1e10, 1e11));
+    assert!(!check_range(&five, 1e10, 5.0));
+    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 1e10, 5.0));
+    assert!(check_range(&five, 0.0, -1e10));
+    let five = row(&[5i32]);
+    assert!(check_range(&five, -2147483649.0, -2147483648.0));
+    assert!(check_range(&five, 2147483648.0, 2147483649.0));
+}
+
+/// The floating depths share `[min, max)` over the sign-toggled bit patterns, so -0 sorts
+/// below +0 and a NaN bound past the infinities on its sign's side: `core_misc.py`,
+/// `check_range.f32_bounds` and `check_range.f64_bounds`, on which every row here agrees.
+#[test]
+fn check_range_float_bounds_order_like_opencv() {
+    macro_rules! rows {
+        ($t:ty) => {
+            let (nan, inf) = (f64::NAN, f64::INFINITY);
+            let one = row(&[1.0 as $t]);
+            assert!(!check_range(&row(&[0.0 as $t]), 0.5, 10.0));
+            assert!(check_range(&row(&[0.5 as $t]), 0.5, 10.0));
+            assert!(!check_range(&row(&[<$t>::INFINITY]), -f64::MAX, f64::MAX));
+            assert!(!check_range(
+                &row(&[<$t>::NEG_INFINITY]),
+                -f64::MAX,
+                f64::MAX
+            ));
+            assert!(!check_range(&row(&[<$t>::NAN]), -f64::MAX, f64::MAX));
+            assert!(check_range(&row(&[<$t>::MIN]), -f64::MAX, f64::MAX));
+            assert!(!check_range(&row(&[<$t>::MAX]), -f64::MAX, f64::MAX));
+            assert!(!check_range(&row(&[<$t>::INFINITY]), -inf, inf));
+            assert!(!check_range(&row(&[<$t>::NAN]), -inf, inf));
+            assert!(check_range(&row(&[<$t>::MIN]), -inf, inf));
+            assert!(!check_range(&one, nan, 10.0));
+            assert!(check_range(&one, 0.0, nan));
+            assert!(!check_range(&one, nan, nan));
+            assert!(check_range(&one, -nan, 10.0));
+            assert!(!check_range(&one, 0.0, -nan));
+            assert!(!check_range(&row(&[<$t>::NAN]), nan, 10.0));
+            assert!(!check_range(&one, inf, inf));
+            assert!(!check_range(&one, -inf, -inf));
+            assert!(!check_range(&one, inf, -inf));
+            assert!(!check_range(&row(&[5.0 as $t]), 10.0, 5.0));
+            assert!(check_range(&Matrix::<$t>::zeros(0, 3, 1), 10.0, 5.0));
+            assert!(check_range(&Matrix::<$t>::zeros(0, 3, 1), nan, nan));
+            assert!(!check_range(&row(&[-0.0 as $t]), 0.0, 1.0));
+            assert!(check_range(&row(&[0.0 as $t]), -0.0, 1.0));
+            assert!(!check_range(&row(&[0.0 as $t]), 0.0, -0.0));
+            assert!(check_range(&row(&[-0.0 as $t]), -1.0, 0.0));
+            assert!(!check_range(&row(&[-0.0 as $t]), -1.0, -0.0));
+            assert!(!check_range(&row(&[0.0 as $t]), -1.0, -0.0));
+            assert!(check_range(&row(&[0.0 as $t]), -1e-50, 1.0));
+            assert!(!check_range(&one, 1e300, 1e301));
+            assert!(!check_range(&one, -1e301, -1e300));
+        };
+    }
+    rows!(f32);
+    rows!(f64);
+}
+
+/// Only f32 clamps its bounds to +-FLT_MAX and rounds them to f32: `core_misc.py`,
+/// `check_range.f32_bounds` against `check_range.f64_bounds`, keys `minf_in_minf_inf`,
+/// `max_in_minf_inf`, `0_in_0_1e-50`, `1_in_0.9999999999_1.00000000001` and
+/// `1_in_1.00000000001_2`.
+#[test]
+fn check_range_only_f32_clamps_and_rounds_its_bounds() {
+    let inf = f64::INFINITY;
+    assert!(!check_range(&row(&[f32::NEG_INFINITY]), -inf, inf));
+    assert!(check_range(&row(&[f64::NEG_INFINITY]), -inf, inf));
+    assert!(!check_range(&row(&[f32::MAX]), -inf, inf));
+    assert!(check_range(&row(&[f64::MAX]), -inf, inf));
+    assert!(!check_range(&row(&[0.0f32]), 0.0, 1e-50));
+    assert!(check_range(&row(&[0.0f64]), 0.0, 1e-50));
+    assert!(!check_range(&row(&[1.0f32]), 0.9999999999, 1.00000000001));
+    assert!(check_range(&row(&[1.0f64]), 0.9999999999, 1.00000000001));
+    assert!(check_range(&row(&[1.0f32]), 1.00000000001, 2.0));
+    assert!(!check_range(&row(&[1.0f64]), 1.00000000001, 2.0));
 }
 
 #[test]
