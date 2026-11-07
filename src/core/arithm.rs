@@ -2623,7 +2623,9 @@ pub enum DecompTypes {
 ///
 /// # Returns
 ///
-/// Returns the determinant of `src`.
+/// Returns `1.0` when the matrix was inverted and `0.0` when it is singular, in which case `dst`
+/// is filled with zeros. As in OpenCV's `DECOMP_LU`, the value is a flag, not the determinant;
+/// call [`determinant`] for that.
 ///
 /// # Example
 ///
@@ -2632,7 +2634,8 @@ pub enum DecompTypes {
 ///
 /// let a = Matrix::from_vec(2, 2, 1, vec![4.0, 7.0, 2.0, 6.0]);
 /// let mut inv_a = Matrix::<f64>::new(2, 2, 1);
-/// let det = invert(&a, &mut inv_a, DecompTypes::DECOMP_LU).unwrap();
+/// let ok = invert(&a, &mut inv_a, DecompTypes::DECOMP_LU).unwrap();
+/// assert_eq!(ok, 1.0);
 /// ```
 pub fn invert<T>(src: &Matrix<T>, dst: &mut Matrix<f64>, flags: DecompTypes) -> Result<f64>
 where
@@ -2654,7 +2657,7 @@ where
     set_identity(&mut identity, Scalar::new(1.0, 0.0, 0.0, 0.0));
 
     if solve(src, &identity, dst, flags)? {
-        determinant(src)
+        Ok(1.0)
     } else {
         dst.data.fill(0.0);
         Ok(0.0)

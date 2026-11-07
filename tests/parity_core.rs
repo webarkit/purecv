@@ -3749,13 +3749,39 @@ fn gemm_determinant_solve_trace_mahalanobis_match_opencv() {
     assert!((mahalanobis(&v1, &v2, &icov).unwrap() - 4.795831523312719).abs() < 1e-12);
 }
 
-/// OpenCV `invert(DECOMP_LU)` returns 1.0 on success (a non-zero flag), not the determinant.
+/// OpenCV `invert(DECOMP_LU)` returns 1.0 on success (a non-zero flag), not the determinant
+/// (`core_invert.py` key `regular_f64/LU`: ret 1.0 although det is 10).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #219"]
 fn invert_lu_returns_one_on_success() {
     let s = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
     let mut inv = Matrix::<f64>::new(2, 2, 1);
     assert_eq!(invert(&s, &mut inv, DecompTypes::DECOMP_LU).unwrap(), 1.0);
+}
+
+/// OpenCV `invert(DECOMP_LU)` of a singular matrix returns 0.0 and zeroes the output, whatever
+/// it held before (`core_invert.py` keys `singular_f64/LU`, `singular_3x3_f64/LU`).
+#[test]
+fn invert_singular_returns_zero_and_zero_matrix() {
+    let sing = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 2.0, 4.0]);
+    let mut inv = Matrix::from_vec(2, 2, 1, vec![7.0f64; 4]);
+    assert_eq!(
+        invert(&sing, &mut inv, DecompTypes::DECOMP_LU).unwrap(),
+        0.0
+    );
+    assert_eq!(inv.data, vec![0.0; 4]);
+
+    let sing3 = Matrix::from_vec(
+        3,
+        3,
+        1,
+        vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    );
+    let mut inv3 = Matrix::from_vec(3, 3, 1, vec![7.0f64; 9]);
+    assert_eq!(
+        invert(&sing3, &mut inv3, DecompTypes::DECOMP_LU).unwrap(),
+        0.0
+    );
+    assert_eq!(inv3.data, vec![0.0; 9]);
 }
 
 #[test]

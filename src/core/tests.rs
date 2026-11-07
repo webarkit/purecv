@@ -1319,12 +1319,12 @@ mod core_tests {
 
     #[test]
     fn test_invert() {
-        // inv([4,7;2,6]) = [0.6,-0.7;-0.2,0.4], det = 10
+        // inv([4,7;2,6]) = [0.6,-0.7;-0.2,0.4]; the return value is a success flag (1.0)
         let m = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
         let mut dst = Matrix::<f64>::new(2, 2, 1);
 
-        let det = invert(&m, &mut dst, DecompTypes::DECOMP_LU).unwrap();
-        assert!((det - 10.0).abs() < 1e-9);
+        let ok = invert(&m, &mut dst, DecompTypes::DECOMP_LU).unwrap();
+        assert_eq!(ok, 1.0);
         assert!((dst.data[0] - 0.6).abs() < 1e-9);
         assert!((dst.data[1] - (-0.7)).abs() < 1e-9);
         assert!((dst.data[2] - (-0.2)).abs() < 1e-9);
