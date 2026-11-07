@@ -1151,7 +1151,7 @@ where
 
 /// Calculates the mean of matrix elements.
 ///
-/// Returns a Scalar with the mean of each channel.
+/// Returns a Scalar with the mean of each channel, zero on an empty matrix as in OpenCV.
 ///
 /// # Errors
 /// Returns `PureCvError::InvalidInput` when `src` has more than four channels, where OpenCV's
@@ -1168,6 +1168,9 @@ where
             "mean: at most 4 channels are supported, got {}",
             src.channels
         );
+    }
+    if src.rows * src.cols == 0 {
+        return Ok(Scalar::new(0.0, 0.0, 0.0, 0.0));
     }
     Ok(mean_first_four(src))
 }
@@ -2577,7 +2580,7 @@ where
 /// * `src` - Input square single-channel matrix.
 ///
 /// # Errors
-/// Returns `PureCvError::InvalidInput` for a non-square or multi-channel matrix, where
+/// Returns `PureCvError::InvalidInput` for an empty, non-square or multi-channel matrix, where
 /// [`cv::determinant`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/lapack.cpp#L715-L781)
 /// asserts.
 ///
@@ -2594,11 +2597,11 @@ pub fn determinant<T>(src: &Matrix<T>) -> Result<f64>
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
 {
-    if src.rows != src.cols || src.channels != 1 {
+    if src.rows == 0 || src.rows != src.cols || src.channels != 1 {
         cv_bail!(
             tags::CORE,
             InvalidInput,
-            "determinant: expected a square single-channel matrix, got {}×{}×{}",
+            "determinant: expected a non-empty square single-channel matrix, got {}×{}×{}",
             src.rows,
             src.cols,
             src.channels
@@ -2607,15 +2610,12 @@ where
     Ok(determinant_square(src))
 }
 
-/// The determinant of a square single-channel matrix (checked by [`determinant`]).
+/// The determinant of a non-empty square single-channel matrix (checked by [`determinant`]).
 fn determinant_square<T>(src: &Matrix<T>) -> f64
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + 'static,
 {
     let n = src.rows;
-    if n == 0 {
-        return 0.0;
-    }
 
     match n {
         1 => src.data[0].to_f64().unwrap_or(0.0),

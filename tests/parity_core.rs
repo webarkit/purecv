@@ -2838,6 +2838,15 @@ fn sum_mean_reject_more_than_four_channels() {
     assert_eq!(mean(&four).unwrap().v, [1.0; 4]);
 }
 
+/// `cv::mean` of an empty matrix is zero, not NaN: `core_stats.py` keys `mean_empty_0x3_u8`,
+/// `mean_empty_0x0_f32` and `mean_empty_3x0_u8`.
+#[test]
+fn mean_of_an_empty_matrix_is_zero() {
+    assert_eq!(mean(&Matrix::<u8>::zeros(0, 3, 3)).unwrap().v, [0.0; 4]);
+    assert_eq!(mean(&Matrix::<f32>::zeros(0, 0, 1)).unwrap().v, [0.0; 4]);
+    assert_eq!(mean(&Matrix::<u8>::zeros(3, 0, 1)).unwrap().v, [0.0; 4]);
+}
+
 /// `cv::determinant` asserts a square single-channel matrix: `core_misc.py` key
 /// `determinant_non_square` raises `mat.rows == mat.cols && ...`. The 2x2 f32 and 4x4 values
 /// stay as in `gemm_determinant_solve_trace_mahalanobis_match_opencv`. (OpenCV also rejects
@@ -2848,6 +2857,8 @@ fn determinant_rejects_non_square_and_multi_channel() {
     assert!(determinant(&non_square).is_err());
     let two_channel = Matrix::from_vec(2, 2, 2, vec![1.0f32; 8]);
     assert!(determinant(&two_channel).is_err());
+    // `core_misc.py` key `determinant_empty` raises `!mat.empty()`.
+    assert!(determinant(&Matrix::<f64>::zeros(0, 0, 1)).is_err());
 }
 
 // ---------------------------------------------------------------------------------------

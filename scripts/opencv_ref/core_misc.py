@@ -437,6 +437,7 @@ def main() -> None:
         "determinant_singular": cv2.determinant(sing),
         "determinant_non_square": attempt(lambda: cv2.determinant(A)),
         "determinant_u8": attempt(lambda: cv2.determinant(S.astype(np.uint8))),
+        "determinant_empty": attempt(lambda: cv2.determinant(np.zeros((0, 0), dtype=np.float64))),
         "solve_ok": bool(ok),
         "solve_x": tolist(x),
         "solve_singular_ok": bool(ok_s),

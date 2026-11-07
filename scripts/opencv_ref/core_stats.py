@@ -118,6 +118,9 @@ def main() -> None:
         "f32_mean_std_masked": [tolist(mean_m), tolist(std_m)],
         "five_channel_mean": attempt(lambda: cv2.mean(five)),
         "five_channel_sum": attempt(lambda: cv2.sumElems(five)),
+        "mean_empty_0x3_u8": tolist(cv2.mean(np.zeros((0, 3), dtype=np.uint8))),
+        "mean_empty_0x0_f32": tolist(cv2.mean(np.zeros((0, 0), dtype=np.float32))),
+        "mean_empty_3x0_u8": tolist(cv2.mean(np.zeros((3, 0), dtype=np.uint8))),
     }
 
     # --- minMaxLoc
