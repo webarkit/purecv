@@ -80,7 +80,7 @@ fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -
     src.par_iter().map(|&x| f(x)).collect()
 }
 
-/// `src.map(f).collect()`, on the Rayon pool with the `parallel` feature.
+/// `src.map(f).collect()`, sequentially: the fallback without the `parallel` feature.
 #[cfg(not(feature = "parallel"))]
 #[inline]
 fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -> Vec<U> {

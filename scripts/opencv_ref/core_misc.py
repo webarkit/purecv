@@ -203,6 +203,19 @@ def main() -> None:
         "u8_diag_3to3": tolist(cv2.transform(s3[:, :4], diag)),
     }
 
+    # --- setIdentity beyond four channels: `scalarToRawData` asserts `cn <= 4` for a non-zero scalar
+    results["set_identity_5_channels"] = {
+        "nonzero_scalar": attempt(
+            lambda: tolist(cv2.setIdentity(np.zeros((2, 2, 5), dtype=np.uint8), (1, 2, 3, 4)))
+        ),
+        "zero_scalar": attempt(
+            lambda: tolist(cv2.setIdentity(np.full((2, 2, 5), 9, dtype=np.uint8), (0, 0, 0, 0)))
+        ),
+        "four_channels": attempt(
+            lambda: tolist(cv2.setIdentity(np.zeros((2, 2, 4), dtype=np.uint8), (1, 2, 3, 4)))
+        ),
+    }
+
     # --- gemm / invert / determinant / solve / trace / Mahalanobis
     A = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
     B = np.array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]], dtype=np.float32)

@@ -428,17 +428,19 @@ fn add_sub_mul_bounds_match_opencv() {
         &[126, 0, -127, 0, -128, 127, 127, -127, -2, 2, 62, -67, 125, -128],
         &[127, 127, 127, 127, -128, -128, 0, 0, 3, 3, 127, -128, 127, -128],
     );
-    // The multiply value of the pair 65535 * 65535 (index 1) is the only one that is not the
-    // measured one: this row is narrow, so cv2 gives 0 there and purecv keeps 65535, see
-    // `multiply_u16_overflow_saturates_like_the_opencv_vector_lanes`.
     check!(
         u16,
-        &[65535, 65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
-        &[1, 65535, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
-        &[65535, 65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
-        &[65534, 0, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
-        &[65535, 65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
+        &[65535, 0, 0, 0, 65535, 0, 0, 1, 3, 32768, 100, 65535, 0],
+        &[1, 1, 0, 65535, 0, 0, 65535, 3, 1, 2, 2, 2, 2],
+        &[65535, 1, 0, 65535, 65535, 0, 65535, 4, 4, 32770, 102, 65535, 2],
+        &[65534, 0, 0, 0, 65535, 0, 0, 0, 2, 32766, 98, 65533, 0],
+        &[65535, 0, 0, 0, 0, 0, 0, 3, 3, 65535, 200, 65535, 0],
     );
+    // The pair (65535, 65535), index 1 of the measured `u16` arrays, for add and subtract only.
+    // Its multiply is in `multiply_u16_overflow_saturates_like_the_opencv_vector_lanes`.
+    let max = row(&[65535u16]);
+    assert_eq!(add(&max, &max).unwrap().data, vec![65535u16]);
+    assert_eq!(subtract(&max, &max).unwrap().data, vec![0u16]);
     check!(
         i16,
         &[32767, 32767, -32768, -32768, -32768, 32767, 0, 0, 1, 3, 16384, -16385, 32767, -32768],
