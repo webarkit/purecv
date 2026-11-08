@@ -1235,10 +1235,17 @@ fn check_norm_type<T: DataType>(func: &str, norm_type: NormTypes, channels: usiz
             T::depth(),
             channels
         ),
-        _ => cv_bail!(
+        NormTypes::Relative => cv_bail!(
             tags::CORE,
             InvalidInput,
             "{}: {:?} is not a norm type (use norm_relative for NORM_RELATIVE)",
+            func,
+            norm_type
+        ),
+        _ => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} is not a norm type",
             func,
             norm_type
         ),
@@ -1425,10 +1432,13 @@ fn hamming_norm<T: ToPrimitive>(
 /// purecv does the same. A mask without elements (0×0) is no mask, as in OpenCV. An empty
 /// source has norm 0.
 ///
-/// On `i32`, OpenCV takes absolute values in `int`, which wraps on x86: a source holding
-/// `i32::MIN` gives `Inf` 2147483647 in OpenCV and 2147483648 here, and its `L1` can come
-/// out negative (−1 for `[i32::MIN, i32::MAX, 0]`). purecv computes these exactly and does
-/// not port the wrap.
+/// On `i32`, OpenCV takes absolute values in `int`, which wraps on x86: `abs(i32::MIN)`
+/// stays `i32::MIN`, so that element never becomes the `Inf` maximum and its `L1` can come
+/// out negative. `[i32::MIN]` gives `Inf` 0 and `L1` −2147483648 in OpenCV, and
+/// `[i32::MIN, 5, 0]` gives `Inf` 5 and `L1` −2147483643; here they are 2147483648 and
+/// 2147483648, and 2147483648 and 2147483653. `[i32::MIN, i32::MAX, 0]` gives `Inf`
+/// 2147483647 and `L1` −1 in OpenCV, 2147483648 and 4294967295 here. purecv computes
+/// these exactly and does not port the wrap.
 ///
 /// # Errors
 /// `InvalidInput` for `Hamming`/`Hamming2` on anything but one `u8` channel and for
@@ -4109,13 +4119,19 @@ where
 /// attempt of two iterations. Random and kmeans++ centers draw from the
 /// calling thread's generator in OpenCV's order, so after
 /// [`set_rng_seed`](crate::core::set_rng_seed) the result is the one OpenCV
-/// gives after `cv::setRNGSeed` with the same seed. Without the `std` feature
-/// each call starts from the default state of `cv::RNG`.
+/// gives after `cv::setRNGSeed` with the same seed. That guarantee holds for
+/// [`RngGenerator::CvRng`](crate::core::RngGenerator), the default; under
+/// `Xoshiro256StarStar` the draws come from a `cv::RNG` seeded by one xoshiro
+/// draw, so the result is reproducible but is not OpenCV's. Without the `std`
+/// feature each call starts from the default state of `cv::RNG`.
 ///
 /// # Errors
 /// `InvalidInput` if `k` is outside `[1, rows]`, or with
 /// `KMEANS_USE_INITIAL_LABELS` if `best_labels` does not hold one label in
-/// `[0, k)` per sample; `InvalidDimensions` if `data` is malformed.
+/// `[0, k)` per sample; `InvalidDimensions` if `data` is malformed;
+/// `InternalError` if an empty cluster cannot be repaired or kmeans++ finds no
+/// candidate center (OpenCV's "can't update cluster center", from huge or NaN
+/// values).
 pub fn kmeans(
     data: &Matrix<f32>,
     k: i32,

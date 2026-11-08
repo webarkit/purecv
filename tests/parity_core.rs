@@ -2825,10 +2825,19 @@ fn norm_diff_matches_opencv() {
 
 /// purecv's own behaviour, not OpenCV's: on `i32` OpenCV subtracts and takes `abs` in `int`,
 /// which wraps on x86 (`core_stats.py`, `norm_types.diff.i32_int_min_single_inf` 2147483647,
-/// `i32_int_min_single_l1` −1, `i32_extremes_inf` 1, `i32_extremes_l1` 2). purecv computes
-/// exactly; the wrap is not ported.
+/// `i32_int_min_single_l1` −1, `i32_extremes_inf` 1, `i32_extremes_l1` 2, and for a source
+/// whose only wrapped element is `i32::MIN`: `i32_only_int_min_inf` 0, `i32_only_int_min_l1`
+/// −2147483648, `i32_int_min_5_0_inf` 5, `i32_int_min_5_0_l1` −2147483643). `abs(i32::MIN)`
+/// stays negative in `int`, so it never becomes the `Inf` maximum. purecv computes exactly;
+/// the wrap is not ported.
 #[test]
 fn norm_i32_is_exact_where_opencv_wraps() {
+    let only_min = row(&[i32::MIN]);
+    assert_eq!(norm(&only_min, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&only_min, NormTypes::L1, None).unwrap(), 2147483648.0);
+    let min_5_0 = row(&[i32::MIN, 5, 0]);
+    assert_eq!(norm(&min_5_0, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&min_5_0, NormTypes::L1, None).unwrap(), 2147483653.0);
     let a = row(&[i32::MIN, i32::MAX, 0]);
     let b = row(&[i32::MAX, i32::MIN, 0]);
     assert_eq!(norm(&a, NormTypes::Inf, None).unwrap(), 2147483648.0);
@@ -5222,11 +5231,12 @@ fn kmeans_converges_to_opencv_partition() {
 }
 
 /// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` and reaches
-/// compactness 9.5 on this fixture with 1, 3 and 5 attempts. This test sets no seed: a test
-/// runs on its own thread, whose generator starts at the default state, like a fresh OpenCV
-/// thread (`core_kmeans.py`, `default_state_random_attempts3`).
+/// compactness 9.5 on this fixture with 1, 3 and 5 attempts. The seed 0 matches the script's
+/// `cv2.setRNGSeed(0)` (`core_kmeans.py`, `default_state_random_attempts3`), the state of a
+/// fresh OpenCV thread.
 #[test]
 fn kmeans_random_centers_three_attempts_find_the_global_partition() {
+    set_rng_seed(0);
     let data = kmeans_data();
     let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
     let mut labels = Matrix::<i32>::new(0, 0, 0);
@@ -5335,6 +5345,39 @@ fn kmeans_seeded_matches_opencv() {
         }
     }
 
+    // Seeds where the first attempt ends in a worse partition and the third one wins, so the
+    // draws of later attempts and the keep-the-best rule are pinned
+    // (`seed{7,19}_random_attempts{1,3}`).
+    for (seed, one, one_labels, one_centers, three_labels, three_centers) in [
+        (
+            7,
+            207.2083332836628,
+            vec![1, 1, 1, 1, 2, 2, 2, 0, 1, 1, 1, 1],
+            vec![11.0f32, 12.0, 0.625, 5.5, 10.333334, 10.333334],
+            vec![1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 2, 2],
+            vec![10.5f32, 10.75, 0.5, 0.5, 0.75, 10.5],
+        ),
+        (
+            19,
+            207.375,
+            vec![0, 0, 0, 0, 2, 2, 1, 1, 0, 0, 0, 0],
+            vec![0.625f32, 5.5, 10.5, 11.5, 10.5, 10.0],
+            vec![2, 2, 2, 2, 0, 0, 0, 0, 1, 1, 1, 1],
+            vec![10.5f32, 10.75, 0.75, 10.5, 0.5, 0.5],
+        ),
+    ] {
+        set_rng_seed(seed);
+        let (c, l, ctr) = kmeans_run(&data, 3, None, criteria, 1, KMEANS_RANDOM_CENTERS);
+        assert_eq!(c, one, "seed {seed}, attempts 1");
+        assert_eq!(l, one_labels, "seed {seed}, attempts 1");
+        assert_eq!(ctr, one_centers, "seed {seed}, attempts 1");
+        set_rng_seed(seed);
+        let (c, l, ctr) = kmeans_run(&data, 3, None, criteria, 3, KMEANS_RANDOM_CENTERS);
+        assert_eq!(c, 9.5, "seed {seed}, attempts 3");
+        assert_eq!(l, three_labels, "seed {seed}, attempts 3");
+        assert_eq!(ctr, three_centers, "seed {seed}, attempts 3");
+    }
+
     // The chain with K = 3 does not reach a unique partition, so the draws decide it.
     let chain = kmeans_chain_data();
     set_rng_seed(42);
@@ -5425,7 +5468,10 @@ fn kmeans_epsilon_compares_squared_shift() {
 /// With `KMEANS_USE_INITIAL_LABELS`, OpenCV asserts that every label is in `[0, K)`
 /// (`core_kmeans.py`, `label_out_of_range_with_initial_labels`,
 /// `label_minus_one_with_initial_labels`); purecv clamped them to 0. A label count other than
-/// N fails OpenCV's assertion on the labels' shape.
+/// N fails OpenCV's assertion on the labels' shape: the `vec![0; 11]` case follows OpenCV's
+/// `CV_Assert` that `best_labels.cols*best_labels.rows == N`
+/// (https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/kmeans.cpp#L252-L255);
+/// cv2 could not be made to measure it, so this case is not a script key.
 #[test]
 fn kmeans_out_of_range_initial_labels_is_err() {
     let data = kmeans_data();

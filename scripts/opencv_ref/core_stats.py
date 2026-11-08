@@ -189,6 +189,11 @@ def norm_types() -> dict:
         **{f"i32_extremes_{nn}": attempt(lambda: cv2.norm(i32a, i32b, nt)) for nn, nt in list(NORM_NAMES.items())[:4]},
         "i32_int_min_single_inf": attempt(lambda: cv2.norm(i32a, cv2.NORM_INF)),
         "i32_int_min_single_l1": attempt(lambda: cv2.norm(i32a, cv2.NORM_L1)),
+        # `abs(INT_MIN)` stays negative in `int`, so INT_MIN never becomes the Inf maximum
+        "i32_only_int_min_inf": attempt(lambda: cv2.norm(np.array([[-(2**31)]], np.int32), cv2.NORM_INF)),
+        "i32_only_int_min_l1": attempt(lambda: cv2.norm(np.array([[-(2**31)]], np.int32), cv2.NORM_L1)),
+        "i32_int_min_5_0_inf": attempt(lambda: cv2.norm(np.array([[-(2**31), 5, 0]], np.int32), cv2.NORM_INF)),
+        "i32_int_min_5_0_l1": attempt(lambda: cv2.norm(np.array([[-(2**31), 5, 0]], np.int32), cv2.NORM_L1)),
     }
 
     # Empty input (0x0 and 0x3).

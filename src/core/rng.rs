@@ -764,7 +764,10 @@ pub fn rng_generator() -> RngGenerator {
 ///
 /// With [`RngGenerator::Xoshiro256StarStar`] selected, `f` gets a [`Rng`] seeded from
 /// the next xoshiro draw, so a seeded thread still gives reproducible results. The
-/// thread-local state is not borrowed while `f` runs.
+/// thread-local state is not borrowed while `f` runs: it is copied out before `f` and
+/// written back after it, so a [`randu`] or [`set_rng_seed`] call inside `f` changes the
+/// thread state and is then overwritten by the write-back. Under Xoshiro one draw is
+/// consumed and nothing is written back.
 #[cfg(feature = "std")]
 pub(crate) fn with_the_rng<R>(f: impl FnOnce(&mut Rng) -> R) -> R {
     let mut rng = THREAD_RNG.with(|t| match &mut *t.borrow_mut() {

@@ -107,6 +107,13 @@ def main() -> None:
         results[f"seed42_chain_k3_{name}_attempts1"] = seeded(
             42, CHAIN_DATA, 3, None, EPS_COUNT, 1, flag_names[name]
         )
+    # Seeds where a later attempt wins: with RANDOM_CENTERS the first attempt does not reach
+    # the global partition (compactness 9.5), the third one does.
+    for seed in (7, 19):
+        for attempts in (1, 3):
+            results[f"seed{seed}_random_attempts{attempts}"] = seeded(
+                seed, DATA, 3, None, EPS_COUNT, attempts, cv2.KMEANS_RANDOM_CENTERS
+            )
     # The default state of theRNG() (a fresh thread, RNG(0) = 0xffffffff), as a Rust test
     # thread that sets no seed sees it.
     for attempts in (1, 3, 5):
