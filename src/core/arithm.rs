@@ -44,16 +44,20 @@ use num_traits::Float;
 use crate::core::constants::CV_2PI;
 use crate::core::error::Result;
 use crate::core::logging::tags;
+use crate::core::matrix::Depth;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
 use crate::cv_log_warning;
 use crate::{cv_bail, cv_err};
 use core::ops::{BitAnd, BitOr, BitXor, Not, Sub};
-use num_traits::{Bounded, FromPrimitive, Num, SaturatingAdd, SaturatingSub, ToPrimitive};
+use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::core::saturate::{
+    SaturateCast, SaturatingOps, ScalarOps, TransformOps, TransformWork, WeightedOps,
+};
 use crate::core::simd::SimdElement;
 
 /// Internal macro to handle feature-gated loop execution for binary operations.
@@ -183,9 +187,22 @@ macro_rules! binary_op {
 }
 
 /// Internal macro to handle feature-gated loop execution for unary operations.
+///
+/// A `Scalar` has four values, so a source with more than four channels returns an error
+/// (`IncompatibleChannels`) from the calling function: OpenCV 4.10.0 gives error -209 for
+/// every scalar function on 5 channels (`core_misc.py`, `scalar_5_channels`), and its one-value
+/// form that succeeds for some of them has no purecv equivalent.
 macro_rules! binary_op_scalar {
     ($dst:expr, $src:expr, $scalar:expr, $t_dst:ty, $t_src:ty, |$d:ident, $s:ident, $sc:ident| $body:expr) => {
         let channels = $src.channels as usize;
+        if channels > 4 {
+            cv_bail!(
+                tags::CORE,
+                IncompatibleChannels,
+                "a scalar operand has four values, the source has {} channels",
+                channels
+            );
+        }
         let scalar_data = $scalar.v;
 
         #[cfg(feature = "parallel")]
@@ -325,71 +342,66 @@ macro_rules! unary_op {
 }
 
 /// Adds a scalar value to a matrix: dst = src1 + scalar
+///
+/// Channel `c` uses `scalar.v[c]`. For the integer depths the scalar is first
+/// converted to `i32` with `saturate_cast` (round half to even, so `10.7` adds
+/// 11 and `10.5` adds 10) and the sum is saturated to the depth of `src1`; see
+/// [`ScalarOps`] for the working type of every depth.
+///
+/// A `Scalar` has four values, so a source with more than four channels returns an error,
+/// like OpenCV (error -209). The same holds for every `*_scalar` function below.
 pub fn add_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType
-        + SaturatingAdd
-        + FromPrimitive
-        + ToPrimitive
-        + Send
-        + Sync
-        + 'static
-        + Default
-        + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = s.saturating_add(&T::from_f64(sc).unwrap_or_default());
+        *d = s.add_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Subtracts a scalar value from a matrix: dst = src1 - scalar
+///
+/// The scalar is converted like in [`add_scalar`].
 pub fn subtract_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType
-        + SaturatingSub
-        + FromPrimitive
-        + ToPrimitive
-        + Send
-        + Sync
-        + 'static
-        + Default
-        + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = s.saturating_sub(&T::from_f64(sc).unwrap_or_default());
+        *d = s.sub_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Multiplies a matrix by a scalar value: dst = src1 * scalar
+///
+/// The product is computed in `f64` and converted once to the depth of `src1`
+/// with `saturate_cast` (`9 * 0.3` gives 3 for `u8`).
 pub fn multiply_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType + FromPrimitive + ToPrimitive + Send + Sync + 'static + Default + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        let val = s.to_f64().unwrap_or_default() * sc;
-        *d = T::from_f64(val).unwrap_or_default();
+        *d = s.mul_scalar_op(sc);
     });
     Ok(dst)
 }
 
 /// Divides a matrix by a scalar value: dst = src1 / scalar
+///
+/// The quotient is computed in `f64` and converted once to the depth of `src1`
+/// with `saturate_cast` (`128 / 3` gives 43 for `u8`). Integer matrices
+/// divided by `0` give `0`; `f32` and `f64` follow IEEE (`inf`, `NaN`).
 pub fn divide_scalar<T>(src1: &Matrix<T>, scalar: Scalar<f64>) -> Result<Matrix<T>>
 where
-    T: DataType + FromPrimitive + ToPrimitive + Send + Sync + 'static + Default + Copy,
+    T: DataType + ScalarOps + Send + Sync + 'static + Default + Copy,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        if sc != 0.0 {
-            let val = s.to_f64().unwrap_or_default() / sc;
-            *d = T::from_f64(val).unwrap_or_default();
-        } else {
-            *d = T::default();
-        }
+        *d = s.div_scalar_op(sc);
     });
     Ok(dst)
 }
@@ -399,7 +411,16 @@ where
 /// dst = src1 + src2
 pub fn add<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -417,7 +438,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 + s2, simd: simd_add);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_add(s2), simd: simd_add);
 
     Ok(dst)
 }
@@ -427,7 +448,16 @@ where
 /// dst = src1 - src2
 pub fn subtract<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -445,7 +475,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 - s2, simd: simd_sub);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_sub(s2), simd: simd_sub);
 
     Ok(dst)
 }
@@ -455,7 +485,16 @@ where
 /// dst = src1 * src2
 pub fn multiply<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -473,7 +512,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1 * s2, simd: simd_mul);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_mul(s2), simd: simd_mul);
 
     Ok(dst)
 }
@@ -481,9 +520,34 @@ where
 /// Calculates the per-element quotient of two matrices.
 ///
 /// dst = src1 / src2
+///
+/// Follows `cv::divide(src1, src2, dst)` with `scale = 1`
+/// ([`op_div_scale`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/arithm.simd.hpp#L1573-L1601)):
+///
+/// - `u8`, `i8`, `u16`, `i16`, `i32`: the quotient is computed in `f32`,
+///   rounded half to even and clamped (`7 / 2` is `4`, `250 / 7` is `36`),
+///   and a zero divisor gives `0`. `i32` operands above 2²⁴ lose low bits
+///   in that `f32`, as in OpenCV.
+/// - `f32`, `f64`: IEEE division, `1 / 0` is `inf` and `0 / 0` is NaN.
+/// - `u32`, `u64`, `i64` have no OpenCV depth: the quotient is exact, rounded
+///   half to even and clamped, and `x / 0` is `0`.
+///
+/// See [`SaturatingOps`] for the one value OpenCV produces through the x86
+/// conversion (an `i32` quotient of exactly 2³¹), which clamps here.
+///
+/// The `scale` argument and `divide(scale, src2)` of OpenCV are not available.
 pub fn divide<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Bounded + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Bounded
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if src1.rows != src2.rows || src1.cols != src2.cols || src1.channels != src2.channels {
         cv_bail!(
@@ -501,13 +565,7 @@ where
 
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
-    binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        if !s2.is_zero() {
-            *d = s1 / s2;
-        } else {
-            *d = T::zero();
-        }
-    }, simd: simd_div);
+    binary_op!(dst, src1, src2, T, T, |d, s1, s2| *d = s1.sat_div(s2), simd: simd_div);
 
     Ok(dst)
 }
@@ -699,7 +757,7 @@ where
 /// Calculates the per-element absolute difference between two matrices.
 pub fn abs_diff<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + 'static,
+    T: Num + Copy + Send + Sync + PartialOrd + Default + SimdElement + SaturatingOps + 'static,
 {
     if !src1.dims_match(src2) {
         cv_bail!(
@@ -718,7 +776,7 @@ where
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        *d = if s1 > s2 { s1 - s2 } else { s2 - s1 };
+        *d = s1.sat_absdiff(s2);
     }, simd: simd_absdiff);
 
     Ok(dst)
@@ -751,11 +809,11 @@ where
 /// Calculates the per-element absolute difference between a matrix and a scalar.
 pub fn abs_diff_scalar<T>(src1: &Matrix<T>, scalar: Scalar<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Default + 'static,
+    T: Num + Copy + Send + Sync + PartialOrd + Default + SaturatingOps + 'static,
 {
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
     binary_op_scalar!(&mut dst, src1, scalar, T, T, |d, s, sc| {
-        *d = if s > sc { s - sc } else { sc - s };
+        *d = s.sat_absdiff(sc);
     });
     Ok(dst)
 }
@@ -977,7 +1035,16 @@ where
 /// dst = |src1 - src2|
 pub fn absdiff<T>(src1: &Matrix<T>, src2: &Matrix<T>) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + PartialOrd + Sub<Output = T> + Default + SimdElement + 'static,
+    T: Num
+        + Copy
+        + Send
+        + Sync
+        + PartialOrd
+        + Sub<Output = T>
+        + Default
+        + SimdElement
+        + SaturatingOps
+        + 'static,
 {
     if !src1.dims_match(src2) {
         cv_bail!(
@@ -996,7 +1063,7 @@ where
     let mut dst = Matrix::<T>::new(src1.rows, src1.cols, src1.channels);
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        *d = if s1 > s2 { s1 - s2 } else { s2 - s1 };
+        *d = s1.sat_absdiff(s2);
     }, simd: simd_absdiff);
 
     Ok(dst)
@@ -1256,280 +1323,422 @@ where
     }
 }
 
-/// Normalizes the norm or value range of an array.
+/// Normalizes the norm or value range of an array, keeping the element type.
 ///
-/// For MINMAX normalization, alpha is the lower bound and beta is the upper bound.
-/// For other norms, alpha is the norm value to reach.
+/// For [`NormTypes::MinMax`], `alpha` and `beta` are the bounds of the output range;
+/// they are sorted first, so `(255, 0)` equals `(0, 255)`. For `L1`, `L2` and `Inf`,
+/// `alpha` is the norm the output reaches and `beta` is ignored. A constant
+/// source (range or norm not above `f64::EPSILON`) maps to `min(alpha, beta)` for `MinMax`
+/// and to 0 for the norms.
+///
+/// `dtype` follows OpenCV's `rtype`: `-1` or a type code with the depth of `T` is accepted
+/// (`CV_MAT_DEPTH`, so `CV_32FC3` is fine for `f32`), and any other depth returns an error
+/// because `dst` is a `Matrix<T>`. Use [`normalize_to`] to write a different element type.
+///
+/// With a `mask`, only the selected pixels of `dst` are written and the others are kept;
+/// without a mask `dst` is replaced. `MinMax` measures the range over the selected pixels.
+/// `L1`, `L2` and `Inf` measure the norm with [`norm`], which pairs the mask with elements
+/// rather than pixels, so on a multi-channel source the norm is not taken over the selected
+/// pixels (#214).
+///
+/// This is [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414);
+/// the output is `saturate_cast<T>(x * scale + shift)` through
+/// [`Matrix::convert_to_scaled`], so integer outputs round to nearest, ties to even.
 pub fn normalize<T>(
     src: &Matrix<T>,
     dst: &mut Matrix<T>,
     alpha: f64,
     beta: f64,
     norm_type: NormTypes,
-    _dtype: i32,
+    dtype: i32,
     mask: Option<&Matrix<u8>>,
 ) -> Result<()>
 where
-    T: DataType + Send + Sync + FromPrimitive + Default + Copy + ToPrimitive + SimdElement,
+    T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + SaturateCast + 'static,
 {
-    // If dtype is negative, we keep source type. Currently we don't support converting here yet,
-    // so we just ignore it if it equals T's depth.
+    // `CV_MAT_DEPTH(rtype)`: the channel bits of a full type code do not count.
+    if dtype >= 0 && (dtype & 7) != T::depth() as i32 {
+        cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "normalize: dtype {} does not match the destination depth {}, use normalize_to to change the element type",
+            dtype,
+            T::depth() as i32
+        );
+    }
+    normalize_to(src, dst, alpha, beta, norm_type, mask)
+}
 
-    match norm_type {
+/// Normalizes the norm or value range of an array into a destination of another element
+/// type, like `cv::normalize` with `rtype` set to the depth of `U`.
+///
+/// Scale and shift are computed in `f64` as in
+/// [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414)
+/// (for an `f32` destination `scale` and `shift` are rounded to `f32` first, which is why the
+/// 0..1 range ends at 1.0000001), then applied with [`Matrix::convert_to_scaled`]: the
+/// output is `saturate_cast<U>(x * scale + shift)`. See [`normalize`] for the parameters.
+///
+/// Without a mask `dst` is replaced by the result. With a mask `dst` must already have
+/// the shape of `src` and only the selected elements are written. A destination
+/// type OpenCV has no depth for (`u32`, `u64`, `i64`) is handled like the others: values
+/// saturate to its range and nothing panics.
+///
+/// # Example
+/// ```
+/// use purecv::core::{normalize_to, Matrix, NormTypes};
+///
+/// let src = Matrix::from_vec(1, 4, 1, vec![10u8, 20, 30, 250]);
+/// let mut dst = Matrix::<f32>::new(1, 4, 1);
+/// normalize_to(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, None).unwrap();
+/// assert_eq!(dst.data, vec![0.0, 10.625, 21.25, 255.0]);
+/// ```
+pub fn normalize_to<T, U>(
+    src: &Matrix<T>,
+    dst: &mut Matrix<U>,
+    alpha: f64,
+    beta: f64,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<()>
+where
+    T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + 'static,
+    U: SaturateCast + Default + Clone + Send,
+{
+    if let Some(m) = mask {
+        if m.rows != src.rows || m.cols != src.cols || m.channels != 1 {
+            cv_bail!(
+                tags::CORE,
+                InvalidDimensions,
+                "normalize: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
+                src.rows,
+                src.cols,
+                m.rows,
+                m.cols,
+                m.channels
+            );
+        }
+        if dst.rows != src.rows || dst.cols != src.cols || dst.channels != src.channels {
+            cv_bail!(
+                tags::CORE,
+                InvalidDimensions,
+                "normalize: a masked destination must have the shape of src ({}×{}×{}), got {}×{}×{}",
+                src.rows,
+                src.cols,
+                src.channels,
+                dst.rows,
+                dst.cols,
+                dst.channels
+            );
+        }
+    }
+    let channels = src.channels.max(1);
+    let selected = |i: usize| mask.is_none_or(|m| m.data[i / channels] != 0);
+
+    let (scale, shift) = match norm_type {
         NormTypes::MinMax => {
-            let mut min_val = f64::MAX;
-            let mut max_val = f64::MIN;
-
-            if let Some(m) = mask {
-                for (&val, &mask_val) in src.data.iter().zip(m.data.iter()) {
-                    if mask_val != 0 {
-                        let v = val.to_f64().unwrap_or(0.0);
-                        if v < min_val {
-                            min_val = v;
-                        }
-                        if v > max_val {
-                            max_val = v;
-                        }
-                    }
+            let (mut smin, mut smax) = (f64::INFINITY, f64::NEG_INFINITY);
+            // NaN fails both comparisons, so it never becomes a bound.
+            let mut widen = |x: T| {
+                let v = x.to_f64().unwrap_or(0.0);
+                if v < smin {
+                    smin = v;
                 }
-            } else {
-                for &val in src.data.iter() {
-                    let v = val.to_f64().unwrap_or(0.0);
-                    if v < min_val {
-                        min_val = v;
-                    }
-                    if v > max_val {
-                        max_val = v;
-                    }
+                if v > smax {
+                    smax = v;
                 }
-            }
-
-            let scale = if max_val != min_val {
-                (beta - alpha) / (max_val - min_val)
-            } else {
-                0.0
             };
-
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .zip(m.data.par_iter())
-                        .for_each(|((d, &s), &mask_val)| {
-                            if mask_val != 0 {
-                                let v = s.to_f64().unwrap_or(0.0);
-                                let res = (v - min_val) * scale + alpha;
-                                *d = T::from_f64(res).unwrap_or(T::default());
-                            }
-                        });
-                } else {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .for_each(|(d, &s)| {
-                            let v = s.to_f64().unwrap_or(0.0);
-                            let res = (v - min_val) * scale + alpha;
-                            *d = T::from_f64(res).unwrap_or(T::default());
-                        });
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    for (i, &mask_val) in m.data.iter().enumerate() {
-                        if mask_val != 0 {
-                            let v = src.data[i].to_f64().unwrap_or(0.0);
-                            let res = (v - min_val) * scale + alpha;
-                            dst.data[i] = T::from_f64(res).unwrap_or(T::default());
-                        }
-                    }
-                } else {
-                    for (d, s) in dst.data.iter_mut().zip(src.data.iter()) {
-                        let v = s.to_f64().unwrap_or(0.0);
-                        let res = (v - min_val) * scale + alpha;
-                        *d = T::from_f64(res).unwrap_or(T::default());
+            // The unmasked loop is the hot path: no per-element mask test.
+            if mask.is_none() {
+                src.data.iter().for_each(|&x| widen(x));
+            } else {
+                for (i, &x) in src.data.iter().enumerate() {
+                    if selected(i) {
+                        widen(x);
                     }
                 }
             }
+            if smin > smax {
+                // nothing selected: OpenCV reports 0 for both
+                (smin, smax) = (0.0, 0.0);
+            }
+            let (dmin, dmax) = (alpha.min(beta), alpha.max(beta));
+            let mut scale = (dmax - dmin)
+                * if smax - smin > f64::EPSILON {
+                    1.0 / (smax - smin)
+                } else {
+                    0.0
+                };
+            let shift = if U::IS_FLOAT && core::mem::size_of::<U>() == 4 {
+                scale = scale as f32 as f64;
+                (dmin as f32 - (smin * scale) as f32) as f64
+            } else {
+                dmin - smin * scale
+            };
+            (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
+            // `norm` pairs the mask with elements on a multi-channel source, see #214.
             let n = norm(src, norm_type, mask)?;
-            let scale = if n != 0.0 { alpha / n } else { 0.0 };
-
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .zip(m.data.par_iter())
-                        .for_each(|((d, &s), &mask_val)| {
-                            if mask_val != 0 {
-                                let res = s.to_f64().unwrap_or(0.0) * scale;
-                                *d = T::from_f64(res).unwrap_or(T::default());
-                            }
-                        });
-                } else {
-                    dst.data
-                        .par_iter_mut()
-                        .zip(src.data.par_iter())
-                        .for_each(|(d, &s)| {
-                            let res = s.to_f64().unwrap_or(0.0) * scale;
-                            *d = T::from_f64(res).unwrap_or(T::default());
-                        });
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    for (i, &mask_val) in m.data.iter().enumerate() {
-                        if mask_val != 0 {
-                            let res = src.data[i].to_f64().unwrap_or(0.0) * scale;
-                            dst.data[i] = T::from_f64(res).unwrap_or(T::default());
-                        }
-                    }
-                } else {
-                    for (d, s) in dst.data.iter_mut().zip(src.data.iter()) {
-                        let res = s.to_f64().unwrap_or(0.0) * scale;
-                        *d = T::from_f64(res).unwrap_or(T::default());
-                    }
-                }
-            }
+            (if n > f64::EPSILON { alpha / n } else { 0.0 }, 0.0)
         }
         _ => cv_bail!(
             tags::CORE,
             NotImplemented,
-            "normalize: requested normalization type is not implemented yet"
+            "normalize: norm type {:?} is not supported, as in OpenCV only MinMax, L1, L2 and Inf are",
+            norm_type
         ),
+    };
+
+    // Without a mask every element is written; only the shape can need a new buffer.
+    if mask.is_none() {
+        dst.create(src.rows, src.cols, src.channels);
     }
+    src.convert_scaled_into(&mut dst.data, scale, shift, selected);
     Ok(())
 }
 
-/// Reduces a matrix to a vector.
+/// The type `cv::reduce` accumulates a sum in, see `reduceR_`/`reduceC_`.
+#[derive(Clone, Copy, PartialEq)]
+enum ReduceAcc {
+    /// `int`: sums of `u8` sources, wrapping like the C++ `int`.
+    Int,
+    F32,
+    F64,
+}
+
+/// The sums `cv::reduce` knows (`REDUCE_SUM`, `REDUCE_SUM2` and `REDUCE_AVG` after its
+/// promotion): `8U` to `32S`/`32F`/`64F`, `16U`/`16S`/`32F` to `32F`/`64F`, `64F` to `64F`.
+/// Source: [`cv::reduce`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matrix_operations.cpp#L765-L850).
+fn reduce_sum_acc(src: Depth, dst: Depth) -> Option<ReduceAcc> {
+    use Depth::*;
+    match (src, dst) {
+        (CV_8U, CV_32S | CV_32F | CV_64F) => Some(ReduceAcc::Int),
+        (CV_16U | CV_16S | CV_32F, CV_32F) => Some(ReduceAcc::F32),
+        (CV_16U | CV_16S | CV_32F, CV_64F) | (CV_64F, CV_64F) => Some(ReduceAcc::F64),
+        _ => None,
+    }
+}
+
+/// Reduces a matrix to a vector, keeping the element type.
 ///
-/// dim 0: reduced to 1 row.
-/// dim 1: reduced to 1 column.
+/// `dim` 0 reduces to one row, `dim` 1 to one column. This is
+/// [`reduce_to`] with the destination type `T`, so it accepts the (source, destination)
+/// pairs `cv::reduce` accepts with `dtype` equal to the source depth: [`ReduceTypes::Max`]
+/// and [`ReduceTypes::Min`] on `u8`, `u16`, `i16`, `f32` and `f64`, and the sums
+/// ([`ReduceTypes::Sum`], [`ReduceTypes::Avg`], [`ReduceTypes::Sum2`]) on `f32` and `f64`,
+/// plus [`ReduceTypes::Avg`] on `u8`, which is summed in `i32` and converted back
+/// once, rounding ties to even (1.5 becomes 2, 2.5 becomes 2). Everything else, for
+/// example a `u8` sum into `u8` (OpenCV asks for a `dtype`) or any `i32` reduction, returns
+/// an error; use [`reduce_to`] for a wider destination.
+///
+/// # Example
+/// ```
+/// use purecv::core::types::ReduceTypes;
+/// use purecv::core::{reduce, Matrix};
+///
+/// let m = Matrix::from_vec(2, 2, 1, vec![1u8, 2, 2, 3]);
+/// assert_eq!(reduce(&m, 0, ReduceTypes::Avg).unwrap().data, vec![2, 2]);
+/// assert!(reduce(&m, 0, ReduceTypes::Sum).is_err());
+/// ```
 pub fn reduce<T>(src: &Matrix<T>, dim: i32, reduce_op: ReduceTypes) -> Result<Matrix<T>>
 where
-    T: DataType
-        + Num
-        + ToPrimitive
-        + FromPrimitive
-        + Copy
-        + Send
-        + Sync
-        + PartialOrd
-        + Default
-        + 'static,
+    T: DataType + ToPrimitive + SaturateCast + Default + Clone + Send + Sync + 'static,
 {
-    let (rows, cols) = if dim == 0 {
-        (1, src.cols)
-    } else if dim == 1 {
-        (src.rows, 1)
-    } else {
-        cv_bail!(
+    reduce_to::<T, T>(src, dim, reduce_op)
+}
+
+/// Reduces a matrix to a vector of another element type, like `cv::reduce` with `dtype`
+/// set to the depth of `U`.
+///
+/// `dim` 0 reduces to one row, `dim` 1 to one column. The accepted (source, destination)
+/// pairs are those of
+/// [`cv::reduce`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matrix_operations.cpp#L765-L850);
+/// any other pair returns [`PureCvError::NotImplemented`] where OpenCV raises
+/// `StsUnsupportedFormat`:
+///
+/// | operation | source to destination |
+/// |---|---|
+/// | `Sum`, `Sum2` | `u8` to `i32`/`f32`/`f64`; `u16`, `i16` to `f32`/`f64`; `f32` to `f32`/`f64`; `f64` to `f64` |
+/// | `Max`, `Min` | `u8`, `u16`, `i16`, `f32`, `f64` to the same type |
+/// | `Avg` | the `Sum` pairs, after a destination narrower than `i32` is promoted to `i32` |
+///
+/// The sum is accumulated in OpenCV's type for the pair (`i32` for a `u8` source, else the
+/// destination type; `i32` sums wrap as the C++ `int` does). `Avg` is the sum in the
+/// promoted destination type followed by one conversion with the scale `1/n`, so a `u8`
+/// average into `u8` is rounded to even and saturated once. `Sum2` adds the squares.
+///
+/// An empty source returns an error. The element types OpenCV has no depth for (`u32`,
+/// `u64`, `i64`) are not [`DataType`], so they cannot be named here; `i8` has a depth but
+/// no pair, so it is rejected like `i32`.
+///
+/// # Example
+/// ```
+/// use purecv::core::types::ReduceTypes;
+/// use purecv::core::{reduce_to, Matrix};
+///
+/// let m = Matrix::from_vec(2, 2, 1, vec![200u8, 1, 100, 2]);
+/// let sum: Matrix<i32> = reduce_to(&m, 0, ReduceTypes::Sum).unwrap();
+/// assert_eq!(sum.data, vec![300, 3]); // does not fit in u8
+/// ```
+pub fn reduce_to<T, U>(src: &Matrix<T>, dim: i32, reduce_op: ReduceTypes) -> Result<Matrix<U>>
+where
+    T: DataType + ToPrimitive + Copy + Send + Sync + 'static,
+    U: DataType + SaturateCast + Default + Clone + Send + Sync + 'static,
+{
+    let (rows, cols) = match dim {
+        0 => (1, src.cols),
+        1 => (src.rows, 1),
+        _ => cv_bail!(
             tags::CORE,
             InvalidInput,
             "reduce: dim must be 0 or 1, got {}",
             dim
+        ),
+    };
+    if src.rows == 0 || src.cols == 0 {
+        cv_bail!(tags::CORE, InvalidInput, "reduce: the source is empty");
+    }
+
+    let (sdepth, ddepth) = (T::depth(), U::depth());
+    let avg = reduce_op == ReduceTypes::Avg;
+    // `REDUCE_AVG` sums into 32S when both depths are narrower than that.
+    let wdepth = if avg
+        && (sdepth as i32) < Depth::CV_32S as i32
+        && (ddepth as i32) < Depth::CV_32S as i32
+    {
+        Depth::CV_32S
+    } else {
+        ddepth
+    };
+    let acc = match reduce_op {
+        ReduceTypes::Max | ReduceTypes::Min => {
+            if sdepth != ddepth
+                || !matches!(
+                    sdepth,
+                    Depth::CV_8U | Depth::CV_16U | Depth::CV_16S | Depth::CV_32F | Depth::CV_64F
+                )
+            {
+                None
+            } else {
+                Some(ReduceAcc::F64)
+            }
+        }
+        ReduceTypes::Sum | ReduceTypes::Avg | ReduceTypes::Sum2 => reduce_sum_acc(sdepth, wdepth),
+    };
+    let Some(acc) = acc else {
+        cv_bail!(
+            tags::CORE,
+            NotImplemented,
+            "reduce: unsupported combination of input and output array formats ({:?} into {:?} for {:?})",
+            sdepth,
+            ddepth,
+            reduce_op
         );
     };
 
-    let mut dst_data = vec![T::default(); rows * cols * src.channels];
     let channels = src.channels;
-    let src_rows = src.rows;
-    let src_cols = src.cols;
-
-    #[cfg(feature = "parallel")]
-    {
-        dst_data.par_iter_mut().enumerate().for_each(|(idx, d)| {
-            let channel = idx % channels;
-            let pos = idx / channels;
-
-            let count = if dim == 0 { src_rows } else { src_cols };
-            let mut accum: f64 = match reduce_op {
-                ReduceTypes::Sum | ReduceTypes::Avg => 0.0,
-                ReduceTypes::Max => f64::MIN,
-                ReduceTypes::Min => f64::MAX,
-            };
-
-            for i in 0..count {
-                let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
-                if let Some(val) = src.get(r, c, channel).and_then(|v| v.to_f64()) {
-                    match reduce_op {
-                        ReduceTypes::Sum | ReduceTypes::Avg => accum += val,
-                        ReduceTypes::Max => {
-                            if val > accum {
-                                accum = val;
+    let count = if dim == 0 { src.rows } else { src.cols };
+    let at = |idx: usize, i: usize| -> f64 {
+        let (channel, pos) = (idx % channels, idx / channels);
+        let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
+        src.data[(r * src.cols + c) * channels + channel]
+            .to_f64()
+            .unwrap_or(0.0)
+    };
+    let value = |idx: usize| -> f64 {
+        match reduce_op {
+            // std::max(a, b) and std::min(a, b)
+            ReduceTypes::Max => (1..count).fold(at(idx, 0), |a, i| {
+                let b = at(idx, i);
+                if a < b {
+                    b
+                } else {
+                    a
+                }
+            }),
+            ReduceTypes::Min => (1..count).fold(at(idx, 0), |a, i| {
+                let b = at(idx, i);
+                if b < a {
+                    b
+                } else {
+                    a
+                }
+            }),
+            _ => {
+                let sq = reduce_op == ReduceTypes::Sum2;
+                match acc {
+                    ReduceAcc::Int => {
+                        let term = |i: usize| {
+                            let x = at(idx, i) as i32;
+                            if sq {
+                                x.wrapping_mul(x)
+                            } else {
+                                x
                             }
-                        }
-                        ReduceTypes::Min => {
-                            if val < accum {
-                                accum = val;
+                        };
+                        (1..count).fold(term(0), |a, i| a.wrapping_add(term(i))) as f64
+                    }
+                    ReduceAcc::F32 => {
+                        let term = |i: usize| {
+                            let x = at(idx, i) as f32;
+                            if sq {
+                                x * x
+                            } else {
+                                x
                             }
-                        }
+                        };
+                        (1..count).fold(term(0), |a, i| a + term(i)) as f64
+                    }
+                    ReduceAcc::F64 => {
+                        let term = |i: usize| {
+                            let x = at(idx, i);
+                            if sq {
+                                x * x
+                            } else {
+                                x
+                            }
+                        };
+                        (1..count).fold(term(0), |a, i| a + term(i))
                     }
                 }
             }
-
-            let res = if reduce_op == ReduceTypes::Avg {
-                accum / count as f64
-            } else {
-                accum
-            };
-            *d = T::from_f64(res).unwrap_or_default();
-        });
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    {
-        for (idx, d) in dst_data.iter_mut().enumerate() {
-            let channel = idx % channels;
-            let pos = idx / channels;
-
-            let count = if dim == 0 { src_rows } else { src_cols };
-            let mut accum: f64 = match reduce_op {
-                ReduceTypes::Sum | ReduceTypes::Avg => 0.0,
-                ReduceTypes::Max => f64::MIN,
-                ReduceTypes::Min => f64::MAX,
-            };
-
-            for i in 0..count {
-                let (r, c) = if dim == 0 { (i, pos) } else { (pos, i) };
-                if let Some(val) = src.get(r, c, channel).and_then(|v| v.to_f64()) {
-                    match reduce_op {
-                        ReduceTypes::Sum | ReduceTypes::Avg => accum += val,
-                        ReduceTypes::Max => {
-                            if val > accum {
-                                accum = val;
-                            }
-                        }
-                        ReduceTypes::Min => {
-                            if val < accum {
-                                accum = val;
-                            }
-                        }
-                    }
-                }
-            }
-
-            let res = if reduce_op == ReduceTypes::Avg {
-                accum / count as f64
-            } else {
-                accum
-            };
-            *d = T::from_f64(res).unwrap_or_default();
         }
-    }
+    };
 
-    Ok(Matrix {
-        rows,
-        cols,
-        channels,
-        data: dst_data,
-    })
+    let n = rows * cols * channels;
+    #[cfg(feature = "parallel")]
+    let values: Vec<f64> = (0..n).into_par_iter().map(value).collect();
+    #[cfg(not(feature = "parallel"))]
+    let values: Vec<f64> = (0..n).map(value).collect();
+
+    if !avg {
+        let data: Vec<U> = values.into_iter().map(U::saturate_from_f64).collect();
+        return Ok(Matrix::from_vec(rows, cols, channels, data));
+    }
+    // The sum is exact in the working type; `convertTo(dst, type, 1./n)` then converts it
+    // once, with the arithmetic precision that conversion selects for the pair.
+    let scale = 1.0 / count as f64;
+    match wdepth {
+        Depth::CV_32S => {
+            let w = Matrix::from_vec(
+                rows,
+                cols,
+                channels,
+                values.into_iter().map(|v| v as i32).collect::<Vec<i32>>(),
+            );
+            w.convert_to_scaled::<U>(scale, 0.0)
+        }
+        Depth::CV_32F => {
+            let w = Matrix::from_vec(
+                rows,
+                cols,
+                channels,
+                values.into_iter().map(|v| v as f32).collect::<Vec<f32>>(),
+            );
+            w.convert_to_scaled::<U>(scale, 0.0)
+        }
+        _ => Matrix::from_vec(rows, cols, channels, values).convert_to_scaled::<U>(scale, 0.0),
+    }
 }
 
 /// Counts non-zero array elements.
@@ -1618,7 +1827,16 @@ where
 
 /// Calculates the weighted sum of two matrices.
 ///
-/// dst = src1*alpha + src2*beta + gamma
+/// dst = saturate_cast(src1*alpha + src2*beta + gamma)
+///
+/// Follows `cv::addWeighted`: the sum is rounded half to even and clamped to the
+/// range of the element type, so `u8` `51.5` gives `52` and `910` gives `255`.
+/// The working precision depends on the depth, see [`WeightedOps`]: `f32` for
+/// `u8`, `i8`, `u16` and `i16`, `f64` for `i32`, `f32` and `f64`.
+///
+/// `u32`, `u64` and `i64` have no OpenCV depth; they are computed in `f64`,
+/// rounded and clamped like the depths above (no panic, no wrapping). An `i32`
+/// sum outside the `i32` range clamps, where OpenCV returns `INT_MIN`.
 pub fn add_weighted<T>(
     src1: &Matrix<T>,
     alpha: f64,
@@ -1634,7 +1852,7 @@ where
         + PartialOrd
         + Bounded
         + ToPrimitive
-        + FromPrimitive
+        + WeightedOps
         + Default
         + SimdElement
         + 'static,
@@ -1657,7 +1875,8 @@ where
 
     #[cfg(feature = "simd")]
     {
-        // Only f32/f64 have simd_add_weighted; u8 and others use the scalar fallback.
+        // Only f32/f64 have simd_add_weighted (the same `f64` working type as the
+        // scalar path below); the other depths use the scalar fallback.
         if (core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>()
             || core::any::TypeId::of::<T>() == core::any::TypeId::of::<f64>())
             && <T as SimdElement>::has_simd()
@@ -1668,13 +1887,12 @@ where
     }
 
     binary_op!(dst, src1, src2, T, T, |d, s1, s2| {
-        let val = s1.to_f64().unwrap_or(0.0) * alpha + s2.to_f64().unwrap_or(0.0) * beta + gamma;
-        *d = T::from_f64(val).unwrap_or(T::zero());
+        *d = s1.weighted_sum_op(s2, alpha, beta, gamma);
     });
 
     Ok(dst)
 }
-///
+
 /// dst = sqrt(src)
 pub fn sqrt<T>(src: &Matrix<T>) -> Result<Matrix<T>>
 where
@@ -1779,6 +1997,15 @@ where
 /// Scales, calculates absolute values, and converts the result to 8-bit.
 ///
 /// dst(I) = saturate_cast<u8>(|src(I)*alpha + beta|)
+///
+/// Follows `cvtabs_32f` in `convert_scale.simd.hpp`
+/// ([source](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/convert_scale.simd.hpp#L220-L226)):
+/// every source depth, `f64` included, is converted to `f32`, scaled there, and the
+/// absolute value is rounded half to even and clamped to `u8` (NaN gives `0`). The
+/// product and the sum are not fused, unlike OpenCV's vector loop. OpenCV's scalar tail
+/// (rows narrower than one vector) multiplies `f64` input in `f64`; purecv follows the
+/// vector loop. Where the scaled value passes `i32::MAX`, OpenCV on x86 returns `0` and
+/// purecv clamps to `255`.
 pub fn convert_scale_abs<T>(src: &Matrix<T>, alpha: f64, beta: f64) -> Result<Matrix<u8>>
 where
     T: Num + Copy + Send + Sync + ToPrimitive + Default + SimdElement + 'static,
@@ -1797,9 +2024,10 @@ where
         }
     }
 
+    let (alpha_f32, beta_f32) = (alpha as f32, beta as f32);
     unary_op!(dst, src, u8, T, |d, s| {
-        let val = (s.to_f64().unwrap_or(0.0) * alpha + beta).abs();
-        *d = val.clamp(0.0, 255.0).round() as u8;
+        let val = (s.to_f64().unwrap_or(0.0) as f32 * alpha_f32 + beta_f32).abs();
+        *d = u8::saturate_from_f32(val);
     });
 
     Ok(dst)
@@ -1813,6 +2041,11 @@ pub const GEMM_3_T: i32 = 4;
 ///
 /// dst = alpha * op(src1) * op(src2) + beta * op(src3)
 /// where op(X) is X or X^T based on flags.
+///
+/// The sum is accumulated in `f64` and written with `saturate_cast`, so an
+/// integer output rounds half to even and clamps to the range of `T`. OpenCV
+/// accepts only `f32` and `f64` (and complex) here, so the integer outputs are
+/// purecv's own choice.
 pub fn gemm<T>(
     src1: &Matrix<T>,
     src2: &Matrix<T>,
@@ -1822,7 +2055,7 @@ pub fn gemm<T>(
     flags: i32,
 ) -> Result<Matrix<T>>
 where
-    T: Num + Copy + Send + Sync + ToPrimitive + FromPrimitive + Default + 'static,
+    T: Num + Copy + Send + Sync + ToPrimitive + SaturateCast + Default + 'static,
 {
     let trans1 = (flags & GEMM_1_T) != 0;
     let trans2 = (flags & GEMM_2_T) != 0;
@@ -1889,8 +2122,7 @@ where
                         };
 
                         let final_val = alpha * sum + beta * v3;
-                        row_slice[j * src1.channels + c] =
-                            T::from_f64(final_val).unwrap_or(T::zero());
+                        row_slice[j * src1.channels + c] = T::saturate_from_f64(final_val);
                     }
                 }
             });
@@ -1928,7 +2160,7 @@ where
                     };
 
                     let final_val = alpha * sum + beta * v3;
-                    dst.set(i, j, c, T::from_f64(final_val).unwrap_or(T::zero()));
+                    dst.set(i, j, c, T::saturate_from_f64(final_val));
                 }
             }
         }
@@ -2811,6 +3043,34 @@ where
 ///
 /// Mirrors OpenCV's `cv::transform`.
 ///
+/// The arithmetic runs in the working type of the depth, see [`TransformOps`]:
+/// the matrix is narrowed to `f32` for `u8`, `i8`, `u16`, `i16` and `f32`, and
+/// kept in `f64` for `i32` and `f64`. Integer outputs are rounded half to even
+/// and clamped to the range of the type (`saturate_cast`), so
+/// `(10 + 20 + 33) * 0.3 = 18.9` is `19` and `300` is `255` for `u8`.
+/// `u32`, `u64` and `i64` have no OpenCV depth and use `f64`. The summation
+/// order follows the kernels of
+/// [`matmul.simd.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matmul.simd.hpp#L1380-L1448):
+/// the bias is added last for the 2→2, 3→3, 3→1 and 4→4 shapes and first
+/// otherwise, and a square `m` whose off-diagonal entries are all within
+/// `FLT_EPSILON` (`DBL_EPSILON` for the `f64` working type) of zero is applied
+/// per channel.
+///
+/// `u8` with three source and three destination channels and a non-diagonal `m`
+/// runs in 10-bit fixed point instead, like
+/// [`transform_8u`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/matmul.simd.hpp#L1442-L1522),
+/// when on every row the first two coefficients are below 32 and the third and the
+/// bias below 8192 in magnitude. Coefficients are rounded to 1/1024, the bias gets
+/// `+0.5`, and the sum is shifted right by 10, so ties round up: with BT.601 luma
+/// weights a pixel can differ by one from the `f32` result. The sum is computed in
+/// `i32` and wraps. The bias is `round((m[3] + 0.5f) * 1024)` as in OpenCV's scalar
+/// tail; its vector lanes use `round(m[3] * 1024) + 512`, which differs only for a
+/// bias within a float step of a tie
+/// (`scripts/opencv_ref/core_transform_fixed_point.py`, key `bias_near_tie`).
+///
+/// The fused multiply-add SIMD kernels of the reference build are not reproduced;
+/// they can differ on a rounding tie.
+///
 /// # Arguments
 /// * `src` - Input matrix with `scn` channels.
 /// * `dst` - Output matrix; will be (re)allocated with `dcn` channels.
@@ -2819,11 +3079,10 @@ where
 ///
 /// # Errors
 /// Returns `PureCvError::InvalidDimensions` if `m` dimensions are
-/// incompatible with the source channel count.
-#[allow(clippy::needless_range_loop)]
+/// incompatible with the source channel count, or if `m` has no rows.
 pub fn transform<T>(src: &Matrix<T>, dst: &mut Matrix<T>, m: &Matrix<f64>) -> Result<()>
 where
-    T: Default + Clone + Copy + FromPrimitive + ToPrimitive + Send + Sync + 'static,
+    T: TransformOps + Default + Clone + Send + Sync + 'static,
 {
     if m.channels != 1 {
         cv_bail!(
@@ -2838,6 +3097,16 @@ where
     let dcn = m.rows;
     let m_cols = m.cols;
 
+    if scn == 0 || dcn == 0 {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "transform: source channels ({}) and matrix rows ({}) must be non-zero",
+            scn,
+            dcn
+        );
+    }
+
     // m must be dcn × scn  OR  dcn × (scn + 1)  (affine)
     if m_cols != scn && m_cols != scn + 1 {
         cv_bail!(
@@ -2851,51 +3120,145 @@ where
         );
     }
 
-    let affine = m_cols == scn + 1;
+    // `m` as a `dcn × (scn + 1)` matrix of the working type; a missing bias column is zero
+    // (`matmul.dispatch.cpp`, the `tmp` matrix converted with `convertTo`).
+    let stride = scn + 1;
+    let mut coef = vec![<T::Work as TransformWork>::from_coefficient(0.0); dcn * stride];
+    for r in 0..dcn {
+        for c in 0..m_cols {
+            coef[r * stride + c] =
+                <T::Work as TransformWork>::from_coefficient(m.data[r * m_cols + c]);
+        }
+    }
+
+    // scn == dcn > 1 with every off-diagonal entry within epsilon of zero: per-channel kernel.
+    let diag = scn == dcn
+        && scn > 1
+        && (0..dcn).all(|i| {
+            (0..scn).all(|j| i == j || coef[i * stride + j].to_f64().abs() <= T::Work::EPSILON)
+        });
+    // The shapes `transform_` unrolls add the bias last.
+    let bias_last = matches!((scn, dcn), (2, 2) | (3, 3) | (3, 1) | (4, 4));
+    // `transform_8u`: only reached by a non-diagonal `m`, `scn == dcn == 1` and the diagonal
+    // case have their own kernels.
+    let fixed = if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>()
+        && scn == 3
+        && dcn == 3
+        && !diag
+    {
+        fixed_point_3to3::<T>(&coef)
+    } else {
+        None
+    };
 
     dst.create(src.rows, src.cols, dcn);
+
+    let apply = |d_chunk: &mut [T], s_chunk: &[T]| match &fixed {
+        Some(k) => fixed_point_pixel(s_chunk, d_chunk, k),
+        None => transform_pixel(s_chunk, d_chunk, &coef, diag, bias_last),
+    };
 
     #[cfg(feature = "parallel")]
     {
         dst.data
             .par_chunks_exact_mut(dcn)
             .zip(src.data.par_chunks_exact(scn))
-            .for_each(|(d_chunk, s_chunk)| {
-                for r in 0..dcn {
-                    let row_base = r * m_cols;
-                    let mut val = 0.0;
-                    for c in 0..scn {
-                        val += m.data[row_base + c] * s_chunk[c].to_f64().unwrap_or(0.0);
-                    }
-                    if affine {
-                        val += m.data[row_base + scn];
-                    }
-                    d_chunk[r] = T::from_f64(val).unwrap_or_default();
-                }
-            });
+            .for_each(|(d_chunk, s_chunk)| apply(d_chunk, s_chunk));
     }
 
     #[cfg(not(feature = "parallel"))]
     {
-        let pixel_count = src.rows * src.cols;
-        for p in 0..pixel_count {
-            let s_off = p * scn;
-            let d_off = p * dcn;
-            for r in 0..dcn {
-                let row_base = r * m_cols;
-                let mut val = 0.0;
-                for c in 0..scn {
-                    val += m.data[row_base + c] * src.data[s_off + c].to_f64().unwrap_or(0.0);
-                }
-                if affine {
-                    val += m.data[row_base + scn];
-                }
-                dst.data[d_off + r] = T::from_f64(val).unwrap_or_default();
-            }
-        }
+        dst.data
+            .chunks_exact_mut(dcn)
+            .zip(src.data.chunks_exact(scn))
+            .for_each(|(d_chunk, s_chunk)| apply(d_chunk, s_chunk));
     }
 
     Ok(())
+}
+
+/// The fixed-point form of a `3 × 4` matrix for [`fixed_point_pixel`], or `None` when a
+/// coefficient is out of the range of `transform_8u`, which includes NaN.
+fn fixed_point_3to3<T: TransformOps>(coef: &[T::Work]) -> Option<[[i32; 4]; 3]> {
+    const SCALE: f32 = 1024.0;
+    const MAX_M: f32 = 32.0;
+    let mut fixed = [[0i32; 4]; 3];
+    for (out, row) in fixed.iter_mut().zip(coef.as_chunks::<4>().0) {
+        // `u8` works in `f32`, so going through `f64` here is exact.
+        let m = [
+            row[0].to_f64() as f32,
+            row[1].to_f64() as f32,
+            row[2].to_f64() as f32,
+            row[3].to_f64() as f32,
+        ];
+        let in_range = m[0].abs() < MAX_M
+            && m[1].abs() < MAX_M
+            && m[2].abs() < MAX_M * 256.0
+            && m[3].abs() < MAX_M * 256.0;
+        if !in_range {
+            return None;
+        }
+        *out = [
+            i16::saturate_from_f32(m[0] * SCALE) as i32,
+            i16::saturate_from_f32(m[1] * SCALE) as i32,
+            i32::saturate_from_f32(m[2] * SCALE),
+            i32::saturate_from_f32((m[3] + 0.5) * SCALE),
+        ];
+    }
+    Some(fixed)
+}
+
+/// One pixel of the fixed-point kernel of [`transform`]: `(c0*v0 + c1*v1 + c2*v2 + b) >> 10`,
+/// wrapping in `i32`, then clamped to the element type.
+#[inline]
+fn fixed_point_pixel<T: TransformOps>(src: &[T], dst: &mut [T], fixed: &[[i32; 4]; 3]) {
+    let v = [
+        src[0].to_work().to_f64() as i32,
+        src[1].to_work().to_f64() as i32,
+        src[2].to_work().to_f64() as i32,
+    ];
+    for (out, c) in dst.iter_mut().zip(fixed) {
+        let sum = c[0]
+            .wrapping_mul(v[0])
+            .wrapping_add(c[1].wrapping_mul(v[1]))
+            .wrapping_add(c[2].wrapping_mul(v[2]))
+            .wrapping_add(c[3]);
+        *out = T::saturate_from_i64((sum >> 10) as i64);
+    }
+}
+
+/// One pixel of [`transform`]: `coef` is the `dcn × (scn + 1)` matrix in the working type.
+///
+/// `diag` is `diagtransform_`, `bias_last` the unrolled shapes of `transform_` and the
+/// rest its generic loop (`s = bias; s += m[k] * src[k]`).
+#[inline]
+fn transform_pixel<T: TransformOps>(
+    src: &[T],
+    dst: &mut [T],
+    coef: &[T::Work],
+    diag: bool,
+    bias_last: bool,
+) {
+    let stride = src.len() + 1;
+    for (j, out) in dst.iter_mut().enumerate() {
+        let row = &coef[j * stride..(j + 1) * stride];
+        let s = if diag {
+            src[j].to_work() * row[j] + row[src.len()]
+        } else if bias_last {
+            let mut s = row[0] * src[0].to_work();
+            for k in 1..src.len() {
+                s = s + row[k] * src[k].to_work();
+            }
+            s + row[src.len()]
+        } else {
+            let mut s = row[src.len()];
+            for (k, v) in src.iter().enumerate() {
+                s = s + row[k] * v.to_work();
+            }
+            s
+        };
+        *out = s.saturate_to();
+    }
 }
 
 /// Performs the perspective matrix transformation of vectors.

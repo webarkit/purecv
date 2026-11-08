@@ -157,6 +157,65 @@ def main() -> None:
         "perspective_u8": attempt(lambda: cv2.perspectiveTransform(px[:, :, :2].copy(), H)),
     }
 
+    # transform working type: matmul.dispatch.cpp converts m to CV_32F for 8U/8S/16U/16S/32F and
+    # to CV_64F for 32S/64F. The matrices below hold multiples of 1/8 (or 1/4), so every product
+    # and sum is exact in float and the SIMD kernels (FMA) agree with the generic scalar loop.
+    # The 3 -> 3 u8 shape is avoided: its SIMD path is fixed point (transform_8u) and rounds
+    # ties up.
+    rs = np.random.RandomState(220)
+    s4 = rs.randint(0, 256, size=(1, 8, 4)).astype(np.uint8)
+    m4 = (rs.randint(-2, 6, size=(4, 4)) / 8.0).astype(np.float64)
+    s3 = rs.randint(0, 256, size=(1, 8, 3)).astype(np.uint8)
+    m3to2 = np.hstack([(rs.randint(-2, 6, size=(2, 3)) / 8.0), rs.randint(-8, 9, size=(2, 1)) / 4.0])
+    m3to1 = (rs.randint(1, 4, size=(1, 3)) / 8.0).astype(np.float64)
+    s16 = rs.randint(-3000, 3001, size=(1, 8, 3)).astype(np.int16)
+    s32 = rs.randint(-(2**28), 2**28, size=(1, 6, 3)).astype(np.int32)
+    s32[0, 0] = [16777217, 3, -16777217]
+    m32 = np.hstack([(rs.randint(-8, 9, size=(2, 3)) / 4.0), rs.randint(-8, 9, size=(2, 1)) / 4.0])
+    oor = np.array([[[100, 200, 50], [255, 255, 255]]], dtype=np.uint8)
+    m_oor = np.array([[2.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, -300.0], [0.0, 1.0, 0.0, 100.0], [-1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
+    one = np.array([[0, 1, 2, 3, 4, 5, 200]], dtype=np.uint8)
+    diag = np.diag([0.5, 0.25, 1.5]).astype(np.float64)
+    diag = np.hstack([diag, np.array([[0.5], [-0.5], [0.25]])])
+    results["transform_working_type"] = {
+        "seed": 220,
+        "u8_4ch_src": tolist(s4),
+        "m4x4": tolist(m4),
+        "u8_4to4": tolist(cv2.transform(s4, m4)),
+        "u8_3ch_src": tolist(s3),
+        "m3to2_affine": tolist(m3to2),
+        "u8_3to2_affine": tolist(cv2.transform(s3, m3to2)),
+        "m3to1": tolist(m3to1),
+        "u8_3to1": tolist(cv2.transform(s3, m3to1)),
+        "i16_src": tolist(s16),
+        "i16_3to2_affine": tolist(cv2.transform(s16, m3to2)),
+        "i32_src": tolist(s32),
+        "m32_affine": tolist(m32),
+        "i32_3to2_affine": tolist(cv2.transform(s32, m32)),
+        "oor_src": tolist(oor),
+        "oor_m": tolist(m_oor),
+        "oor_u8": tolist(cv2.transform(oor, m_oor)),
+        "u8_1ch_src": tolist(one),
+        "u8_1ch_half": tolist(cv2.transform(one, np.array([[0.5]], dtype=np.float64))),
+        "u8_1ch_half_plus_quarter": tolist(cv2.transform(one, np.array([[0.5, 0.25]], dtype=np.float64))),
+        "diag_src": tolist(s3[:, :4]),
+        "diag_m": tolist(diag),
+        "u8_diag_3to3": tolist(cv2.transform(s3[:, :4], diag)),
+    }
+
+    # --- setIdentity beyond four channels: `scalarToRawData` asserts `cn <= 4` for a non-zero scalar
+    results["set_identity_5_channels"] = {
+        "nonzero_scalar": attempt(
+            lambda: tolist(cv2.setIdentity(np.zeros((2, 2, 5), dtype=np.uint8), (1, 2, 3, 4)))
+        ),
+        "zero_scalar": attempt(
+            lambda: tolist(cv2.setIdentity(np.full((2, 2, 5), 9, dtype=np.uint8), (0, 0, 0, 0)))
+        ),
+        "four_channels": attempt(
+            lambda: tolist(cv2.setIdentity(np.zeros((2, 2, 4), dtype=np.uint8), (1, 2, 3, 4)))
+        ),
+    }
+
     # --- gemm / invert / determinant / solve / trace / Mahalanobis
     A = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
     B = np.array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]], dtype=np.float32)
@@ -273,6 +332,31 @@ def main() -> None:
         "poly_1_0_1_complex": [float(cv2.solvePoly(np.array([1.0, 0.0, 1.0]))[0]), tolist(cv2.solvePoly(np.array([1.0, 0.0, 1.0]))[1])],
         "poly_m6_11_m6_1": [float(cv2.solvePoly(np.array([-6.0, 11.0, -6.0, 1.0]))[0]), tolist(cv2.solvePoly(np.array([-6.0, 11.0, -6.0, 1.0]))[1])],
     }
+
+    # --- scalar operand on more than four channels (binary_op_scalar! in src/core/arithm.rs)
+    five = np.full((1, 2, 5), 10, dtype=np.uint8)
+    four = np.full((1, 2, 4), 10, dtype=np.uint8)
+    scalar_ops = {
+        "add": cv2.add,
+        "subtract": cv2.subtract,
+        "multiply": cv2.multiply,
+        "divide": cv2.divide,
+        "absdiff": cv2.absdiff,
+        "bitwise_and": cv2.bitwise_and,
+        "bitwise_or": cv2.bitwise_or,
+        "bitwise_xor": cv2.bitwise_xor,
+        "min": cv2.min,
+        "max": cv2.max,
+        "compare_eq": lambda a, s: cv2.compare(a, s, cv2.CMP_EQ),
+    }
+    scalar_5 = {}
+    for name, op in scalar_ops.items():
+        scalar_5[f"{name}_nonzero"] = attempt(lambda op=op: op(five, (1.0, 2.0, 3.0, 4.0)))
+        scalar_5[f"{name}_zero"] = attempt(lambda op=op: op(five, (0.0, 0.0, 0.0, 0.0)))
+        scalar_5[f"{name}_one"] = attempt(lambda op=op: op(five, (50.0,)))
+    # four channels still work
+    scalar_5["add_4ch_nonzero"] = attempt(lambda: cv2.add(four, (1.0, 2.0, 3.0, 4.0)))
+    results["scalar_5_channels"] = scalar_5
 
     dump("core_misc.py", results)
 

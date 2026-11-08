@@ -35,9 +35,118 @@
  */
 use crate::core::error::Result;
 use crate::core::logging::tags;
+use crate::core::saturate::SaturateCast;
 use crate::core::types::Scalar;
-use crate::{cv_bail, cv_err};
+use crate::cv_bail;
 use alloc::{vec, vec::Vec};
+use core::any::TypeId;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Converts one element with `saturate_cast` semantics, staying in integer
+/// arithmetic when `x` is an integer value so that 64-bit values above 2⁵³
+/// survive. `ToPrimitive` cannot tell an integer type from a float, so "is an
+/// integer" is decided by value: `to_i64` / `to_u64` truncate, and the result
+/// is used only when it converts back to the bit pattern of `x as f64`. That
+/// holds for every integer and every integral float, where the integer path
+/// gives the same result as the `f64` one, and fails for fractions, NaN,
+/// infinities and `-0.0`, which take the `f64` path.
+#[inline]
+fn cast_element<T: num_traits::ToPrimitive, U: SaturateCast>(x: T) -> U {
+    let Some(f) = x.to_f64() else {
+        return U::saturate_from_f64(f64::NAN);
+    };
+    match x.to_i64() {
+        Some(i) => {
+            if (i as f64).to_bits() == f.to_bits() {
+                return U::saturate_from_i64(i);
+            }
+        }
+        None => {
+            if let Some(u) = x.to_u64() {
+                if (u as f64).to_bits() == f.to_bits() {
+                    return U::saturate_from_u64(u);
+                }
+            }
+        }
+    }
+    U::saturate_from_f64(f)
+}
+
+/// `src.map(f).collect()`, on the Rayon pool with the `parallel` feature.
+#[cfg(feature = "parallel")]
+#[inline]
+fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -> Vec<U> {
+    src.par_iter().map(|&x| f(x)).collect()
+}
+
+/// `src.map(f).collect()`, sequentially: the fallback without the `parallel` feature.
+#[cfg(not(feature = "parallel"))]
+#[inline]
+fn map_elements<T: Copy + Sync, U: Send>(src: &[T], f: impl Fn(T) -> U + Sync) -> Vec<U> {
+    src.iter().map(|&x| f(x)).collect()
+}
+
+/// `dst[i] = f(src[i])` for every `i` that `selected` accepts, on the Rayon pool with the
+/// `parallel` feature.
+#[cfg(feature = "parallel")]
+#[inline]
+fn write_elements<T: Copy + Sync, U: Send>(
+    src: &[T],
+    dst: &mut [U],
+    selected: impl Fn(usize) -> bool + Sync,
+    f: impl Fn(T) -> U + Sync,
+) {
+    dst.par_iter_mut()
+        .zip(src.par_iter())
+        .enumerate()
+        .for_each(|(i, (d, &s))| {
+            if selected(i) {
+                *d = f(s);
+            }
+        });
+}
+
+/// `dst[i] = f(src[i])` for every `i` that `selected` accepts, sequentially: the fallback
+/// without the `parallel` feature.
+#[cfg(not(feature = "parallel"))]
+#[inline]
+fn write_elements<T: Copy + Sync, U: Send>(
+    src: &[T],
+    dst: &mut [U],
+    selected: impl Fn(usize) -> bool + Sync,
+    f: impl Fn(T) -> U + Sync,
+) {
+    for (i, (d, &s)) in dst.iter_mut().zip(src).enumerate() {
+        if selected(i) {
+            *d = f(s);
+        }
+    }
+}
+
+/// The working precision of `convertTo` with a scale, see [`Matrix::convert_to_scaled`].
+#[inline]
+fn scales_in_f64<T: 'static, U: SaturateCast>() -> bool {
+    let src_bytes = core::mem::size_of::<T>();
+    let dst_bytes = core::mem::size_of::<U>();
+    dst_bytes == 8
+        || (dst_bytes == 4
+            && if U::IS_FLOAT {
+                src_bytes == 8
+            } else {
+                src_bytes == 8 || TypeId::of::<T>() == TypeId::of::<i32>()
+            })
+}
+
+#[inline]
+fn scale_in_f64<T: num_traits::ToPrimitive, U: SaturateCast>(x: T, alpha: f64, beta: f64) -> U {
+    U::saturate_from_f64(x.to_f64().unwrap_or(f64::NAN) * alpha + beta)
+}
+
+#[inline]
+fn scale_in_f32<T: num_traits::ToPrimitive, U: SaturateCast>(x: T, alpha: f32, beta: f32) -> U {
+    U::saturate_from_f32(x.to_f32().unwrap_or(f32::NAN) * alpha + beta)
+}
 
 /// Matrix depth: number of bits per element and its signedness/type.
 /// Follows OpenCV's depth conventions (CV_8U, CV_32F, etc.).
@@ -523,35 +632,103 @@ impl<T: Default + Clone> Matrix<T> {
         Ok(())
     }
 
-    /// Converts the matrix elements to a different type `U`.
-    /// Similar to OpenCV's `Mat::convertTo`.
+    /// Converts the matrix elements to a different type `U`, like OpenCV's
+    /// [`Mat::convertTo`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/convert.dispatch.cpp#L248-L300).
     ///
-    /// Note: This version currently performs basic casting.
+    /// Integer targets round to nearest with ties to even and clamp to the range
+    /// of `U`, and the conversion never fails on range (see [`SaturateCast`]);
+    /// float targets are a plain cast. A same-type conversion and an integer
+    /// source widened to a larger integer or a float are exact, including
+    /// `i64` / `u64` values above 2⁵³. The scale and shift form is
+    /// [`Matrix::convert_to_scaled`].
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::Matrix;
+    ///
+    /// let m = Matrix::from_vec(1, 4, 1, vec![0.5f32, 2.5, 300.0, -1.0]);
+    /// assert_eq!(m.convert_to::<u8>().unwrap().data, vec![0, 2, 255, 0]);
+    /// ```
     pub fn convert_to<U>(&self) -> Result<Matrix<U>>
     where
-        U: Default + Clone + num_traits::NumCast,
+        U: SaturateCast + Default + Clone,
         T: num_traits::ToPrimitive + Copy,
     {
-        let out_data: Vec<U> = self
-            .data
-            .iter()
-            .map(|&x| {
-                U::from(x).ok_or_else(|| {
-                    cv_err!(
-                        tags::CORE,
-                        InvalidInput,
-                        "convert_to: element conversion failed"
-                    )
-                })
-            })
-            .collect::<Result<Vec<U>>>()?;
-
+        let out_data: Vec<U> = self.data.iter().map(|&x| cast_element(x)).collect();
         Ok(Matrix::from_vec(
             self.rows,
             self.cols,
             self.channels,
             out_data,
         ))
+    }
+
+    /// Converts the matrix elements to `U` as `saturate_cast<U>(x * alpha + beta)`,
+    /// like OpenCV's
+    /// [`Mat::convertTo(m, rtype, alpha, beta)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/include/opencv2/core/mat.hpp#L1248).
+    ///
+    /// `alpha = 1, beta = 0` is [`Matrix::convert_to`]. Otherwise the arithmetic
+    /// runs in the working precision OpenCV selects in
+    /// [`convert_scale.simd.hpp`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/convert_scale.simd.hpp#L228-L295):
+    /// `f64` when the target is `f64`, when the target is `f32` and the source
+    /// `f64`, or when the target is `i32` and the source `i32` or `f64`;
+    /// `f32` for every other pair (so `f64 -> u8` scales in single precision).
+    /// The multiply and the add are separate roundings; OpenCV's SIMD loops
+    /// fuse them, which can differ in the last bit of a tie. A row narrower
+    /// than one vector runs OpenCV's scalar tail instead, which is not fused
+    /// and agrees with this path, so that difference needs a wider row.
+    ///
+    /// # Example
+    /// ```
+    /// use purecv::core::Matrix;
+    ///
+    /// let m = Matrix::from_vec(1, 3, 1, vec![1u8, 2, 255]);
+    /// let out = m.convert_to_scaled::<u8>(0.5, 0.25).unwrap();
+    /// assert_eq!(out.data, vec![1, 1, 128]); // 0.75, 1.25, 127.75
+    /// ```
+    pub fn convert_to_scaled<U>(&self, alpha: f64, beta: f64) -> Result<Matrix<U>>
+    where
+        U: SaturateCast + Default + Clone + Send,
+        T: num_traits::ToPrimitive + Copy + Sync + 'static,
+    {
+        if alpha == 1.0 && beta == 0.0 {
+            return self.convert_to();
+        }
+        let out_data: Vec<U> = if scales_in_f64::<T, U>() {
+            map_elements(&self.data, |x| scale_in_f64(x, alpha, beta))
+        } else {
+            let (a, b) = (alpha as f32, beta as f32);
+            map_elements(&self.data, |x| scale_in_f32(x, a, b))
+        };
+        Ok(Matrix::from_vec(
+            self.rows,
+            self.cols,
+            self.channels,
+            out_data,
+        ))
+    }
+
+    /// [`Matrix::convert_to_scaled`] into an existing buffer of the same length, writing only
+    /// the elements `selected` accepts. It allocates nothing, which is what keeps a repeated
+    /// `normalize` into the same destination fast.
+    pub(crate) fn convert_scaled_into<U>(
+        &self,
+        dst: &mut [U],
+        alpha: f64,
+        beta: f64,
+        selected: impl Fn(usize) -> bool + Sync,
+    ) where
+        U: SaturateCast + Send,
+        T: num_traits::ToPrimitive + Copy + Sync + 'static,
+    {
+        if alpha == 1.0 && beta == 0.0 {
+            write_elements(&self.data, dst, selected, cast_element);
+        } else if scales_in_f64::<T, U>() {
+            write_elements(&self.data, dst, selected, |x| scale_in_f64(x, alpha, beta));
+        } else {
+            let (a, b) = (alpha as f32, beta as f32);
+            write_elements(&self.data, dst, selected, |x| scale_in_f32(x, a, b));
+        }
     }
 
     /// Swaps the underlying buffer array contents and metadata layout matching dimensions directly with another matrix.

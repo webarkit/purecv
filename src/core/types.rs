@@ -1078,6 +1078,8 @@ pub enum ReduceTypes {
     Avg = 1,
     Max = 2,
     Min = 3,
+    /// Sum of the squares of the elements (`REDUCE_SUM2`).
+    Sum2 = 4,
 }
 
 // ---------------------------------------------------------------------------

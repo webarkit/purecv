@@ -321,12 +321,10 @@ mod simd_impls {
         fn simd_div(dst: &mut [Self], a: &[Self], b: &[Self]) -> bool {
             let arch = Arch::new();
             arch.dispatch(|| {
+                // Plain IEEE division like `cv::divide` on float depths: x/0 is
+                // +-inf and 0/0 is NaN in every lane.
                 for i in 0..dst.len() {
-                    if b[i] != 0.0 {
-                        dst[i] = a[i] / b[i];
-                    } else {
-                        dst[i] = 0.0;
-                    }
+                    dst[i] = a[i] / b[i];
                 }
             });
             true
@@ -399,13 +397,12 @@ mod simd_impls {
             beta: f64,
             gamma: f64,
         ) -> bool {
-            let alpha_f32 = alpha as f32;
-            let beta_f32 = beta as f32;
-            let gamma_f32 = gamma as f32;
+            // `cv::addWeighted` on CV_32F runs `add_weighted_loop_d`: the sum is
+            // formed in double and narrowed once, like the scalar fallback.
             let arch = Arch::new();
             arch.dispatch(|| {
                 for i in 0..dst.len() {
-                    dst[i] = a[i] * alpha_f32 + b[i] * beta_f32 + gamma_f32;
+                    dst[i] = (a[i] as f64 * alpha + b[i] as f64 * beta + gamma) as f32;
                 }
             });
             true
@@ -418,7 +415,7 @@ mod simd_impls {
             arch.dispatch(|| {
                 for i in 0..dst.len() {
                     let val = (src[i] * alpha_f32 + beta_f32).abs();
-                    dst[i] = val.clamp(0.0, 255.0).round() as u8;
+                    dst[i] = <u8 as crate::core::saturate::SaturateCast>::saturate_from_f32(val);
                 }
             });
             true
@@ -733,12 +730,10 @@ mod simd_impls {
         fn simd_div(dst: &mut [Self], a: &[Self], b: &[Self]) -> bool {
             let arch = Arch::new();
             arch.dispatch(|| {
+                // Plain IEEE division like `cv::divide` on float depths: x/0 is
+                // +-inf and 0/0 is NaN in every lane.
                 for i in 0..dst.len() {
-                    if b[i] != 0.0 {
-                        dst[i] = a[i] / b[i];
-                    } else {
-                        dst[i] = 0.0;
-                    }
+                    dst[i] = a[i] / b[i];
                 }
             });
             true
@@ -821,11 +816,14 @@ mod simd_impls {
         }
 
         fn simd_convert_scale_abs(dst: &mut [u8], src: &[Self], alpha: f64, beta: f64) -> bool {
+            // cvtabs_32f works in f32 for every depth, f64 included.
+            let alpha_f32 = alpha as f32;
+            let beta_f32 = beta as f32;
             let arch = Arch::new();
             arch.dispatch(|| {
                 for i in 0..dst.len() {
-                    let val = (src[i] * alpha + beta).abs();
-                    dst[i] = val.clamp(0.0, 255.0).round() as u8;
+                    let val = (src[i] as f32 * alpha_f32 + beta_f32).abs();
+                    dst[i] = <u8 as crate::core::saturate::SaturateCast>::saturate_from_f32(val);
                 }
             });
             true
@@ -1523,11 +1521,14 @@ mod tests {
 
         #[test]
         fn test_simd_div_f32() {
-            let a = vec![10.0f32, 20.0, 30.0, 0.0];
-            let b = vec![2.0f32, 5.0, 10.0, 0.0];
-            let mut dst = vec![0.0f32; 4];
+            let a = vec![10.0f32, 20.0, 30.0, 1.0, 0.0];
+            let b = vec![2.0f32, 5.0, 10.0, 0.0, 0.0];
+            let mut dst = vec![0.0f32; 5];
             f32::simd_div(&mut dst, &a, &b);
-            assert_eq!(dst, vec![5.0, 4.0, 3.0, 0.0]);
+            assert_eq!(&dst[..3], &[5.0, 4.0, 3.0]);
+            // IEEE, like cv::divide on float depths
+            assert_eq!(dst[3], f32::INFINITY);
+            assert!(dst[4].is_nan());
         }
 
         #[test]
@@ -1679,10 +1680,7 @@ mod tests {
 
         /// Helper: compute element-wise div in pure scalar Rust (0/0 = 0)
         fn scalar_div_f32(a: &[f32], b: &[f32]) -> Vec<f32> {
-            a.iter()
-                .zip(b.iter())
-                .map(|(&x, &y)| if y != 0.0 { x / y } else { 0.0 })
-                .collect()
+            a.iter().zip(b.iter()).map(|(&x, &y)| x / y).collect()
         }
 
         /// Helper: compute dot product in pure scalar Rust
@@ -1757,8 +1755,11 @@ mod tests {
             let mut simd_result = vec![0.0f32; 256];
             assert!(f32::simd_div(&mut simd_result, &a, &b));
             for (i, (&e, &s)) in expected.iter().zip(simd_result.iter()).enumerate() {
+                // x/0 is +-inf or NaN, which a difference cannot compare.
                 assert!(
-                    (e - s).abs() < 1e-3,
+                    e.to_bits() == s.to_bits()
+                        || (e.is_nan() && s.is_nan())
+                        || (e - s).abs() < 1e-3,
                     "Mismatch at index {i}: expected {e}, got {s}"
                 );
             }
