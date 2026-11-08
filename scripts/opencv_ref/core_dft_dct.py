@@ -30,12 +30,65 @@ SQ4 = np.array(
     dtype=np.float32,
 )
 
+# 1x4 two-channel (complex) input for the idft scaling rows.
+COMPLEX_1X4 = np.array([[[1.0, 2.0], [3.0, -1.0], [0.5, 4.0], [-2.0, 1.0]]], dtype=np.float32)
+
 
 def attempt(fn):
     try:
         return tolist(fn())
     except cv2.error as e:  # noqa: PERF203
         return f"cv2.error: {e.code} {e.err}".strip()
+
+
+def ramp(rows: int, cols: int) -> np.ndarray:
+    """#223 CCS input: element i (row-major) is ((7 * i + 3) mod 11) - 5, as f32."""
+    i = np.arange(rows * cols, dtype=np.int64)
+    return (((7 * i + 3) % 11) - 5).astype(np.float32).reshape(rows, cols)
+
+
+# #223: one shape per even/odd combination of rows and cols, plus 1xN and Nx1.
+CCS_SHAPES = [(1, 6), (1, 5), (6, 1), (5, 1), (4, 6), (4, 5), (3, 6), (3, 5)]
+
+
+def ccs_rows() -> dict:
+    """#223: dft of real input returns the CCS packing unless DFT_COMPLEX_OUTPUT is passed."""
+    inv = cv2.DFT_INVERSE
+    out = {}
+    for r, c in CCS_SHAPES:
+        name = f"{r}x{c}"
+        src = ramp(r, c)
+        ccs = cv2.dft(src)
+        out[f"f32_{name}"] = tolist(ccs)
+        out[f"f64_{name}"] = tolist(cv2.dft(src.astype(np.float64)))
+        out[f"rows_{name}"] = tolist(cv2.dft(src, flags=cv2.DFT_ROWS))
+        # Inverse of CCS input: real output, unscaled and scaled.
+        out[f"inv_{name}"] = tolist(cv2.dft(ccs, flags=inv))
+        out[f"inv_scale_{name}"] = tolist(cv2.dft(ccs, flags=inv | cv2.DFT_SCALE))
+        out[f"inv_scale_f64_{name}"] = tolist(
+            cv2.dft(cv2.dft(src.astype(np.float64)), flags=inv | cv2.DFT_SCALE)
+        )
+    src = ramp(4, 6)
+    ccs = cv2.dft(src)
+    out["inv_real_output_4x6"] = tolist(cv2.dft(ccs, flags=inv | cv2.DFT_REAL_OUTPUT))
+    out["inv_complex_output_4x6"] = tolist(cv2.dft(ccs, flags=inv | cv2.DFT_COMPLEX_OUTPUT))
+    out["fwd_real_output_4x6"] = tolist(cv2.dft(src, flags=cv2.DFT_REAL_OUTPUT))
+    out["inv_rows_scale_3x6"] = tolist(
+        cv2.dft(cv2.dft(ramp(3, 6), flags=cv2.DFT_ROWS), flags=inv | cv2.DFT_ROWS | cv2.DFT_SCALE)
+    )
+    # nonzero_rows: forward reads only the first rows, inverse writes only the first rows.
+    for r, c in [(4, 6), (3, 5)]:
+        name = f"{r}x{c}"
+        src = ramp(r, c)
+        out[f"nz2_{name}"] = tolist(cv2.dft(src, nonzeroRows=2))
+        out[f"nz2_rows_{name}"] = tolist(cv2.dft(src, flags=cv2.DFT_ROWS, nonzeroRows=2))
+        out[f"inv_nz2_{name}"] = tolist(cv2.dft(cv2.dft(src), flags=inv, nonzeroRows=2))
+        out[f"inv_nz2_rows_{name}"] = tolist(
+            cv2.dft(cv2.dft(src, flags=cv2.DFT_ROWS), flags=inv | cv2.DFT_ROWS, nonzeroRows=2)
+        )
+    out["nz2_complex_output_4x6"] = tolist(cv2.dft(ramp(4, 6), flags=cv2.DFT_COMPLEX_OUTPUT, nonzeroRows=2))
+    out["nz2_6x1"] = attempt(lambda: cv2.dft(ramp(6, 1), nonzeroRows=2))
+    return out
 
 
 def main() -> None:
@@ -55,6 +108,11 @@ def main() -> None:
         "complex_input_inverse_no_scale": tolist(cv2.dft(complex_spec, flags=cv2.DFT_INVERSE)),
         "idft_default_no_scale": tolist(cv2.idft(complex_spec)),
         "idft_scale": tolist(cv2.idft(complex_spec, flags=cv2.DFT_SCALE)),
+        # #224: idft never scales unless DFT_SCALE is passed; DFT_SCALE divides by the element count.
+        "idft_scale_real_fixture_default": tolist(cv2.idft(SRC)),
+        "idft_scale_real_fixture_scale": tolist(cv2.idft(SRC, flags=cv2.DFT_SCALE)),
+        "idft_scale_complex_1x4_default": tolist(cv2.idft(COMPLEX_1X4)),
+        "idft_scale_complex_1x4_scale": tolist(cv2.idft(COMPLEX_1X4, flags=cv2.DFT_SCALE)),
         "idft_real_output": tolist(cv2.idft(complex_spec, flags=cv2.DFT_REAL_OUTPUT)),
         "idft_real_output_scale": tolist(cv2.idft(complex_spec, flags=cv2.DFT_REAL_OUTPUT | cv2.DFT_SCALE)),
         "idft_real_output_rows_scale": tolist(
@@ -67,6 +125,7 @@ def main() -> None:
         "u8_input": attempt(lambda: cv2.dft(SRC.astype(np.uint8), flags=C)),
         "f64_complex_output": tolist(cv2.dft(SRC.astype(np.float64), flags=C)),
     }
+    results["dft_ccs"] = ccs_rows()
 
     results["dct"] = {
         "row8_src": tolist(ROW8),

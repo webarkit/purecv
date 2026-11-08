@@ -35,7 +35,9 @@
  */
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use purecv::core::dft::{dft, get_optimal_dft_size, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_SCALE};
+use purecv::core::dft::{
+    dft, get_optimal_dft_size, idft, DFT_COMPLEX_OUTPUT, DFT_INVERSE, DFT_SCALE,
+};
 use purecv::core::Matrix;
 use std::hint::black_box;
 
@@ -60,6 +62,16 @@ fn bench_dft(c: &mut Criterion) {
     let freq_256 = dft(&src_256, DFT_COMPLEX_OUTPUT, 0).unwrap();
     c.bench_function("dft_inverse_256x256_f32", |b| {
         b.iter(|| dft(black_box(&freq_256), DFT_INVERSE | DFT_SCALE, 0).unwrap())
+    });
+
+    // --- DFT forward and inverse on the CCS path (default flags), 256×256 f32 ---
+    c.bench_function("dft_forward_256x256_f32_ccs", |b| {
+        b.iter(|| dft(black_box(&src_256), 0, 0).unwrap())
+    });
+
+    let ccs_256 = dft(&src_256, 0, 0).unwrap();
+    c.bench_function("idft_ccs_256x256_f32", |b| {
+        b.iter(|| idft(black_box(&ccs_256), DFT_SCALE, 0).unwrap())
     });
 
     // --- DFT forward, 512×512 f32 ---
