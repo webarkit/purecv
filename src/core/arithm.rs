@@ -1252,7 +1252,7 @@ fn check_norm_type<T: DataType>(func: &str, norm_type: NormTypes, channels: usiz
     }
 }
 
-/// Checks that `mask` is one 8-bit channel of `rows`×`cols`, as OpenCV asserts, and returns
+/// Checks that `mask` is one 8-bit channel of `rows`x`cols`, as OpenCV asserts, and returns
 /// its bytes. A mask without elements is no mask, as OpenCV's `mask.empty()` tests.
 fn norm_mask<'a>(
     func: &str,
@@ -1376,7 +1376,7 @@ where
 }
 
 /// `a - b` as OpenCV's `normDiff*_` take it: in `float` for `f32` (then widened), exactly
-/// for the other depths, so `u8` 0 − 255 is −255 and never wraps. OpenCV subtracts `i32` in
+/// for the other depths, so `u8` 0 - 255 is -255 and never wraps. OpenCV subtracts `i32` in
 /// `int`, which wraps on x86 when the difference leaves the `int` range; purecv keeps the
 /// exact difference there.
 #[inline]
@@ -1429,15 +1429,15 @@ fn hamming_norm<T: ToPrimitive>(
 /// Every channel takes part. A `mask` is a single-channel `u8` matrix of the source's
 /// rows and columns: a non-zero byte selects every channel of its pixel. For the Hamming
 /// norms OpenCV ANDs the mask into the bytes instead, so a mask byte of 1 keeps only bit 0;
-/// purecv does the same. A mask without elements (0×0) is no mask, as in OpenCV. An empty
+/// purecv does the same. A mask without elements (0x0) is no mask, as in OpenCV. An empty
 /// source has norm 0.
 ///
 /// On `i32`, OpenCV takes absolute values in `int`, which wraps on x86: `abs(i32::MIN)`
 /// stays `i32::MIN`, so that element never becomes the `Inf` maximum and its `L1` can come
-/// out negative. `[i32::MIN]` gives `Inf` 0 and `L1` −2147483648 in OpenCV, and
-/// `[i32::MIN, 5, 0]` gives `Inf` 5 and `L1` −2147483643; here they are 2147483648 and
+/// out negative. `[i32::MIN]` gives `Inf` 0 and `L1` -2147483648 in OpenCV, and
+/// `[i32::MIN, 5, 0]` gives `Inf` 5 and `L1` -2147483643; here they are 2147483648 and
 /// 2147483648, and 2147483648 and 2147483653. `[i32::MIN, i32::MAX, 0]` gives `Inf`
-/// 2147483647 and `L1` −1 in OpenCV, 2147483648 and 4294967295 here. purecv computes
+/// 2147483647 and `L1` -1 in OpenCV, 2147483648 and 4294967295 here. purecv computes
 /// these exactly and does not port the wrap.
 ///
 /// # Errors
@@ -1666,7 +1666,7 @@ where
 ///
 /// Without a mask `dst` is replaced by the result. With a mask `dst` must already have
 /// the shape of `src` and only the selected elements are written. A mask without elements
-/// (0×0) is no mask, as in OpenCV. A destination
+/// (0x0) is no mask, as in OpenCV. A destination
 /// type OpenCV has no depth for (`u32`, `u64`, `i64`) is handled like the others: values
 /// saturate to its range and nothing panics.
 ///

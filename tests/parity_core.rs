@@ -2508,8 +2508,8 @@ fn assert_norm(got: f64, want: f64, tol: f64, what: &str) {
 }
 
 /// Checks one depth of `core_stats.py`, `norm_types.<depth>`: `$a` and `$b` are its `a` and
-/// `b` (12 values), shaped as 3×4×1 (`single`) and 2×2×3 (`multi`); `pixel_mask` selects
-/// pixels (0, 0) and (1, 1) of the 2×2 matrix. Each row is `[inf, l1, l2, l2sqr]`.
+/// `b` (12 values), shaped as 3x4x1 (`single`) and 2x2x3 (`multi`); `pixel_mask` selects
+/// pixels (0, 0) and (1, 1) of the 2x2 matrix. Each row is `[inf, l1, l2, l2sqr]`.
 macro_rules! check_norm_depth {
     ($name:expr, $a:expr, $b:expr, $tol:expr,
      single: $single:expr, masked: $masked:expr, diff: $diff:expr, diff_masked: $diff_masked:expr) => {{
@@ -2619,7 +2619,7 @@ fn norm_every_depth_matches_opencv() {
 }
 
 /// `core_stats.py`, `norm_types.mask_rules`: the mask is one 8-bit channel of the source's
-/// size; any non-zero byte selects; an all-zero mask gives 0; an empty (0×0) mask is no
+/// size; any non-zero byte selects; an all-zero mask gives 0; an empty (0x0) mask is no
 /// mask (`mask_empty_*` equal the unmasked `norm_types.f32` rows).
 #[test]
 fn norm_mask_rules_match_opencv() {
@@ -2772,7 +2772,7 @@ fn norm_hamming_rejects_non_u8() {
 }
 
 /// `core_stats.py`, `norm_types.diff`: `u8` differences are taken without overflow
-/// (0 − 255 counts 255), and the empty rows of `norm_types.empty` are 0.
+/// (0 - 255 counts 255), and the empty rows of `norm_types.empty` are 0.
 #[test]
 fn norm_diff_matches_opencv() {
     let a = row(&[0u8, 255, 10, 200]);
@@ -2825,9 +2825,9 @@ fn norm_diff_matches_opencv() {
 
 /// purecv's own behaviour, not OpenCV's: on `i32` OpenCV subtracts and takes `abs` in `int`,
 /// which wraps on x86 (`core_stats.py`, `norm_types.diff.i32_int_min_single_inf` 2147483647,
-/// `i32_int_min_single_l1` −1, `i32_extremes_inf` 1, `i32_extremes_l1` 2, and for a source
+/// `i32_int_min_single_l1` -1, `i32_extremes_inf` 1, `i32_extremes_l1` 2, and for a source
 /// whose only wrapped element is `i32::MIN`: `i32_only_int_min_inf` 0, `i32_only_int_min_l1`
-/// −2147483648, `i32_int_min_5_0_inf` 5, `i32_int_min_5_0_l1` −2147483643). `abs(i32::MIN)`
+/// -2147483648, `i32_int_min_5_0_inf` 5, `i32_int_min_5_0_l1` -2147483643). `abs(i32::MIN)`
 /// stays negative in `int`, so it never becomes the `Inf` maximum. purecv computes exactly;
 /// the wrap is not ported.
 #[test]
@@ -5465,9 +5465,9 @@ fn kmeans_max_iter_is_clamped_to_2_100() {
     }
 }
 
-/// OpenCV stops when the largest squared per-center shift is at most `epsilon²`
-/// (`core_kmeans.py`, `chain_eps_only_*`). On the diagonal a center moves by √2 times its
-/// per-coordinate shift, so ε = 0.15 stops after 44 iterations, later than a per-coordinate
+/// OpenCV stops when the largest squared per-center shift is at most `epsilon^2`
+/// (`core_kmeans.py`, `chain_eps_only_*`). On the diagonal a center moves by sqrt(2) times its
+/// per-coordinate shift, so eps = 0.15 stops after 44 iterations, later than a per-coordinate
 /// test would. `EPS` alone also caps the iterations at 100.
 #[test]
 fn kmeans_epsilon_compares_squared_shift() {
