@@ -37,10 +37,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use purecv::core::arithm::{
     absdiff, add, add_weighted, bitwise_and, convert_scale_abs, count_non_zero, divide, dot, gemm,
-    lut, magnitude, mean, min, multiply, norm, normalize, sqrt, subtract, sum,
+    kmeans, lut, magnitude, mean, min, multiply, norm, normalize, sqrt, subtract, sum,
 };
-use purecv::core::types::NormTypes;
-use purecv::core::Matrix;
+use purecv::core::types::{NormTypes, TermCriteria, TermType, KMEANS_PP_CENTERS};
+use purecv::core::{set_rng_seed, Matrix};
 use std::hint::black_box;
 
 fn bench_arithm(c: &mut Criterion) {
@@ -204,6 +204,45 @@ fn bench_arithm(c: &mut Criterion) {
     c.bench_function("lut_1024x1024x3_u8_broadcast", |b| {
         b.iter(|| lut(black_box(&u3), black_box(&lut_table)).unwrap())
     });
+
+    // --- kmeans ---
+    // 20000 samples of 8 dims around 16 centers (a fixed LCG), kmeans++ centers, one
+    // attempt. Seeded before every call so each iteration does the same work.
+    let (n, dims, k) = (20000usize, 8usize, 16i32);
+    let mut state = 0x2545_f491u32;
+    let mut next = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state >> 8) as f32 / (1u32 << 24) as f32
+    };
+    let mut samples = Vec::with_capacity(n * dims);
+    for i in 0..n {
+        let cluster = (i % k as usize) as f32;
+        for _ in 0..dims {
+            samples.push(cluster * 10.0 + next() * 4.0);
+        }
+    }
+    let km_data = Matrix::from_vec(n, dims, 1, samples);
+    let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
+    let mut group = c.benchmark_group("kmeans");
+    group.sample_size(10);
+    group.bench_function("kmeans_20000x8_k16", |b| {
+        b.iter(|| {
+            set_rng_seed(12345);
+            let mut labels = Matrix::<i32>::new(0, 0, 0);
+            let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+            kmeans(
+                black_box(&km_data),
+                k,
+                &mut labels,
+                criteria,
+                1,
+                KMEANS_PP_CENTERS,
+                &mut centers,
+            )
+            .unwrap()
+        })
+    });
+    group.finish();
 }
 
 criterion_group!(benches, bench_arithm);

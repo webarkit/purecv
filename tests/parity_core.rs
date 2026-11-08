@@ -2478,9 +2478,9 @@ fn norm_inf_l1_l2_match_opencv() {
     assert_eq!(norm(&two_ch, NormTypes::Inf, None).unwrap(), 12.0);
 }
 
-/// OpenCV: `norm(src, NORM_L2SQR)` = 177.5 and `norm(u8, NORM_HAMMING)` = popcount (12).
+/// `core_stats.py`, `norm.l2sqr` = 177.5, `norm.hamming` = 12 (popcount) and `norm.hamming2`
+/// = 7 (non-zero 2-bit cells).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #214"]
 fn norm_l2sqr_and_hamming_are_supported_by_opencv() {
     assert_eq!(
         norm(&row(&NORM_SRC), NormTypes::L2Sqr, None).unwrap(),
@@ -2491,10 +2491,586 @@ fn norm_l2sqr_and_hamming_are_supported_by_opencv() {
     assert_eq!(norm(&bits, NormTypes::Hamming2, None).unwrap(), 7.0);
 }
 
+/// The norms `core_stats.py` measures per depth in `norm_types`, in the order `NORM_KINDS`.
+const NORM_KINDS: [NormTypes; 4] = [
+    NormTypes::Inf,
+    NormTypes::L1,
+    NormTypes::L2,
+    NormTypes::L2Sqr,
+];
+
+/// `|purecv - OpenCV| <= tol * max(1, |OpenCV|)`; `tol` 0 asks for the exact value.
+fn assert_norm(got: f64, want: f64, tol: f64, what: &str) {
+    assert!(
+        (got - want).abs() <= tol * want.abs().max(1.0),
+        "{what}: purecv {got} vs OpenCV {want}"
+    );
+}
+
+/// Checks one depth of `core_stats.py`, `norm_types.<depth>`: `$a` and `$b` are its `a` and
+/// `b` (12 values), shaped as 3x4x1 (`single`) and 2x2x3 (`multi`); `pixel_mask` selects
+/// pixels (0, 0) and (1, 1) of the 2x2 matrix. Each row is `[inf, l1, l2, l2sqr]`.
+macro_rules! check_norm_depth {
+    ($name:expr, $a:expr, $b:expr, $tol:expr,
+     single: $single:expr, masked: $masked:expr, diff: $diff:expr, diff_masked: $diff_masked:expr) => {{
+        let (a1, b1) = (
+            Matrix::from_vec(3, 4, 1, $a.to_vec()),
+            Matrix::from_vec(3, 4, 1, $b.to_vec()),
+        );
+        let (a3, b3) = (
+            Matrix::from_vec(2, 2, 3, $a.to_vec()),
+            Matrix::from_vec(2, 2, 3, $b.to_vec()),
+        );
+        let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0, 0, 1]);
+        for (k, &t) in NORM_KINDS.iter().enumerate() {
+            let what = |key: &str| format!("norm_types.{}.{}_{:?}", $name, key, t);
+            assert_norm(
+                norm(&a1, t, None).unwrap(),
+                $single[k],
+                $tol,
+                &what("single"),
+            );
+            assert_norm(
+                norm(&a3, t, None).unwrap(),
+                $single[k],
+                $tol,
+                &what("multi"),
+            );
+            assert_norm(
+                norm(&a3, t, Some(&mask)).unwrap(),
+                $masked[k],
+                $tol,
+                &what("multi_masked"),
+            );
+            assert_norm(
+                norm_diff(&a1, &b1, t, None).unwrap(),
+                $diff[k],
+                $tol,
+                &what("diff_single"),
+            );
+            assert_norm(
+                norm_diff(&a3, &b3, t, None).unwrap(),
+                $diff[k],
+                $tol,
+                &what("diff_multi"),
+            );
+            assert_norm(
+                norm_diff(&a3, &b3, t, Some(&mask)).unwrap(),
+                $diff_masked[k],
+                $tol,
+                &what("diff_multi_masked"),
+            );
+        }
+    }};
+}
+
+/// `core_stats.py`, `norm_types.<depth>.{single,multi,multi_masked}_*`: every norm on every
+/// depth. A mask on a multi-channel source selects pixels (all channels of a pixel), as
+/// OpenCV's `normL1_` & co. step `src += cn` per mask byte.
+#[test]
+fn norm_every_depth_matches_opencv() {
+    // exact for 8- and 16-bit inputs, where OpenCV sums in int
+    check_norm_depth!("u8", [0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+        [255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255], 0.0,
+        single: [255.0, 1048.0, 444.4569720456638, 197542.0],
+        masked: [255.0, 609.0, 364.3610846399489, 132759.0],
+        diff: [255.0, 1828.0, 615.7012262453276, 379088.0],
+        diff_masked: [255.0, 1029.0, 494.00708496943645, 244043.0]);
+    check_norm_depth!("i8", [-128i8, 127, -5, 0, 3, -100, 60, 1, -17, 64, -127, 33],
+        [127i8, -128, 5, -1, -3, 100, -60, 1, 17, -64, 127, -33], 0.0,
+        single: [128.0, 665.0, 260.2902226361951, 67751.0],
+        masked: [128.0, 484.0, 232.06033698157037, 53852.0],
+        diff: [255.0, 1329.0, 520.5756429184908, 270999.0],
+        diff_masked: [255.0, 968.0, 464.11851934608256, 215406.0]);
+    check_norm_depth!("u16", [0u16, 65535, 7, 1000, 3, 40000, 1, 90, 17, 640, 60000, 33],
+        [65535u16, 0, 7, 0, 60000, 1, 90, 1, 640, 17, 0, 65535], 0.0,
+        single: [65535.0, 167326.0, 97448.73196712208, 9496255362.0],
+        masked: [65535.0, 126215.0, 88855.20222811942, 7895246963.0],
+        diff: [65535.0, 358992.0, 147246.51630514048, 21681536564.0],
+        diff_masked: [65535.0, 257195.0, 128376.68239598654, 16480572583.0]);
+    check_norm_depth!("i16", [-32768i16, 32767, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33],
+        [32767i16, -32768, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33], 0.0,
+        single: [32768.0, 97834.0, 55219.46328967713, 3049189126.0],
+        masked: [32768.0, 96213.0, 55207.14470972032, 3047828827.0],
+        diff: [65535.0, 195667.0, 110438.92655671731, 12196756499.0],
+        diff_masked: [65535.0, 192426.0, 110414.28941038383, 12191315306.0]);
+    // squares near 2^62 round in f64; the order of the sum may differ
+    check_norm_depth!("i32",
+        [-2000000000i32, 2147483647, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33],
+        [5i32, 5, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33], 1e-15,
+        single: [2147483647.0, 4147515946.0, 2934567432.354246, 8.611686015034192e18],
+        masked: [2147483647.0, 4147514325.0, 2934567432.354014, 8.611686015032831e18],
+        diff: [2147483642.0, 4147548244.0, 2934567432.563898, 8.611686016264668e18],
+        diff_masked: [2147483642.0, 4147545003.0, 2934567432.5629706, 8.611686016259227e18]);
+    check_norm_depth!("f32",
+        [3.0f32, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0],
+        [1.0f32, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0], 1e-12,
+        single: [1000.25, 1098.900000013411, 1002.5092144214972, 1005024.7250000074],
+        masked: [65.5, 75.30000001192093, 65.72358785099267, 4319.590000007152],
+        diff: [999.5, 1161.450000025332, 1008.1842254766879, 1016435.4325000289],
+        diff_masked: [131.0, 139.35000002384186, 131.11415827449227, 17190.92250002861]);
+    check_norm_depth!("f64",
+        [3.0f64, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0],
+        [1.0f64, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0], 1e-12,
+        single: [1000.25, 1098.9, 1002.5092144214934, 1005024.725],
+        masked: [65.5, 75.3, 65.72358785093827, 4319.59],
+        diff: [999.5, 1161.45, 1008.1842254766735, 1016435.4325],
+        diff_masked: [131.0, 139.35, 131.11415827438316, 17190.9225]);
+}
+
+/// `core_stats.py`, `norm_types.mask_rules`: the mask is one 8-bit channel of the source's
+/// size; any non-zero byte selects; an all-zero mask gives 0; an empty (0x0) mask is no
+/// mask (`mask_empty_*` equal the unmasked `norm_types.f32` rows).
+#[test]
+fn norm_mask_rules_match_opencv() {
+    let a3 = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            3.0f32, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0,
+        ],
+    );
+    let wrong_size = Matrix::from_vec(2, 3, 1, vec![1u8; 6]);
+    assert!(matches!(
+        norm(&a3, NormTypes::L2, Some(&wrong_size)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
+    assert!(matches!(
+        norm_diff(&a3, &a3, NormTypes::L2, Some(&wrong_size)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
+    let three_channel = Matrix::from_vec(2, 2, 3, vec![1u8; 12]);
+    assert!(matches!(
+        norm(&a3, NormTypes::L2, Some(&three_channel)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
+    // `mask_empty_l2`, `mask_empty_inf`, `diff_mask_empty_l2`, `relative_mask_empty_l1`,
+    // `hamming_mask_empty`
+    let empty = Matrix::<u8>::new(0, 0, 1);
+    let b3 = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            1.0f32, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0,
+        ],
+    );
+    assert_norm(
+        norm(&a3, NormTypes::L2, Some(&empty)).unwrap(),
+        1002.5092144214972,
+        1e-12,
+        "mask_empty_l2",
+    );
+    assert_eq!(norm(&a3, NormTypes::Inf, Some(&empty)).unwrap(), 1000.25);
+    assert_norm(
+        norm_diff(&a3, &b3, NormTypes::L2, Some(&empty)).unwrap(),
+        1008.1842254766879,
+        1e-12,
+        "diff_mask_empty_l2",
+    );
+    assert_norm(
+        norm_relative(&a3, &b3, NormTypes::L1, Some(&empty)).unwrap(),
+        12.323076921397387,
+        1e-12,
+        "relative_mask_empty_l1",
+    );
+    let bits = row(&[11u8, 255, 0, 128]);
+    assert_eq!(norm(&bits, NormTypes::Hamming, Some(&empty)).unwrap(), 12.0);
+    let zeros = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+    assert_eq!(norm(&a3, NormTypes::L2, Some(&zeros)).unwrap(), 0.0);
+    assert_eq!(norm(&a3, NormTypes::Inf, Some(&zeros)).unwrap(), 0.0);
+    // `mask_255_l1` equals `multi_masked_l1` of f32
+    let mask_255 = Matrix::from_vec(2, 2, 1, vec![255u8, 0, 0, 255]);
+    assert_norm(
+        norm(&a3, NormTypes::L1, Some(&mask_255)).unwrap(),
+        75.30000001192093,
+        1e-12,
+        "mask_255_l1",
+    );
+}
+
+/// `core_stats.py`, `norm_types.hamming`: `Hamming` counts set bits, `Hamming2` non-zero
+/// 2-bit cells (`cellSize` 2). With a mask OpenCV takes `bitwise_and(src, mask)`, so mask
+/// bytes act as bit masks, not as a pixel selection.
+#[test]
+fn norm_hamming_matches_opencv() {
+    let a = Matrix::from_vec(2, 4, 1, vec![11u8, 255, 0, 128, 85, 170, 195, 1]);
+    let b = Matrix::from_vec(2, 4, 1, vec![255u8, 15, 0, 129, 170, 170, 60, 128]);
+    let mask = Matrix::from_vec(2, 4, 1, vec![255u8, 1, 0, 15, 240, 255, 3, 0]);
+    assert_eq!(norm(&a, NormTypes::Hamming, None).unwrap(), 25.0);
+    assert_eq!(norm(&a, NormTypes::Hamming2, None).unwrap(), 18.0);
+    assert_eq!(norm(&a, NormTypes::Hamming, Some(&mask)).unwrap(), 12.0);
+    assert_eq!(norm(&a, NormTypes::Hamming2, Some(&mask)).unwrap(), 10.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming, None).unwrap(), 28.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming2, None).unwrap(), 16.0);
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Hamming, Some(&mask)).unwrap(),
+        12.0
+    );
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Hamming2, Some(&mask)).unwrap(),
+        7.0
+    );
+    assert_norm(
+        norm_relative(&a, &b, NormTypes::Hamming, None).unwrap(),
+        1.037037037037037,
+        1e-15,
+        "relative_hamming",
+    );
+    // `norm_types.u8.single_hamming` / `single_hamming2` / `diff_single_hamming2`
+    let u8a = Matrix::from_vec(
+        3,
+        4,
+        1,
+        vec![0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+    );
+    let u8b = Matrix::from_vec(3, 4, 1, vec![255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255]);
+    assert_eq!(norm(&u8a, NormTypes::Hamming, None).unwrap(), 33.0);
+    assert_eq!(norm(&u8a, NormTypes::Hamming2, None).unwrap(), 24.0);
+    assert_eq!(
+        norm_diff(&u8a, &u8b, NormTypes::Hamming2, None).unwrap(),
+        38.0
+    );
+}
+
+/// `core_stats.py`, `norm_types.hamming.{u8_three_channel,u8_two_channel_diff,i8,u16,f32,
+/// diff_f32}` and `norm_types.<depth>.*_hamming*`: OpenCV asserts `type() == CV_8U`, so
+/// Hamming needs one `u8` channel.
+#[test]
+fn norm_hamming_rejects_non_u8() {
+    let invalid = |r: Result<f64>| matches!(r, Err(PureCvError::InvalidInput(_)));
+    for t in [NormTypes::Hamming, NormTypes::Hamming2] {
+        assert!(invalid(norm(&row(&[1i8, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1u16, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1i16, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1i32, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1.0f32, 2.0]), t, None)));
+        assert!(invalid(norm(&row(&[1.0f64, 2.0]), t, None)));
+        assert!(invalid(norm_diff(
+            &row(&[1.0f32]),
+            &row(&[2.0f32]),
+            t,
+            None
+        )));
+        assert!(invalid(norm_relative(
+            &row(&[1i16]),
+            &row(&[2i16]),
+            t,
+            None
+        )));
+        let three = Matrix::from_vec(2, 1, 3, vec![11u8, 255, 0, 85, 170, 195]);
+        assert!(invalid(norm(&three, t, None)));
+        let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
+        assert!(invalid(norm_diff(&two, &two, t, None)));
+    }
+    // `norm.minmax_as_norm_type`: MinMax and Relative are not norm types
+    let f = row(&NORM_SRC);
+    assert!(invalid(norm(&f, NormTypes::MinMax, None)));
+    assert!(invalid(norm(&f, NormTypes::Relative, None)));
+    assert!(invalid(norm_diff(&f, &f, NormTypes::Relative, None)));
+}
+
+/// `core_stats.py`, `norm_types.diff`: `u8` differences are taken without overflow
+/// (0 - 255 counts 255), and the empty rows of `norm_types.empty` are 0.
+#[test]
+fn norm_diff_matches_opencv() {
+    let a = row(&[0u8, 255, 10, 200]);
+    let b = row(&[255u8, 0, 10, 100]);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Inf, None).unwrap(), 255.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::L1, None).unwrap(), 610.0);
+    assert_norm(
+        norm_diff(&a, &b, NormTypes::L2, None).unwrap(),
+        374.2325480232846,
+        1e-15,
+        "u8_l2",
+    );
+    assert_eq!(norm_diff(&a, &b, NormTypes::L2Sqr, None).unwrap(), 140050.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming, None).unwrap(), 20.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming2, None).unwrap(), 11.0);
+    // `norm.two_array_l2` and `norm.relative_l2` (src2 = `norm.relative_l2_src2`, all ones)
+    let ones = row(&[1.0f32; 6]);
+    assert_norm(
+        norm_diff(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap(),
+        12.62933094031509,
+        1e-12,
+        "two_array_l2",
+    );
+    assert_norm(
+        norm_relative(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap(),
+        5.155902766086007,
+        1e-12,
+        "relative_l2",
+    );
+    // `norm_types.empty`
+    let e = Matrix::<f32>::new(0, 3, 1);
+    for t in NORM_KINDS {
+        assert_eq!(norm(&e, t, None).unwrap(), 0.0);
+    }
+    assert_eq!(norm_diff(&e, &e, NormTypes::L2, None).unwrap(), 0.0);
+    assert_eq!(norm_relative(&e, &e, NormTypes::L2, None).unwrap(), 0.0);
+    let e8 = Matrix::<u8>::new(0, 0, 1);
+    for t in [
+        NormTypes::Inf,
+        NormTypes::L1,
+        NormTypes::L2,
+        NormTypes::L2Sqr,
+    ] {
+        assert_eq!(norm(&e8, t, None).unwrap(), 0.0);
+    }
+    assert_eq!(norm(&e8, NormTypes::Hamming, None).unwrap(), 0.0);
+    assert_eq!(norm(&e8, NormTypes::Hamming2, None).unwrap(), 0.0);
+    assert_eq!(norm_diff(&e8, &e8, NormTypes::Hamming, None).unwrap(), 0.0);
+}
+
+/// purecv's own behaviour, not OpenCV's: on `i32` OpenCV subtracts and takes `abs` in `int`,
+/// which wraps on x86 (`core_stats.py`, `norm_types.diff.i32_int_min_single_inf` 2147483647,
+/// `i32_int_min_single_l1` -1, `i32_extremes_inf` 1, `i32_extremes_l1` 2, and for a source
+/// whose only wrapped element is `i32::MIN`: `i32_only_int_min_inf` 0, `i32_only_int_min_l1`
+/// -2147483648, `i32_int_min_5_0_inf` 5, `i32_int_min_5_0_l1` -2147483643). `abs(i32::MIN)`
+/// stays negative in `int`, so it never becomes the `Inf` maximum. purecv computes exactly;
+/// the wrap is not ported.
+#[test]
+fn norm_i32_is_exact_where_opencv_wraps() {
+    let only_min = row(&[i32::MIN]);
+    assert_eq!(norm(&only_min, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&only_min, NormTypes::L1, None).unwrap(), 2147483648.0);
+    let min_5_0 = row(&[i32::MIN, 5, 0]);
+    assert_eq!(norm(&min_5_0, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&min_5_0, NormTypes::L1, None).unwrap(), 2147483653.0);
+    let a = row(&[i32::MIN, i32::MAX, 0]);
+    let b = row(&[i32::MAX, i32::MIN, 0]);
+    assert_eq!(norm(&a, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&a, NormTypes::L1, None).unwrap(), 4294967295.0);
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Inf, None).unwrap(),
+        4294967295.0
+    );
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::L1, None).unwrap(),
+        8589934590.0
+    );
+}
+
+/// `core_stats.py`, `norm_types.diff.{shape_mismatch,transposed_shape,channel_mismatch}`:
+/// OpenCV asserts `sameSize` and equal types; with one `T` a channel mismatch is the only
+/// type mismatch left.
+#[test]
+fn norm_diff_rejects_shape_mismatch() {
+    let shape = |r: Result<f64>| matches!(r, Err(PureCvError::InvalidDimensions(_)));
+    let channels = |r: Result<f64>| matches!(r, Err(PureCvError::IncompatibleChannels(_)));
+    let a = row(&[0u8, 255, 10, 200]);
+    assert!(shape(norm_diff(&a, &row(&[0u8; 3]), NormTypes::L2, None)));
+    let column = Matrix::from_vec(4, 1, 1, vec![0u8, 255, 10, 200]);
+    assert!(shape(norm_diff(&a, &column, NormTypes::L2, None)));
+    let one = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+    let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
+    assert!(channels(norm_diff(&one, &two, NormTypes::L2, None)));
+    assert!(channels(norm_relative(&one, &two, NormTypes::L2, None)));
+}
+
+/// `core_stats.py`, `norm_types.<depth>.relative_multi{,_masked}_*` and
+/// `norm_types.diff.relative_*`: `norm_diff / (norm(src2) + DBL_EPSILON)`, the mask applying
+/// to both; `src2` all zero divides by `DBL_EPSILON`, both zero gives 0.
+#[test]
+fn norm_relative_matches_opencv() {
+    let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0, 0, 1]);
+    let u8a = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+    );
+    let u8b = Matrix::from_vec(2, 2, 3, vec![255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255]);
+    let u8_rel = [
+        1.0,
+        1.9446808510638298,
+        1.3595713719258675,
+        1.8484343153603855,
+    ];
+    let u8_rel_masked = [
+        1.0,
+        1.9269662921348314,
+        1.368089046124633,
+        1.8716676381262078,
+    ];
+    let i16a = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            -32768i16, 32767, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33,
+        ],
+    );
+    let i16b = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            32767i16, -32768, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33,
+        ],
+    );
+    let i16_rel = [
+        1.999969482421875,
+        1.9999693361271529,
+        1.999999999262099,
+        3.9999999970483957,
+    ];
+    let i16_rel_masked = [
+        1.999969482421875,
+        2.0,
+        1.9999999998359486,
+        3.999999999343795,
+    ];
+    let fa = [
+        3.0, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0,
+    ];
+    let fb = [
+        1.0, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0,
+    ];
+    let f32a = Matrix::from_vec(2, 2, 3, fa.map(|v: f64| v as f32).to_vec());
+    let f32b = Matrix::from_vec(2, 2, 3, fb.map(|v: f64| v as f32).to_vec());
+    let f32_rel = [
+        15.259541984732824,
+        12.323076921397387,
+        15.02567174571983,
+        225.7708114101232,
+    ];
+    let f32_rel_masked = [
+        2.0,
+        1.9892933618861903,
+        2.0003091010157292,
+        4.001236499606355,
+    ];
+    let f64a = Matrix::from_vec(2, 2, 3, fa.to_vec());
+    let f64b = Matrix::from_vec(2, 2, 3, fb.to_vec());
+    let f64_rel = [
+        15.259541984732824,
+        12.323076923076924,
+        15.025671745733543,
+        225.77081141053526,
+    ];
+    let f64_rel_masked = [
+        2.0,
+        1.9892933618843682,
+        2.0003091010157292,
+        4.001236499606357,
+    ];
+    for (k, &t) in NORM_KINDS.iter().enumerate() {
+        let what = |d: &str| format!("norm_types.{d}.relative_multi_{t:?}");
+        assert_norm(
+            norm_relative(&u8a, &u8b, t, None).unwrap(),
+            u8_rel[k],
+            1e-15,
+            &what("u8"),
+        );
+        assert_norm(
+            norm_relative(&u8a, &u8b, t, Some(&mask)).unwrap(),
+            u8_rel_masked[k],
+            1e-15,
+            &what("u8 masked"),
+        );
+        assert_norm(
+            norm_relative(&i16a, &i16b, t, None).unwrap(),
+            i16_rel[k],
+            1e-15,
+            &what("i16"),
+        );
+        assert_norm(
+            norm_relative(&i16a, &i16b, t, Some(&mask)).unwrap(),
+            i16_rel_masked[k],
+            1e-15,
+            &what("i16 masked"),
+        );
+        assert_norm(
+            norm_relative(&f32a, &f32b, t, None).unwrap(),
+            f32_rel[k],
+            1e-12,
+            &what("f32"),
+        );
+        assert_norm(
+            norm_relative(&f32a, &f32b, t, Some(&mask)).unwrap(),
+            f32_rel_masked[k],
+            1e-12,
+            &what("f32 masked"),
+        );
+        assert_norm(
+            norm_relative(&f64a, &f64b, t, None).unwrap(),
+            f64_rel[k],
+            1e-12,
+            &what("f64"),
+        );
+        assert_norm(
+            norm_relative(&f64a, &f64b, t, Some(&mask)).unwrap(),
+            f64_rel_masked[k],
+            1e-12,
+            &what("f64 masked"),
+        );
+    }
+    // `norm_types.diff.relative_src2_zero_f32_*`, `relative_src2_zero_u8_hamming`,
+    // `relative_both_zero_f32_l2`
+    let src = row(&[3.0f32, -4.0, 0.0, 12.0, -1.5, 2.5]);
+    let zeros = row(&[0.0f32; 6]);
+    let src2_zero = [
+        5.404319552844595e16,
+        1.035827914295214e17,
+        6.000106419596382e16,
+        7.99388933858263e17,
+    ];
+    for (k, &t) in NORM_KINDS.iter().enumerate() {
+        assert_norm(
+            norm_relative(&src, &zeros, t, None).unwrap(),
+            src2_zero[k],
+            1e-15,
+            "src2 zero",
+        );
+    }
+    assert_norm(
+        norm_relative(
+            &row(&[0u8, 255, 10, 200]),
+            &row(&[0u8; 4]),
+            NormTypes::Hamming,
+            None,
+        )
+        .unwrap(),
+        5.854679515581645e16,
+        1e-15,
+        "relative_src2_zero_u8_hamming",
+    );
+    assert_eq!(
+        norm_relative(&zeros, &zeros, NormTypes::L2, None).unwrap(),
+        0.0
+    );
+}
+
+/// Values from `core_stats.py`, `normalize.*`. `normalize.f32_l2_alpha1_mask_empty`: a mask
+/// without elements is no mask (`mask.empty()`), so the result equals `f32_l2_alpha1`.
 #[test]
 fn normalize_f32_matches_opencv() {
     let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
     let mut dst = Matrix::<f32>::new(1, 4, 1);
+    let empty_mask = Matrix::<u8>::new(0, 0, 1);
+    normalize(
+        &src,
+        &mut dst,
+        1.0,
+        0.0,
+        NormTypes::L2,
+        -1,
+        Some(&empty_mask),
+    )
+    .unwrap();
+    assert_close(
+        &dst.data.iter().map(|&v| v as f64).collect::<Vec<_>>(),
+        &[
+            0.03955938667058945,
+            0.0791187733411789,
+            0.11867816746234894,
+            0.9889847040176392,
+        ],
+        1e-7,
+        "normalize L2 with an empty mask",
+    );
     normalize(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, -1, None).unwrap();
     assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
     normalize(&src, &mut dst, 1.0, 0.0, NormTypes::L2, -1, None).unwrap();
@@ -4654,14 +5230,13 @@ fn kmeans_converges_to_opencv_partition() {
     assert!(kmeans(&data, 13, &mut l1, criteria, 1, KMEANS_PP_CENTERS, &mut c1).is_err());
 }
 
-/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` (seeded 42)
-/// and reaches compactness 9.5 on this fixture with 1, 3 and 5 attempts
-/// (`random_centers_attempts1`, `random_centers_attempts3`, `random_centers_attempts5`).
-/// purecv picks k samples with an LCG seeded by the attempt index and stays in a local
-/// minimum (198.75) for 3 attempts.
+/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` and reaches
+/// compactness 9.5 on this fixture with 1, 3 and 5 attempts. The seed 0 matches the script's
+/// `cv2.setRNGSeed(0)` (`core_kmeans.py`, `default_state_random_attempts3`), the state of a
+/// fresh OpenCV thread.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #221"]
 fn kmeans_random_centers_three_attempts_find_the_global_partition() {
+    set_rng_seed(0);
     let data = kmeans_data();
     let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
     let mut labels = Matrix::<i32>::new(0, 0, 0);
@@ -4677,6 +5252,269 @@ fn kmeans_random_centers_three_attempts_find_the_global_partition() {
     )
     .unwrap();
     assert!((c - 9.5).abs() < 1e-9, "compactness {c}");
+}
+
+/// The chain fixture of `core_kmeans.py` (`CHAIN`), on the diagonal `(v, v)`: sample 0 starts
+/// alone in cluster 0 and Lloyd's iteration moves one chain sample into it per iteration, so
+/// it needs 103 iterations to converge.
+const KMEANS_CHAIN: [f32; 104] = [
+    0.00, 15.89, 17.83, 22.11, 23.59, 25.02, 26.00, 26.80, 27.45, 28.00, 28.48, 28.89, 29.25,
+    29.58, 29.88, 30.15, 30.40, 30.63, 30.85, 31.05, 31.24, 31.42, 31.59, 31.75, 31.90, 32.05,
+    32.19, 32.32, 32.46, 32.58, 32.71, 32.82, 32.94, 33.05, 33.16, 33.27, 33.38, 33.48, 33.58,
+    33.68, 33.78, 33.88, 33.97, 34.07, 34.16, 34.26, 34.35, 34.44, 34.53, 34.62, 34.71, 34.80,
+    34.89, 34.98, 35.07, 35.16, 35.25, 35.34, 35.44, 35.53, 35.62, 35.71, 35.81, 35.90, 36.00,
+    36.10, 36.20, 36.30, 36.41, 36.51, 36.62, 36.73, 36.84, 36.96, 37.08, 37.20, 37.33, 37.46,
+    37.59, 37.74, 37.88, 38.04, 38.20, 38.37, 38.54, 38.73, 38.93, 39.15, 39.38, 39.62, 39.89,
+    40.19, 40.51, 40.87, 41.27, 41.73, 42.27, 42.90, 43.66, 44.61, 45.86, 47.58, 50.24, 100.00,
+];
+
+fn kmeans_chain_data() -> Matrix<f32> {
+    let data = KMEANS_CHAIN.iter().flat_map(|&v| [v, v]).collect();
+    Matrix::from_vec(KMEANS_CHAIN.len(), 2, 1, data)
+}
+
+/// `CHAIN_INIT`: sample 0 in cluster 0, the rest in cluster 1.
+fn kmeans_chain_init() -> Matrix<i32> {
+    let mut labels = vec![1; KMEANS_CHAIN.len()];
+    labels[0] = 0;
+    Matrix::from_vec(KMEANS_CHAIN.len(), 1, 1, labels)
+}
+
+/// `first` zeros followed by ones: the label pattern of the chain after some iterations.
+fn kmeans_chain_labels(first: usize) -> Vec<i32> {
+    (0..KMEANS_CHAIN.len())
+        .map(|i| (i >= first) as i32)
+        .collect()
+}
+
+/// Runs `kmeans` and returns (compactness, labels, centers).
+fn kmeans_run(
+    data: &Matrix<f32>,
+    k: i32,
+    labels: Option<Matrix<i32>>,
+    criteria: TermCriteria,
+    attempts: i32,
+    flags: i32,
+) -> (f64, Vec<i32>, Vec<f32>) {
+    let mut labels = labels.unwrap_or_else(|| Matrix::<i32>::new(0, 0, 0));
+    let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+    let c = kmeans(
+        data,
+        k,
+        &mut labels,
+        criteria,
+        attempts,
+        flags,
+        &mut centers,
+    )
+    .unwrap();
+    (c, labels.data, centers.unwrap().data)
+}
+
+/// Deliberate divergence: when the `f32` center sums overflow on every attempt, OpenCV
+/// returns `DBL_MAX` and leaves the labels and centers unwritten (`core_kmeans.py`,
+/// `huge_*`; one case raises "can't update cluster center"). purecv returns an error instead
+/// of a bogus `Ok`, so this test does not compare with OpenCV's output.
+#[test]
+fn kmeans_errors_when_no_attempt_has_a_finite_compactness() {
+    let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
+    for (rows, k) in [
+        (vec![3e38f32, 3e38], 1),
+        (vec![3e38, 3e38], 2),
+        (vec![3e38, 3e38, 3e38], 1),
+    ] {
+        let data = Matrix::from_vec(rows.len(), 1, 1, rows);
+        for flags in [KMEANS_RANDOM_CENTERS, KMEANS_PP_CENTERS] {
+            let mut labels = Matrix::<i32>::new(0, 0, 0);
+            let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+            let r = kmeans(&data, k, &mut labels, criteria, 1, flags, &mut centers);
+            assert!(r.is_err(), "k {k} flags {flags}: {r:?}");
+        }
+    }
+}
+
+/// With `cv2.setRNGSeed(42)` before each call, OpenCV's raw (unsorted) labels and centers
+/// depend on the order of the `theRNG()` draws in `generateRandomCenter` and
+/// `generateCentersPP` (`core_kmeans.py`, `seed42_*`).
+#[test]
+fn kmeans_seeded_matches_opencv() {
+    let data = kmeans_data();
+    let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
+    let init = Matrix::from_vec(12, 1, 1, vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+    let random = (
+        vec![1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 0, 0],
+        vec![0.75f32, 10.5, 0.5, 0.5, 10.5, 10.75],
+    );
+    let pp = (
+        vec![2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0],
+        vec![0.75f32, 10.5, 10.5, 10.75, 0.5, 0.5],
+    );
+    let initial = (
+        vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2],
+        vec![0.5f32, 0.5, 10.5, 10.75, 0.75, 10.5],
+    );
+    for attempts in [1, 3, 5] {
+        for (flags, labels, expected) in [
+            (KMEANS_RANDOM_CENTERS, None, &random),
+            (KMEANS_PP_CENTERS, None, &pp),
+            (KMEANS_USE_INITIAL_LABELS, Some(init.clone()), &initial),
+        ] {
+            set_rng_seed(42);
+            let (c, l, ctr) = kmeans_run(&data, 3, labels, criteria, attempts, flags);
+            assert_eq!(c, 9.5, "flags {flags}, attempts {attempts}");
+            assert_eq!(l, expected.0, "flags {flags}, attempts {attempts}");
+            assert_eq!(ctr, expected.1, "flags {flags}, attempts {attempts}");
+        }
+    }
+
+    // Seeds where the first attempt ends in a worse partition and the third one wins, so the
+    // draws of later attempts and the keep-the-best rule are pinned
+    // (`seed{7,19}_random_attempts{1,3}`).
+    for (seed, one, one_labels, one_centers, three_labels, three_centers) in [
+        (
+            7,
+            207.2083332836628,
+            vec![1, 1, 1, 1, 2, 2, 2, 0, 1, 1, 1, 1],
+            vec![11.0f32, 12.0, 0.625, 5.5, 10.333334, 10.333334],
+            vec![1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 2, 2],
+            vec![10.5f32, 10.75, 0.5, 0.5, 0.75, 10.5],
+        ),
+        (
+            19,
+            207.375,
+            vec![0, 0, 0, 0, 2, 2, 1, 1, 0, 0, 0, 0],
+            vec![0.625f32, 5.5, 10.5, 11.5, 10.5, 10.0],
+            vec![2, 2, 2, 2, 0, 0, 0, 0, 1, 1, 1, 1],
+            vec![10.5f32, 10.75, 0.75, 10.5, 0.5, 0.5],
+        ),
+    ] {
+        set_rng_seed(seed);
+        let (c, l, ctr) = kmeans_run(&data, 3, None, criteria, 1, KMEANS_RANDOM_CENTERS);
+        assert_eq!(c, one, "seed {seed}, attempts 1");
+        assert_eq!(l, one_labels, "seed {seed}, attempts 1");
+        assert_eq!(ctr, one_centers, "seed {seed}, attempts 1");
+        set_rng_seed(seed);
+        let (c, l, ctr) = kmeans_run(&data, 3, None, criteria, 3, KMEANS_RANDOM_CENTERS);
+        assert_eq!(c, 9.5, "seed {seed}, attempts 3");
+        assert_eq!(l, three_labels, "seed {seed}, attempts 3");
+        assert_eq!(ctr, three_centers, "seed {seed}, attempts 3");
+    }
+
+    // The chain with K = 3 does not reach a unique partition, so the draws decide it.
+    let chain = kmeans_chain_data();
+    set_rng_seed(42);
+    let (c, l, ctr) = kmeans_run(&chain, 3, None, criteria, 1, KMEANS_RANDOM_CENTERS);
+    // seed42_chain_k3_random_attempts1
+    let mut labels = vec![1; 104];
+    labels[..11].fill(0);
+    labels[103] = 2;
+    assert_eq!(l, labels);
+    assert_eq!(
+        ctr,
+        vec![21.924545, 21.924545, 35.826195, 35.826195, 100.0, 100.0]
+    );
+    assert!((c - 4364.845311412355).abs() <= 1e-9 * c, "{c}");
+    set_rng_seed(42);
+    let (c, l, ctr) = kmeans_run(&chain, 3, None, criteria, 1, KMEANS_PP_CENTERS);
+    // seed42_chain_k3_pp_attempts1
+    let mut labels = vec![0; 104];
+    labels[..18].fill(1);
+    labels[103] = 2;
+    assert_eq!(l, labels);
+    assert_eq!(
+        ctr,
+        vec![36.32035, 36.32035, 24.997221, 24.997221, 100.0, 100.0]
+    );
+    assert!((c - 4353.362039823434).abs() <= 1e-9 * c, "{c}");
+}
+
+/// OpenCV clamps `maxCount` to [2, 100] when `COUNT` is set (`core_kmeans.py`,
+/// `chain_count_only_max*`): 0 and 1 run like 2, 1000 stops like 100 before the chain
+/// converges (103 iterations).
+#[test]
+fn kmeans_max_iter_is_clamped_to_2_100() {
+    let data = kmeans_chain_data();
+    let run = |max_count| {
+        let criteria = TermCriteria::new(TermType::Count, max_count, 0.0);
+        let init = Some(kmeans_chain_init());
+        kmeans_run(&data, 2, init, criteria, 1, KMEANS_USE_INITIAL_LABELS)
+    };
+    let two = (
+        13722.254812880536,
+        kmeans_chain_labels(2),
+        vec![7.945f32, 7.945, 35.502846, 35.502846],
+    );
+    for max_count in [0, 1, 2] {
+        let (c, l, ctr) = run(max_count);
+        assert!((c - two.0).abs() <= 1e-9 * c, "{max_count}: {c}");
+        assert_eq!(l, two.1, "{max_count}");
+        assert_eq!(ctr, two.2, "{max_count}");
+    }
+    let (c, l, ctr) = run(3);
+    assert!((c - 13221.695245653624).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(3));
+    assert_eq!(ctr, vec![11.240001, 11.240001, 35.677822, 35.677822]);
+    for max_count in [100, 1000] {
+        let (c, l, ctr) = run(max_count);
+        assert!(
+            (c - 11100.112100838684).abs() <= 1e-9 * c,
+            "{max_count}: {c}"
+        );
+        assert_eq!(l, kmeans_chain_labels(100), "{max_count}");
+        assert_eq!(ctr, vec![33.934998, 33.934998, 60.920002, 60.920002]);
+    }
+}
+
+/// OpenCV stops when the largest squared per-center shift is at most `epsilon^2`
+/// (`core_kmeans.py`, `chain_eps_only_*`). On the diagonal a center moves by sqrt(2) times its
+/// per-coordinate shift, so eps = 0.15 stops after 44 iterations, later than a per-coordinate
+/// test would. `EPS` alone also caps the iterations at 100.
+#[test]
+fn kmeans_epsilon_compares_squared_shift() {
+    let data = kmeans_chain_data();
+    let run = |eps| {
+        let criteria = TermCriteria::new(TermType::Eps, 0, eps);
+        let init = Some(kmeans_chain_init());
+        kmeans_run(&data, 2, init, criteria, 1, KMEANS_USE_INITIAL_LABELS)
+    };
+    let (c, l, ctr) = run(0.15);
+    assert!((c - 12175.226358621614).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(44));
+    assert_eq!(ctr, vec![29.525455, 29.525455, 38.96767, 38.96767]);
+    let (c, l, ctr) = run(0.0);
+    assert!((c - 11100.112100838684).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(100));
+    assert_eq!(ctr, vec![33.934998, 33.934998, 60.920002, 60.920002]);
+}
+
+/// With `KMEANS_USE_INITIAL_LABELS`, OpenCV asserts that every label is in `[0, K)`
+/// (`core_kmeans.py`, `label_out_of_range_with_initial_labels`,
+/// `label_minus_one_with_initial_labels`); purecv clamped them to 0. A label count other than
+/// N fails OpenCV's assertion on the labels' shape: the `vec![0; 11]` case follows OpenCV's
+/// `CV_Assert` that `best_labels.cols*best_labels.rows == N`
+/// (https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/kmeans.cpp#L252-L255);
+/// cv2 could not be made to measure it, so this case is not a script key.
+#[test]
+fn kmeans_out_of_range_initial_labels_is_err() {
+    let data = kmeans_data();
+    let criteria = TermCriteria::new(TermType::Count, 10, 0.0);
+    let mut minus_one = vec![0; 12];
+    minus_one[0] = -1;
+    for labels in [vec![7; 12], minus_one, vec![0; 11]] {
+        let n = labels.len();
+        let mut labels = Matrix::from_vec(n, 1, 1, labels);
+        let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+        assert!(kmeans(
+            &data,
+            3,
+            &mut labels,
+            criteria,
+            1,
+            KMEANS_USE_INITIAL_LABELS,
+            &mut centers
+        )
+        .is_err());
+    }
 }
 
 // ---------------------------------------------------------------------------------------

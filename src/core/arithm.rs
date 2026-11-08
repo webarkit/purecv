@@ -47,8 +47,8 @@ use crate::core::logging::tags;
 use crate::core::matrix::Depth;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
+use crate::cv_bail;
 use crate::cv_log_warning;
-use crate::{cv_bail, cv_err};
 use core::ops::{BitAnd, BitOr, BitXor, Not, Sub};
 use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 
@@ -1217,155 +1217,398 @@ where
     (m, std_dev)
 }
 
-/// Calculates an absolute array norm.
+/// Checks that `norm_type` is a norm `cv::norm` accepts for a `T` source with `channels`:
+/// `Inf`, `L1`, `L2`, `L2Sqr` on every depth, `Hamming` and `Hamming2` only on one `u8`
+/// channel (OpenCV asserts `type() == CV_8U`). `Relative` and `MinMax` are flags, not norms.
+fn check_norm_type<T: DataType>(func: &str, norm_type: NormTypes, channels: usize) -> Result<()> {
+    match norm_type {
+        NormTypes::Inf | NormTypes::L1 | NormTypes::L2 | NormTypes::L2Sqr => Ok(()),
+        NormTypes::Hamming | NormTypes::Hamming2 if T::depth() == Depth::CV_8U && channels == 1 => {
+            Ok(())
+        }
+        NormTypes::Hamming | NormTypes::Hamming2 => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} needs a single-channel u8 source, got depth {:?} with {} channels",
+            func,
+            norm_type,
+            T::depth(),
+            channels
+        ),
+        NormTypes::Relative => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} is not a norm type (use norm_relative for NORM_RELATIVE)",
+            func,
+            norm_type
+        ),
+        _ => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} is not a norm type",
+            func,
+            norm_type
+        ),
+    }
+}
+
+/// Checks that `mask` is one 8-bit channel of `rows`x`cols`, as OpenCV asserts, and returns
+/// its bytes. A mask without elements is no mask, as OpenCV's `mask.empty()` tests.
+fn norm_mask<'a>(
+    func: &str,
+    rows: usize,
+    cols: usize,
+    mask: Option<&'a Matrix<u8>>,
+) -> Result<Option<&'a [u8]>> {
+    let Some(m) = mask.filter(|m| !m.data.is_empty()) else {
+        return Ok(None);
+    };
+    if m.rows != rows || m.cols != cols || m.channels != 1 {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "{}: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
+            func,
+            rows,
+            cols,
+            m.rows,
+            m.cols,
+            m.channels
+        );
+    }
+    Ok(Some(m.data.as_slice()))
+}
+
+#[inline]
+fn add_f64(a: f64, b: f64) -> f64 {
+    a + b
+}
+
+/// Folds `f(x)` over the elements of `data` with `combine` (`f64::max` for `Inf`, a sum
+/// otherwise). A `mask` holds one byte per pixel of `cn` elements and selects the whole
+/// pixel when non-zero, as the masked loops of OpenCV's `normInf_`/`normL1_`/`normL2_` do
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L218-L282)).
+fn fold_norm<T, C, F>(data: &[T], cn: usize, mask: Option<&[u8]>, combine: C, f: F) -> f64
+where
+    T: Copy + Send + Sync,
+    C: Fn(f64, f64) -> f64 + Copy + Send + Sync,
+    F: Fn(T) -> f64 + Send + Sync,
+{
+    let cn = cn.max(1);
+    #[cfg(feature = "parallel")]
+    {
+        match mask {
+            None => data.par_iter().map(|&x| f(x)).reduce(|| 0.0, combine),
+            Some(m) => data
+                .par_chunks_exact(cn)
+                .zip(m.par_iter())
+                .filter(|(_, &sel)| sel != 0)
+                .map(|(px, _)| px.iter().fold(0.0, |s, &x| combine(s, f(x))))
+                .reduce(|| 0.0, combine),
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        match mask {
+            None => data.iter().fold(0.0, |s, &x| combine(s, f(x))),
+            Some(m) => data
+                .chunks_exact(cn)
+                .zip(m)
+                .filter(|(_, &sel)| sel != 0)
+                .fold(0.0, |s, (px, _)| {
+                    px.iter().fold(s, |s, &x| combine(s, f(x)))
+                }),
+        }
+    }
+}
+
+/// [`fold_norm`] over the element pairs of `a` and `b`, as OpenCV's `normDiff*_`
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L284-L348)).
+fn fold_norm_diff<T, C, F>(
+    a: &[T],
+    b: &[T],
+    cn: usize,
+    mask: Option<&[u8]>,
+    combine: C,
+    f: F,
+) -> f64
+where
+    T: Copy + Send + Sync,
+    C: Fn(f64, f64) -> f64 + Copy + Send + Sync,
+    F: Fn(T, T) -> f64 + Send + Sync,
+{
+    let cn = cn.max(1);
+    #[cfg(feature = "parallel")]
+    {
+        match mask {
+            None => a
+                .par_iter()
+                .zip(b.par_iter())
+                .map(|(&x, &y)| f(x, y))
+                .reduce(|| 0.0, combine),
+            Some(m) => a
+                .par_chunks_exact(cn)
+                .zip(b.par_chunks_exact(cn))
+                .zip(m.par_iter())
+                .filter(|(_, &sel)| sel != 0)
+                .map(|((pa, pb), _)| {
+                    pa.iter()
+                        .zip(pb)
+                        .fold(0.0, |s, (&x, &y)| combine(s, f(x, y)))
+                })
+                .reduce(|| 0.0, combine),
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        match mask {
+            None => a.iter().zip(b).fold(0.0, |s, (&x, &y)| combine(s, f(x, y))),
+            Some(m) => a
+                .chunks_exact(cn)
+                .zip(b.chunks_exact(cn))
+                .zip(m)
+                .filter(|(_, &sel)| sel != 0)
+                .fold(0.0, |s, ((pa, pb), _)| {
+                    pa.iter().zip(pb).fold(s, |s, (&x, &y)| combine(s, f(x, y)))
+                }),
+        }
+    }
+}
+
+/// `a - b` as OpenCV's `normDiff*_` take it: in `float` for `f32` (then widened), exactly
+/// for the other depths, so `u8` 0 - 255 is -255 and never wraps. OpenCV subtracts `i32` in
+/// `int`, which wraps on x86 when the difference leaves the `int` range; purecv keeps the
+/// exact difference there.
+#[inline]
+fn norm_diff_value<T: DataType + ToPrimitive>(a: T, b: T) -> f64 {
+    if T::depth() == Depth::CV_32F {
+        (a.to_f32().unwrap_or(0.0) - b.to_f32().unwrap_or(0.0)) as f64
+    } else {
+        a.to_f64().unwrap_or(0.0) - b.to_f64().unwrap_or(0.0)
+    }
+}
+
+/// `NORM_HAMMING` (`two_bit` false: set bits) or `NORM_HAMMING2` (`two_bit` true: non-zero
+/// 2-bit cells, OpenCV's `cellSize` 2) of the bytes of `a`, xor-ed with `b` when given.
+/// A mask is applied as OpenCV does, with `bitwise_and`: its bytes are bit masks.
+/// Source: [`normHamming`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L53-L100)
+/// and the Hamming branches of `cv::norm`
+/// ([one array](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L679-L701),
+/// [two arrays](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1145-L1168)).
+fn hamming_norm<T: ToPrimitive>(
+    a: &[T],
+    b: Option<&[T]>,
+    mask: Option<&[u8]>,
+    two_bit: bool,
+) -> f64 {
+    let byte = |x: &T| x.to_u8().unwrap_or(0);
+    let mut total = 0u64;
+    for (i, x) in a.iter().enumerate() {
+        let mut v = byte(x);
+        if let Some(b) = b {
+            v ^= byte(&b[i]);
+        }
+        if let Some(m) = mask {
+            v &= m[i];
+        }
+        total += if two_bit {
+            ((v | (v >> 1)) & 0x55).count_ones()
+        } else {
+            v.count_ones()
+        } as u64;
+    }
+    total as f64
+}
+
+/// Calculates an absolute array norm, like
+/// [`cv::norm(src, normType, mask)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L603-L791).
 ///
-/// Returns the norm value as f64.
+/// `norm_type` is [`NormTypes::Inf`], [`NormTypes::L1`], [`NormTypes::L2`],
+/// [`NormTypes::L2Sqr`] (the square of `L2`), or, for a single-channel `u8` source,
+/// [`NormTypes::Hamming`] (set bits) and [`NormTypes::Hamming2`] (non-zero 2-bit cells).
+/// Every channel takes part. A `mask` is a single-channel `u8` matrix of the source's
+/// rows and columns: a non-zero byte selects every channel of its pixel. For the Hamming
+/// norms OpenCV ANDs the mask into the bytes instead, so a mask byte of 1 keeps only bit 0;
+/// purecv does the same. A mask without elements (0x0) is no mask, as in OpenCV. An empty
+/// source has norm 0.
+///
+/// On `i32`, OpenCV takes absolute values in `int`, which wraps on x86: `abs(i32::MIN)`
+/// stays `i32::MIN`, so that element never becomes the `Inf` maximum and its `L1` can come
+/// out negative. `[i32::MIN]` gives `Inf` 0 and `L1` -2147483648 in OpenCV, and
+/// `[i32::MIN, 5, 0]` gives `Inf` 5 and `L1` -2147483643; here they are 2147483648 and
+/// 2147483648, and 2147483648 and 2147483653. `[i32::MIN, i32::MAX, 0]` gives `Inf`
+/// 2147483647 and `L1` -1 in OpenCV, 2147483648 and 4294967295 here. purecv computes
+/// these exactly and does not port the wrap.
+///
+/// # Errors
+/// `InvalidInput` for `Hamming`/`Hamming2` on anything but one `u8` channel and for
+/// `Relative` or `MinMax` (see [`norm_relative`]); `InvalidDimensions` for a mask of the
+/// wrong shape.
+///
+/// # Example
+/// ```
+/// use purecv::core::{norm, Matrix, NormTypes};
+///
+/// let src = Matrix::from_vec(1, 2, 1, vec![3.0f32, -4.0]);
+/// assert_eq!(norm(&src, NormTypes::L2, None).unwrap(), 5.0);
+/// assert_eq!(norm(&src, NormTypes::L2Sqr, None).unwrap(), 25.0);
+/// ```
 pub fn norm<T>(src: &Matrix<T>, norm_type: NormTypes, mask: Option<&Matrix<u8>>) -> Result<f64>
 where
     T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
 {
+    check_norm_type::<T>("norm", norm_type, src.channels)?;
+    let m = norm_mask("norm", src.rows, src.cols, mask)?;
+    let cn = src.channels;
     match norm_type {
-        NormTypes::Inf => {
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .reduce(|| 0.0, f64::max))
-                } else {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .reduce(|| 0.0, f64::max))
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .fold(0.0, f64::max))
-                } else {
-                    Ok(src
-                        .data
-                        .iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .fold(0.0, f64::max))
-                }
-            }
+        NormTypes::Inf => Ok(fold_norm(&src.data, cn, m, f64::max, |x: T| {
+            x.to_f64().unwrap_or(0.0).abs()
+        })),
+        NormTypes::L1 => Ok(fold_norm(&src.data, cn, m, add_f64, |x: T| {
+            x.to_f64().unwrap_or(0.0).abs()
+        })),
+        NormTypes::L2 | NormTypes::L2Sqr => {
+            let sq_sum = norm_l2_sq(src, m);
+            Ok(if norm_type == NormTypes::L2 {
+                sq_sum.sqrt()
+            } else {
+                sq_sum
+            })
         }
-        NormTypes::L1 => {
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                } else {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                } else {
-                    Ok(src
-                        .data
-                        .iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                }
-            }
-        }
-        NormTypes::L2 => {
-            // SIMD fast-path for L2 norm without mask
-            #[cfg(feature = "simd")]
-            {
-                if mask.is_none() && T::has_simd() {
-                    if let Some(sq_sum) = T::simd_norm_l2_sq(&src.data) {
-                        return Ok(sq_sum.sqrt());
-                    }
-                }
-            }
-
-            #[cfg(feature = "parallel")]
-            {
-                let sq_sum = if let Some(m) = mask {
-                    src.data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                } else {
-                    src.data
-                        .par_iter()
-                        .map(|&x| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                };
-                Ok(sq_sum.sqrt())
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                let sq_sum = if let Some(m) = mask {
-                    src.data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                } else {
-                    src.data
-                        .iter()
-                        .map(|&x| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                };
-                Ok(sq_sum.sqrt())
-            }
-        }
-        _ => Err(cv_err!(
-            tags::CORE,
-            NotImplemented,
-            "norm: norm type {:?} is not implemented",
-            norm_type
+        // check_norm_type admits only Hamming and Hamming2 here
+        _ => Ok(hamming_norm(
+            &src.data,
+            None,
+            m,
+            norm_type == NormTypes::Hamming2,
         )),
     }
+}
+
+/// The sum of squares behind `L2` and `L2Sqr`, with the SIMD fast path when unmasked.
+fn norm_l2_sq<T>(src: &Matrix<T>, mask: Option<&[u8]>) -> f64
+where
+    T: ToPrimitive + Copy + Sync + Send + SimdElement,
+{
+    #[cfg(feature = "simd")]
+    {
+        if mask.is_none() && T::has_simd() {
+            if let Some(sq_sum) = T::simd_norm_l2_sq(&src.data) {
+                return sq_sum;
+            }
+        }
+    }
+    fold_norm(&src.data, src.channels, mask, add_f64, |x: T| {
+        let v = x.to_f64().unwrap_or(0.0);
+        v * v
+    })
+}
+
+/// Calculates the norm of the difference of two arrays, like
+/// [`cv::norm(src1, src2, normType, mask)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1073-L1263)
+/// without `NORM_RELATIVE` (see [`norm_relative`]).
+///
+/// Norm types and the mask follow [`norm`]; Hamming counts the bits of `src1 ^ src2`.
+/// Differences never overflow: `u8` 0 and 255 differ by 255. For `f32` the difference is
+/// rounded to `f32` first, as OpenCV subtracts in `float`.
+///
+/// On `i32`, OpenCV subtracts and takes absolute values in `int`, which wraps on x86 when
+/// the difference leaves the `int` range: `[i32::MIN, i32::MAX, 0]` against
+/// `[i32::MAX, i32::MIN, 0]` gives `Inf` 1 and `L1` 2 in OpenCV. purecv computes the exact
+/// difference (`Inf` 4294967295 there) and does not port the wrap; see also [`norm`].
+///
+/// # Errors
+/// `InvalidDimensions` when the sources differ in rows or columns (OpenCV's `sameSize`)
+/// or the mask has the wrong shape; `IncompatibleChannels` when their channel counts differ
+/// (OpenCV's type check); `InvalidInput` as for [`norm`].
+///
+/// # Example
+/// ```
+/// use purecv::core::{norm_diff, Matrix, NormTypes};
+///
+/// let a = Matrix::from_vec(1, 2, 1, vec![0u8, 255]);
+/// let b = Matrix::from_vec(1, 2, 1, vec![255u8, 0]);
+/// assert_eq!(norm_diff(&a, &b, NormTypes::L1, None).unwrap(), 510.0);
+/// ```
+pub fn norm_diff<T>(
+    src1: &Matrix<T>,
+    src2: &Matrix<T>,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<f64>
+where
+    T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
+{
+    if src1.channels != src2.channels {
+        cv_bail!(
+            tags::CORE,
+            IncompatibleChannels,
+            "norm_diff: sources have {} and {} channels",
+            src1.channels,
+            src2.channels
+        );
+    }
+    if src1.rows != src2.rows || src1.cols != src2.cols {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "norm_diff: sources are {}×{} and {}×{}",
+            src1.rows,
+            src1.cols,
+            src2.rows,
+            src2.cols
+        );
+    }
+    check_norm_type::<T>("norm_diff", norm_type, src1.channels)?;
+    let m = norm_mask("norm_diff", src1.rows, src1.cols, mask)?;
+    let (a, b, cn) = (&src1.data, &src2.data, src1.channels);
+    match norm_type {
+        NormTypes::Inf => Ok(fold_norm_diff(a, b, cn, m, f64::max, |x: T, y: T| {
+            norm_diff_value(x, y).abs()
+        })),
+        NormTypes::L1 => Ok(fold_norm_diff(a, b, cn, m, add_f64, |x: T, y: T| {
+            norm_diff_value(x, y).abs()
+        })),
+        NormTypes::L2 | NormTypes::L2Sqr => {
+            let sq_sum = fold_norm_diff(a, b, cn, m, add_f64, |x: T, y: T| {
+                let d = norm_diff_value(x, y);
+                d * d
+            });
+            Ok(if norm_type == NormTypes::L2 {
+                sq_sum.sqrt()
+            } else {
+                sq_sum
+            })
+        }
+        _ => Ok(hamming_norm(
+            a,
+            Some(b),
+            m,
+            norm_type == NormTypes::Hamming2,
+        )),
+    }
+}
+
+/// Calculates the relative difference norm `norm_diff(src1, src2) / (norm(src2) + DBL_EPSILON)`,
+/// which is `cv::norm(src1, src2, normType | NORM_RELATIVE, mask)`
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1092-L1095)).
+/// The mask applies to both norms. `src2` all zero divides by `f64::EPSILON`; both zero
+/// gives 0. `norm_type` is the plain norm (`L2`, not `L2 | Relative`), since [`NormTypes`]
+/// cannot hold a combination.
+///
+/// # Errors
+/// As [`norm_diff`].
+pub fn norm_relative<T>(
+    src1: &Matrix<T>,
+    src2: &Matrix<T>,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<f64>
+where
+    T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
+{
+    let diff = norm_diff(src1, src2, norm_type, mask)?;
+    Ok(diff / (norm(src2, norm_type, mask)? + f64::EPSILON))
 }
 
 /// Normalizes the norm or value range of an array, keeping the element type.
@@ -1382,9 +1625,7 @@ where
 ///
 /// With a `mask`, only the selected pixels of `dst` are written and the others are kept;
 /// without a mask `dst` is replaced. `MinMax` measures the range over the selected pixels.
-/// `L1`, `L2` and `Inf` measure the norm with [`norm`], which pairs the mask with elements
-/// rather than pixels, so on a multi-channel source the norm is not taken over the selected
-/// pixels (#214).
+/// `L1`, `L2` and `Inf` measure the norm of the selected pixels with [`norm`].
 ///
 /// This is [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414);
 /// the output is `saturate_cast<T>(x * scale + shift)` through
@@ -1424,7 +1665,8 @@ where
 /// output is `saturate_cast<U>(x * scale + shift)`. See [`normalize`] for the parameters.
 ///
 /// Without a mask `dst` is replaced by the result. With a mask `dst` must already have
-/// the shape of `src` and only the selected elements are written. A destination
+/// the shape of `src` and only the selected elements are written. A mask without elements
+/// (0x0) is no mask, as in OpenCV. A destination
 /// type OpenCV has no depth for (`u32`, `u64`, `i64`) is handled like the others: values
 /// saturate to its range and nothing panics.
 ///
@@ -1449,6 +1691,8 @@ where
     T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + 'static,
     U: SaturateCast + Default + Clone + Send,
 {
+    // A mask without elements is no mask, as OpenCV's `mask.empty()` tests.
+    let mask = mask.filter(|m| !m.data.is_empty());
     if let Some(m) = mask {
         if m.rows != src.rows || m.cols != src.cols || m.channels != 1 {
             cv_bail!(
@@ -1522,7 +1766,6 @@ where
             (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
-            // `norm` pairs the mask with elements on a multi-channel source, see #214.
             let n = norm(src, norm_type, mask)?;
             (if n > f64::EPSILON { alpha / n } else { 0.0 }, 0.0)
         }
@@ -3869,7 +4112,29 @@ where
 /// # Returns
 /// The compactness of the best clustering.
 ///
-/// Mirrors OpenCV's `cv::kmeans`.
+/// Mirrors OpenCV's `cv::kmeans`: centers and distances are computed in `f32`,
+/// `criteria.max_count` is clamped to `[2, 100]` (100 without `COUNT`), the
+/// iteration stops when no center moves by more than `epsilon` (a squared
+/// Euclidean comparison; `f32::EPSILON` without `EPS`), and `K = 1` runs one
+/// attempt of two iterations. Random and kmeans++ centers draw from the
+/// calling thread's generator in OpenCV's order, so after
+/// [`set_rng_seed`](crate::core::set_rng_seed) the result is the one OpenCV
+/// gives after `cv::setRNGSeed` with the same seed. That guarantee holds for
+/// [`RngGenerator::CvRng`](crate::core::RngGenerator), the default; under
+/// `Xoshiro256StarStar` the draws come from a `cv::RNG` seeded by one xoshiro
+/// draw, so the result is reproducible but is not OpenCV's. Without the `std`
+/// feature each call starts from the default state of `cv::RNG`.
+///
+/// # Errors
+/// `InvalidInput` if `k` is outside `[1, rows]`, or with
+/// `KMEANS_USE_INITIAL_LABELS` if `best_labels` does not hold one label in
+/// `[0, k)` per sample; `InvalidDimensions` if `data` is malformed;
+/// `InternalError` if an empty cluster cannot be repaired or kmeans++ finds no
+/// candidate center (OpenCV's "can't update cluster center", from huge or NaN
+/// values); `InternalError` if no attempt yields a finite compactness, for
+/// example when samples near `f32::MAX` overflow the `f32` center sums. That
+/// last case is a deliberate divergence: OpenCV returns `DBL_MAX` and leaves
+/// `best_labels` and `centers` unwritten.
 pub fn kmeans(
     data: &Matrix<f32>,
     k: i32,
@@ -3880,6 +4145,8 @@ pub fn kmeans(
     centers: &mut Option<Matrix<f32>>,
 ) -> Result<f64> {
     use crate::core::types::{TermType, KMEANS_PP_CENTERS, KMEANS_USE_INITIAL_LABELS};
+    /// `SPP_TRIALS`: candidate centers per kmeans++ step.
+    const SPP_TRIALS: usize = 3;
 
     let n = data.rows; // number of samples
     let dims = data.cols * data.channels; // dimensionality
@@ -3894,100 +4161,181 @@ pub fn kmeans(
         );
     }
     let k = k as usize;
-
-    let max_iter = if criteria.max_count > 0 {
-        criteria.max_count as usize
-    } else {
-        100
-    };
-    let eps = if criteria.epsilon > 0.0 {
-        criteria.epsilon
-    } else {
-        1e-6
-    };
-    let check_eps = matches!(criteria.type_, TermType::Eps | TermType::Both);
-    let check_count = matches!(criteria.type_, TermType::Count | TermType::Both);
-
-    let attempts = if attempts < 1 { 1 } else { attempts as usize };
+    if dims == 0 || data.data.len() != n * dims {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "kmeans: {} elements do not form {} samples of {} values",
+            data.data.len(),
+            n,
+            dims
+        );
+    }
+    let samples = &data.data[..];
     let use_initial = (flags & KMEANS_USE_INITIAL_LABELS) != 0;
     let pp_centers = (flags & KMEANS_PP_CENTERS) != 0;
 
-    // Flatten data to f64 for computation
-    let samples: Vec<f64> = data.data.iter().map(|&v| v as f64).collect();
+    let mut labels = vec![0i32; n];
+    if use_initial {
+        if best_labels.data.len() != n {
+            cv_bail!(
+                tags::CORE,
+                InvalidInput,
+                "kmeans: KMEANS_USE_INITIAL_LABELS needs {} labels, got {}",
+                n,
+                best_labels.data.len()
+            );
+        }
+        for (dst, &l) in labels.iter_mut().zip(&best_labels.data) {
+            if l < 0 || l as usize >= k {
+                cv_bail!(
+                    tags::CORE,
+                    InvalidInput,
+                    "kmeans: initial label {} is outside [0, {})",
+                    l,
+                    k
+                );
+            }
+            *dst = l;
+        }
+    }
 
+    // Criteria as OpenCV normalises them: the squared epsilon (FLT_EPSILON without EPS)
+    // and maxCount clamped to [2, 100] (100 without COUNT).
+    let has_eps = matches!(criteria.type_, TermType::Eps | TermType::Both);
+    let has_count = matches!(criteria.type_, TermType::Count | TermType::Both);
+    let mut eps = if has_eps {
+        criteria.epsilon.max(0.0)
+    } else {
+        f32::EPSILON as f64
+    };
+    eps *= eps;
+    let mut max_count = if has_count {
+        criteria.max_count.clamp(2, 100) as usize
+    } else {
+        100
+    };
+    let mut attempts = attempts.max(1) as usize;
+    if k == 1 {
+        attempts = 1;
+        max_count = 2;
+    }
+
+    // Bounding box of the samples, for the random centers.
+    let mut bounds = vec![(0.0f32, 0.0f32); dims];
+    if !pp_centers {
+        for (b, &v) in bounds.iter_mut().zip(&samples[..dims]) {
+            *b = (v, v);
+        }
+        for sample in samples.chunks_exact(dims).skip(1) {
+            for (b, &v) in bounds.iter_mut().zip(sample) {
+                if v < b.0 {
+                    b.0 = v;
+                }
+                if b.1 < v {
+                    b.1 = v;
+                }
+            }
+        }
+    }
+
+    let mut ctr = vec![0.0f32; k * dims];
+    let mut old_ctr = vec![0.0f32; k * dims];
+    let mut counters = vec![0usize; k];
+    let mut dists = vec![0.0f64; n];
     let mut best_compactness = f64::MAX;
-    let mut best_lab: Vec<i32> = vec![0; n];
-    let mut best_ctr: Vec<f64> = vec![0.0; k * dims];
+    let mut best_lab = vec![0i32; n];
+    let mut best_ctr = vec![0.0f32; k * dims];
 
-    // Use the RNG from crate::core::rng
-    // We use a simple thread-local seeded approach via the existing PRNG.
-    // For each attempt we re-seed to get different initial centers.
+    crate::core::rng::with_the_rng(|rng| -> Result<()> {
+        for a in 0..attempts {
+            let compactness;
+            let mut iter = 0usize;
+            loop {
+                let mut max_center_shift = if iter == 0 { f64::MAX } else { 0.0 };
+                core::mem::swap(&mut ctr, &mut old_ctr);
 
-    for attempt in 0..attempts {
-        // ---- Initialise labels/centers ----
-        let mut labels: Vec<i32> = vec![0; n];
-        let mut ctr = vec![0.0f64; k * dims]; // k × dims
-
-        if use_initial && attempt == 0 {
-            // Use user-supplied labels (first attempt only)
-            if best_labels.data.len() == n {
-                labels.copy_from_slice(&best_labels.data);
-                // Clamp to valid range
-                for l in labels.iter_mut() {
-                    if *l < 0 || (*l as usize) >= k {
-                        *l = 0;
+                if iter == 0 && (a > 0 || !use_initial) {
+                    if pp_centers {
+                        kmeans_pp_centers(samples, &mut ctr, dims, k, rng, SPP_TRIALS)?;
+                    } else {
+                        // generateRandomCenter
+                        let margin = 1.0f32 / dims as f32;
+                        for center in ctr.chunks_exact_mut(dims) {
+                            for (c, &(lo, hi)) in center.iter_mut().zip(&bounds) {
+                                *c = (rng.next_f32() * (1.0 + margin * 2.0) - margin) * (hi - lo)
+                                    + lo;
+                            }
+                        }
+                    }
+                } else {
+                    kmeans_update_centers(samples, &mut labels, &mut ctr, &mut counters, dims)?;
+                    if iter > 0 {
+                        for (center, old) in ctr.chunks_exact(dims).zip(old_ctr.chunks_exact(dims))
+                        {
+                            let mut dist = 0.0f64;
+                            for (&c, &o) in center.iter().zip(old) {
+                                let t = (c - o) as f64;
+                                dist += t * t;
+                            }
+                            if max_center_shift < dist {
+                                max_center_shift = dist;
+                            }
+                        }
                     }
                 }
-            }
-            // Compute centers from labels
-            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
-        } else if pp_centers {
-            kmeans_pp_init(&samples, &mut ctr, n, dims, k, attempt as u64);
-            // Assign labels from centers
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
-        } else {
-            // Random centers: pick k distinct sample indices
-            kmeans_random_init(&samples, &mut ctr, n, dims, k, attempt as u64);
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
-        }
 
-        // ---- Lloyd iterations ----
-        for iter in 0..max_iter {
-            let old_ctr = ctr.clone();
-
-            // Update centers
-            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
-
-            // Handle empty clusters: steal farthest point from largest cluster
-            kmeans_handle_empty(&samples, &mut labels, &mut ctr, n, dims, k);
-
-            // Re-assign
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
-
-            // Check convergence (max center movement)
-            if check_eps {
-                let mut max_shift = 0.0f64;
-                for i in 0..k * dims {
-                    let d = ctr[i] - old_ctr[i];
-                    max_shift = max_shift.max(d * d);
-                }
-                if max_shift.sqrt() < eps {
+                iter += 1;
+                if iter == max_count.max(2) || max_center_shift <= eps {
+                    // The last iteration keeps the labels, so no cluster becomes empty.
+                    for ((d, sample), &l) in dists
+                        .iter_mut()
+                        .zip(samples.chunks_exact(dims))
+                        .zip(&labels)
+                    {
+                        let l = l as usize;
+                        *d = kmeans_norm_l2_sqr(sample, &ctr[l * dims..(l + 1) * dims]) as f64;
+                    }
+                    compactness = kmeans_sum(&dists);
                     break;
                 }
+                // Assign every sample to its nearest center (the first one on ties).
+                for ((d, sample), l) in dists
+                    .iter_mut()
+                    .zip(samples.chunks_exact(dims))
+                    .zip(labels.iter_mut())
+                {
+                    let mut k_best = 0;
+                    let mut min_dist = f64::MAX;
+                    for (j, center) in ctr.chunks_exact(dims).enumerate() {
+                        let dist = kmeans_norm_l2_sqr(sample, center) as f64;
+                        if min_dist > dist {
+                            min_dist = dist;
+                            k_best = j;
+                        }
+                    }
+                    *d = min_dist;
+                    *l = k_best as i32;
+                }
             }
-            if check_count && iter + 1 >= max_iter {
-                break;
+
+            if compactness < best_compactness {
+                best_compactness = compactness;
+                best_lab.copy_from_slice(&labels);
+                best_ctr.copy_from_slice(&ctr);
             }
         }
+        Ok(())
+    })?;
 
-        // Compute compactness
-        let compactness = kmeans_compactness(&samples, &ctr, &labels, n, dims);
-
-        if compactness < best_compactness {
-            best_compactness = compactness;
-            best_lab.copy_from_slice(&labels);
-            best_ctr.copy_from_slice(&ctr);
-        }
+    // No attempt beat the initial DBL_MAX (the f32 center sums overflowed). OpenCV returns
+    // DBL_MAX with unwritten labels and centers; purecv reports an error instead.
+    if best_compactness == f64::MAX {
+        cv_bail!(
+            tags::CORE,
+            InternalError,
+            "kmeans: no attempt produced a finite compactness (check input for huge values)"
+        );
     }
 
     // Write outputs
@@ -4000,263 +4348,180 @@ pub fn kmeans(
         c.rows = k;
         c.cols = data.cols;
         c.channels = data.channels;
-        c.data = best_ctr.iter().map(|&v| v as f32).collect();
+        c.data = best_ctr;
     }
 
     Ok(best_compactness)
 }
 
-/// Assign each sample to its nearest center.
-fn kmeans_assign(
-    samples: &[f64],
-    centers: &[f64],
+/// `hal::normL2Sqr_` on `f32`: the squared distance, accumulated in `f32` in order (the
+/// generic path; OpenCV's SIMD build sums blocks of 16 lanes first when `dims >= 16`).
+fn kmeans_norm_l2_sqr(a: &[f32], b: &[f32]) -> f32 {
+    let mut d = 0.0f32;
+    for (&x, &y) in a.iter().zip(b) {
+        let t = x - y;
+        d += t * t;
+    }
+    d
+}
+
+/// `cv::sum` of a one-channel `CV_64F` row: four values per step, then the tail.
+fn kmeans_sum(v: &[f64]) -> f64 {
+    let (quads, tail) = v.as_chunks::<4>();
+    let mut s = 0.0f64;
+    for q in quads {
+        s += q[0] + q[1] + q[2] + q[3];
+    }
+    for &x in tail {
+        s += x;
+    }
+    s
+}
+
+/// The "compute centers" step of `cv::kmeans`: sums each cluster in `f32`, moves the
+/// farthest sample of the largest cluster into every empty cluster, then scales by the
+/// reciprocal of the cluster size.
+fn kmeans_update_centers(
+    samples: &[f32],
     labels: &mut [i32],
-    n: usize,
+    ctr: &mut [f32],
+    counters: &mut [usize],
     dims: usize,
-    k: usize,
-) {
-    for i in 0..n {
-        let s = &samples[i * dims..(i + 1) * dims];
-        let mut best_dist = f64::MAX;
-        let mut best_k = 0usize;
-        for j in 0..k {
-            let c = &centers[j * dims..(j + 1) * dims];
-            let mut dist = 0.0f64;
-            for d in 0..dims {
-                let diff = s[d] - c[d];
-                dist += diff * diff;
-            }
-            if dist < best_dist {
-                best_dist = dist;
-                best_k = j;
+) -> Result<()> {
+    let k = counters.len();
+    ctr.fill(0.0);
+    counters.fill(0);
+    for (sample, &l) in samples.chunks_exact(dims).zip(labels.iter()) {
+        let l = l as usize;
+        for (c, &s) in ctr[l * dims..(l + 1) * dims].iter_mut().zip(sample) {
+            *c += s;
+        }
+        counters[l] += 1;
+    }
+
+    let mut base = vec![0.0f32; dims];
+    for kk in 0..k {
+        if counters[kk] != 0 {
+            continue;
+        }
+        let mut max_k = 0;
+        for k1 in 1..k {
+            if counters[max_k] < counters[k1] {
+                max_k = k1;
             }
         }
-        labels[i] = best_k as i32;
+        let scale = 1.0f32 / counters[max_k] as f32;
+        for (b, &c) in base.iter_mut().zip(&ctr[max_k * dims..(max_k + 1) * dims]) {
+            *b = c * scale;
+        }
+        let mut max_dist = 0.0f64;
+        let mut farthest = None;
+        for (i, (sample, &l)) in samples.chunks_exact(dims).zip(labels.iter()).enumerate() {
+            if l as usize != max_k {
+                continue;
+            }
+            let dist = kmeans_norm_l2_sqr(sample, &base) as f64;
+            if max_dist <= dist {
+                max_dist = dist;
+                farthest = Some(i);
+            }
+        }
+        let Some(fi) = farthest else {
+            cv_bail!(
+                tags::CORE,
+                InternalError,
+                "kmeans: can't update cluster center (check input for huge or NaN values)"
+            );
+        };
+        counters[max_k] -= 1;
+        counters[kk] += 1;
+        labels[fi] = kk as i32;
+        for j in 0..dims {
+            let s = samples[fi * dims + j];
+            ctr[max_k * dims + j] -= s;
+            ctr[kk * dims + j] += s;
+        }
     }
+
+    for (center, &count) in ctr.chunks_exact_mut(dims).zip(counters.iter()) {
+        if count == 0 {
+            cv_bail!(tags::CORE, InternalError, "kmeans: a cluster is empty");
+        }
+        let scale = 1.0f32 / count as f32;
+        for c in center.iter_mut() {
+            *c *= scale;
+        }
+    }
+    Ok(())
 }
 
-/// Compute cluster centers from current labels.
-fn kmeans_compute_centers(
-    samples: &[f64],
-    labels: &[i32],
-    centers: &mut [f64],
-    n: usize,
+/// `generateCentersPP`: kmeans++ (Arthur & Vassilvitskii, 2007) with `trials` candidates
+/// per center, drawing from `rng` in OpenCV's order.
+fn kmeans_pp_centers(
+    samples: &[f32],
+    out: &mut [f32],
     dims: usize,
     k: usize,
-) {
-    centers.iter_mut().for_each(|v| *v = 0.0);
-    let mut counts = vec![0usize; k];
-    for i in 0..n {
-        let lbl = labels[i] as usize;
-        counts[lbl] += 1;
-        let s = &samples[i * dims..(i + 1) * dims];
-        let c = &mut centers[lbl * dims..(lbl + 1) * dims];
-        for d in 0..dims {
-            c[d] += s[d];
-        }
-    }
-    for j in 0..k {
-        if counts[j] > 0 {
-            let c = &mut centers[j * dims..(j + 1) * dims];
-            let cnt = counts[j] as f64;
-            for val in c.iter_mut().take(dims) {
-                *val /= cnt;
-            }
-        }
-    }
-}
+    rng: &mut crate::core::rng::Rng,
+    trials: usize,
+) -> Result<()> {
+    let n = samples.len() / dims;
+    let row = |i: usize| &samples[i * dims..(i + 1) * dims];
+    let mut centers = vec![0usize; k];
+    let mut dist = vec![0.0f32; n];
+    let mut tdist = vec![0.0f32; n];
+    let mut tdist2 = vec![0.0f32; n];
+    let mut sum0 = 0.0f64;
 
-/// Handle empty clusters by stealing the farthest point from the largest cluster.
-fn kmeans_handle_empty(
-    samples: &[f64],
-    labels: &mut [i32],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-) {
-    let mut counts = vec![0usize; k];
-    for l in labels.iter() {
-        counts[*l as usize] += 1;
+    centers[0] = (rng.next_u32() % n as u32) as usize;
+    for (i, d) in dist.iter_mut().enumerate() {
+        *d = kmeans_norm_l2_sqr(row(i), row(centers[0]));
+        sum0 += *d as f64;
     }
 
-    for j in 0..k {
-        if counts[j] == 0 {
-            // Find the largest cluster
-            let largest = counts
-                .iter()
-                .enumerate()
-                .max_by_key(|&(_, &c)| c)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-
-            // Find farthest point in largest cluster from its center
-            let mut farthest_idx = 0usize;
-            let mut farthest_dist = 0.0f64;
-            for i in 0..n {
-                if labels[i] as usize != largest {
-                    continue;
+    for center in centers.iter_mut().skip(1) {
+        let mut best_sum = f64::MAX;
+        let mut best_center = None;
+        for _ in 0..trials {
+            let mut p = rng.next_f64() * sum0;
+            let mut ci = 0;
+            while ci < n - 1 {
+                p -= dist[ci] as f64;
+                if p <= 0.0 {
+                    break;
                 }
-                let s = &samples[i * dims..(i + 1) * dims];
-                let c = &centers[largest * dims..(largest + 1) * dims];
-                let mut dist = 0.0f64;
-                for d in 0..dims {
-                    let diff = s[d] - c[d];
-                    dist += diff * diff;
-                }
-                if dist > farthest_dist {
-                    farthest_dist = dist;
-                    farthest_idx = i;
-                }
+                ci += 1;
             }
-
-            // Move that sample to the empty cluster
-            labels[farthest_idx] = j as i32;
-            counts[j] += 1;
-            counts[largest] -= 1;
-
-            // Copy sample as new center
-            let s = &samples[farthest_idx * dims..(farthest_idx + 1) * dims];
-            centers[j * dims..(j + 1) * dims].copy_from_slice(s);
-
-            // Recompute largest cluster center
-            kmeans_compute_centers_single(samples, labels, centers, n, dims, largest);
-        }
-    }
-}
-
-/// Recompute a single cluster center.
-fn kmeans_compute_centers_single(
-    samples: &[f64],
-    labels: &[i32],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    cluster: usize,
-) {
-    let c = &mut centers[cluster * dims..(cluster + 1) * dims];
-    c.iter_mut().for_each(|v| *v = 0.0);
-    let mut cnt = 0usize;
-    for i in 0..n {
-        if labels[i] as usize == cluster {
-            cnt += 1;
-            let s = &samples[i * dims..(i + 1) * dims];
-            for d in 0..dims {
-                c[d] += s[d];
+            for (i, (t, &d)) in tdist2.iter_mut().zip(&dist).enumerate() {
+                let c = kmeans_norm_l2_sqr(row(i), row(ci));
+                *t = if d < c { d } else { c };
+            }
+            let mut s = 0.0f64;
+            for &t in &tdist2 {
+                s += t as f64;
+            }
+            if s < best_sum {
+                best_sum = s;
+                best_center = Some(ci);
+                core::mem::swap(&mut tdist, &mut tdist2);
             }
         }
+        let Some(bc) = best_center else {
+            cv_bail!(
+                tags::CORE,
+                InternalError,
+                "kmeans: can't update cluster center (check input for huge or NaN values)"
+            );
+        };
+        *center = bc;
+        sum0 = best_sum;
+        core::mem::swap(&mut dist, &mut tdist);
     }
-    if cnt > 0 {
-        let cnt_f = cnt as f64;
-        for v in c.iter_mut() {
-            *v /= cnt_f;
-        }
+
+    for (dst, &c) in out.chunks_exact_mut(dims).zip(&centers) {
+        dst.copy_from_slice(row(c));
     }
-}
-
-/// Compute compactness (sum of squared distances to assigned centers).
-fn kmeans_compactness(
-    samples: &[f64],
-    centers: &[f64],
-    labels: &[i32],
-    n: usize,
-    dims: usize,
-) -> f64 {
-    let mut sum = 0.0f64;
-    for i in 0..n {
-        let lbl = labels[i] as usize;
-        let s = &samples[i * dims..(i + 1) * dims];
-        let c = &centers[lbl * dims..(lbl + 1) * dims];
-        for d in 0..dims {
-            let diff = s[d] - c[d];
-            sum += diff * diff;
-        }
-    }
-    sum
-}
-
-/// Random center initialization: pick k distinct sample indices.
-fn kmeans_random_init(
-    samples: &[f64],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-    seed: u64,
-) {
-    // Simple Fisher-Yates-style selection using a basic LCG
-    let mut rng_state: u64 = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let mut indices: Vec<usize> = (0..n).collect();
-    for i in 0..k {
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let j = i + (rng_state as usize % (n - i));
-        indices.swap(i, j);
-        let idx = indices[i];
-        centers[i * dims..(i + 1) * dims].copy_from_slice(&samples[idx * dims..(idx + 1) * dims]);
-    }
-}
-
-/// K-means++ center initialization.
-fn kmeans_pp_init(
-    samples: &[f64],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-    seed: u64,
-) {
-    let mut rng_state: u64 = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-
-    // Pick first center uniformly at random
-    rng_state = rng_state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let first = rng_state as usize % n;
-    centers[0..dims].copy_from_slice(&samples[first * dims..(first + 1) * dims]);
-
-    let mut min_dists = vec![f64::MAX; n];
-
-    for c_idx in 1..k {
-        // Update min distances to the latest center
-        let prev = c_idx - 1;
-        let prev_center = &centers[prev * dims..(prev + 1) * dims];
-        let mut total_dist = 0.0f64;
-        for i in 0..n {
-            let s = &samples[i * dims..(i + 1) * dims];
-            let mut dist = 0.0f64;
-            for d in 0..dims {
-                let diff = s[d] - prev_center[d];
-                dist += diff * diff;
-            }
-            if dist < min_dists[i] {
-                min_dists[i] = dist;
-            }
-            total_dist += min_dists[i];
-        }
-
-        // Weighted random selection proportional to D²
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let threshold = (rng_state as f64 / u64::MAX as f64) * total_dist;
-        let mut cumulative = 0.0f64;
-        let mut chosen = 0usize;
-        for (i, &d) in min_dists.iter().enumerate().take(n) {
-            cumulative += d;
-            if cumulative >= threshold {
-                chosen = i;
-                break;
-            }
-        }
-        centers[c_idx * dims..(c_idx + 1) * dims]
-            .copy_from_slice(&samples[chosen * dims..(chosen + 1) * dims]);
-    }
+    Ok(())
 }
 
 /// Performs a look-up table transform of a matrix.
