@@ -95,7 +95,7 @@ pub use crate::core::logging::{get_log_level, set_log_level};
 /// in a sequence of length `len` if a specified border logic is applied.
 ///
 /// `Reflect` and `Reflect101` map in constant time for any `p`, however far outside the
-/// sequence. They return -1 for an empty sequence (`len <= 0`).
+/// sequence. `Reflect`, `Reflect101` and `Wrap` return -1 for an empty sequence (`len <= 0`).
 pub fn border_interpolate(p: i32, len: i32, border_type: crate::core::types::BorderTypes) -> i32 {
     if p >= 0 && p < len {
         return p;
@@ -127,6 +127,7 @@ pub fn border_interpolate(p: i32, len: i32, border_type: crate::core::types::Bor
             let m = i64::from(p).rem_euclid(2 * len - 2);
             (if m < len { m } else { 2 * len - 2 - m }) as i32
         }
+        BorderTypes::Wrap if len <= 0 => -1,
         BorderTypes::Wrap => {
             if p < 0 {
                 (p % len + len) % len
@@ -276,11 +277,18 @@ mod tests {
                 assert_eq!(border_interpolate(p, 0, border), -1, "{border:?} p={p}");
             }
         }
-        // The other border types keep their behaviour (Wrap is not defined for len 0).
+        // Wrap used to divide by zero.
+        for border in [BorderTypes::Wrap] {
+            for p in [i32::MIN, -1, 0, 1, i32::MAX] {
+                assert_eq!(border_interpolate(p, 0, border), -1, "{border:?} p={p}");
+            }
+        }
+        // The other border types keep their behaviour.
         for border in [
             BorderTypes::Constant,
             BorderTypes::Replicate,
             BorderTypes::Transparent,
+            BorderTypes::Isolated,
         ] {
             for p in [i32::MIN, -1, 0, 1, i32::MAX] {
                 assert_eq!(
