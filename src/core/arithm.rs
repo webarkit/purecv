@@ -4131,7 +4131,10 @@ where
 /// `[0, k)` per sample; `InvalidDimensions` if `data` is malformed;
 /// `InternalError` if an empty cluster cannot be repaired or kmeans++ finds no
 /// candidate center (OpenCV's "can't update cluster center", from huge or NaN
-/// values).
+/// values); `InternalError` if no attempt yields a finite compactness, for
+/// example when samples near `f32::MAX` overflow the `f32` center sums. That
+/// last case is a deliberate divergence: OpenCV returns `DBL_MAX` and leaves
+/// `best_labels` and `centers` unwritten.
 pub fn kmeans(
     data: &Matrix<f32>,
     k: i32,
@@ -4324,6 +4327,16 @@ pub fn kmeans(
         }
         Ok(())
     })?;
+
+    // No attempt beat the initial DBL_MAX (the f32 center sums overflowed). OpenCV returns
+    // DBL_MAX with unwritten labels and centers; purecv reports an error instead.
+    if best_compactness == f64::MAX {
+        cv_bail!(
+            tags::CORE,
+            InternalError,
+            "kmeans: no attempt produced a finite compactness (check input for huge values)"
+        );
+    }
 
     // Write outputs
     best_labels.rows = n;

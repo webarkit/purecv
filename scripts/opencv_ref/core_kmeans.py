@@ -80,7 +80,8 @@ def raw(data, k, labels, criteria, attempts, flags):
     return {
         "compactness": float(compactness),
         "labels": tolist(lab.ravel()),
-        "centers": tolist(centers.ravel()),
+        # None when no attempt beat DBL_MAX, so that cv::kmeans never wrote the centers.
+        "centers": None if centers is None else tolist(centers.ravel()),
     }
 
 
@@ -169,6 +170,23 @@ def main() -> None:
             DATA, 3, np.full(12, 7, np.int32), (cv2.TERM_CRITERIA_MAX_ITER, 10, 0), 1, cv2.KMEANS_USE_INITIAL_LABELS
         )
     )
+    # Samples near FLT_MAX: the f32 center sums overflow to inf.
+    huge = {
+        "two_3e38": [[3e38], [3e38]],
+        "two_fmax": [[3.4028235e38], [3.4028235e38]],
+        "three_3e38": [[3e38], [3e38], [3e38]],
+        "three_mixed": [[3e38], [2.5e38], [-3e38]],
+    }
+    for name, rows in huge.items():
+        arr = np.array(rows, dtype=np.float32)
+        for k in (1, 2):
+            for fname in ("random", "pp"):
+                key = f"huge_{name}_k{k}_{fname}"
+                results[key] = attempt(
+                    lambda arr=arr, k=k, fname=fname: seeded(
+                        42, arr, k, None, EPS_COUNT, 1, flag_names[fname]
+                    )
+                )
     dump("core_kmeans.py", results)
 
 

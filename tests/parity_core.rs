@@ -5311,6 +5311,28 @@ fn kmeans_run(
     (c, labels.data, centers.unwrap().data)
 }
 
+/// Deliberate divergence: when the `f32` center sums overflow on every attempt, OpenCV
+/// returns `DBL_MAX` and leaves the labels and centers unwritten (`core_kmeans.py`,
+/// `huge_*`; one case raises "can't update cluster center"). purecv returns an error instead
+/// of a bogus `Ok`, so this test does not compare with OpenCV's output.
+#[test]
+fn kmeans_errors_when_no_attempt_has_a_finite_compactness() {
+    let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
+    for (rows, k) in [
+        (vec![3e38f32, 3e38], 1),
+        (vec![3e38, 3e38], 2),
+        (vec![3e38, 3e38, 3e38], 1),
+    ] {
+        let data = Matrix::from_vec(rows.len(), 1, 1, rows);
+        for flags in [KMEANS_RANDOM_CENTERS, KMEANS_PP_CENTERS] {
+            let mut labels = Matrix::<i32>::new(0, 0, 0);
+            let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+            let r = kmeans(&data, k, &mut labels, criteria, 1, flags, &mut centers);
+            assert!(r.is_err(), "k {k} flags {flags}: {r:?}");
+        }
+    }
+}
+
 /// With `cv2.setRNGSeed(42)` before each call, OpenCV's raw (unsorted) labels and centers
 /// depend on the order of the `theRNG()` draws in `generateRandomCenter` and
 /// `generateCentersPP` (`core_kmeans.py`, `seed42_*`).
