@@ -1914,7 +1914,9 @@ mod saturate_tests {
         use crate::core::structural::copy_make_border;
         use crate::core::types::{BorderTypes, Scalar};
 
-        const BORDER: usize = 20_000;
+        // Native: wide enough that the old per-period fold was visibly slow. Miri: a few periods
+        // are enough for correctness, and its ~1000x slowdown makes 20000 too costly.
+        const BORDER: usize = if cfg!(miri) { 400 } else { 20_000 };
         let none = Scalar::all(0u8);
 
         // 2x3 source, border on the columns only; row r of the output tiles source row r.
