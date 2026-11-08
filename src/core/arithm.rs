@@ -47,8 +47,8 @@ use crate::core::logging::tags;
 use crate::core::matrix::Depth;
 use crate::core::types::{CmpTypes, NormTypes, ReduceTypes, Scalar};
 use crate::core::{DataType, Matrix};
+use crate::cv_bail;
 use crate::cv_log_warning;
-use crate::{cv_bail, cv_err};
 use core::ops::{BitAnd, BitOr, BitXor, Not, Sub};
 use num_traits::{Bounded, FromPrimitive, Num, ToPrimitive};
 
@@ -1217,155 +1217,372 @@ where
     (m, std_dev)
 }
 
-/// Calculates an absolute array norm.
+/// Checks that `norm_type` is a norm `cv::norm` accepts for a `T` source with `channels`:
+/// `Inf`, `L1`, `L2`, `L2Sqr` on every depth, `Hamming` and `Hamming2` only on one `u8`
+/// channel (OpenCV asserts `type() == CV_8U`). `Relative` and `MinMax` are flags, not norms.
+fn check_norm_type<T: DataType>(func: &str, norm_type: NormTypes, channels: usize) -> Result<()> {
+    match norm_type {
+        NormTypes::Inf | NormTypes::L1 | NormTypes::L2 | NormTypes::L2Sqr => Ok(()),
+        NormTypes::Hamming | NormTypes::Hamming2 if T::depth() == Depth::CV_8U && channels == 1 => {
+            Ok(())
+        }
+        NormTypes::Hamming | NormTypes::Hamming2 => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} needs a single-channel u8 source, got depth {:?} with {} channels",
+            func,
+            norm_type,
+            T::depth(),
+            channels
+        ),
+        _ => cv_bail!(
+            tags::CORE,
+            InvalidInput,
+            "{}: {:?} is not a norm type (use norm_relative for NORM_RELATIVE)",
+            func,
+            norm_type
+        ),
+    }
+}
+
+/// Checks that `mask` is one 8-bit channel of `rows`×`cols`, as OpenCV asserts.
+fn check_norm_mask(func: &str, rows: usize, cols: usize, mask: Option<&Matrix<u8>>) -> Result<()> {
+    if let Some(m) = mask {
+        if m.rows != rows || m.cols != cols || m.channels != 1 {
+            cv_bail!(
+                tags::CORE,
+                InvalidDimensions,
+                "{}: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
+                func,
+                rows,
+                cols,
+                m.rows,
+                m.cols,
+                m.channels
+            );
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn add_f64(a: f64, b: f64) -> f64 {
+    a + b
+}
+
+/// Folds `f(x)` over the elements of `data` with `combine` (`f64::max` for `Inf`, a sum
+/// otherwise). A `mask` holds one byte per pixel of `cn` elements and selects the whole
+/// pixel when non-zero, as the masked loops of OpenCV's `normInf_`/`normL1_`/`normL2_` do
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L218-L282)).
+fn fold_norm<T, C, F>(data: &[T], cn: usize, mask: Option<&[u8]>, combine: C, f: F) -> f64
+where
+    T: Copy + Send + Sync,
+    C: Fn(f64, f64) -> f64 + Copy + Send + Sync,
+    F: Fn(T) -> f64 + Send + Sync,
+{
+    let cn = cn.max(1);
+    #[cfg(feature = "parallel")]
+    {
+        match mask {
+            None => data.par_iter().map(|&x| f(x)).reduce(|| 0.0, combine),
+            Some(m) => data
+                .par_chunks_exact(cn)
+                .zip(m.par_iter())
+                .filter(|(_, &sel)| sel != 0)
+                .map(|(px, _)| px.iter().fold(0.0, |s, &x| combine(s, f(x))))
+                .reduce(|| 0.0, combine),
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        match mask {
+            None => data.iter().fold(0.0, |s, &x| combine(s, f(x))),
+            Some(m) => data
+                .chunks_exact(cn)
+                .zip(m)
+                .filter(|(_, &sel)| sel != 0)
+                .fold(0.0, |s, (px, _)| {
+                    px.iter().fold(s, |s, &x| combine(s, f(x)))
+                }),
+        }
+    }
+}
+
+/// [`fold_norm`] over the element pairs of `a` and `b`, as OpenCV's `normDiff*_`
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L284-L348)).
+fn fold_norm_diff<T, C, F>(
+    a: &[T],
+    b: &[T],
+    cn: usize,
+    mask: Option<&[u8]>,
+    combine: C,
+    f: F,
+) -> f64
+where
+    T: Copy + Send + Sync,
+    C: Fn(f64, f64) -> f64 + Copy + Send + Sync,
+    F: Fn(T, T) -> f64 + Send + Sync,
+{
+    let cn = cn.max(1);
+    #[cfg(feature = "parallel")]
+    {
+        match mask {
+            None => a
+                .par_iter()
+                .zip(b.par_iter())
+                .map(|(&x, &y)| f(x, y))
+                .reduce(|| 0.0, combine),
+            Some(m) => a
+                .par_chunks_exact(cn)
+                .zip(b.par_chunks_exact(cn))
+                .zip(m.par_iter())
+                .filter(|(_, &sel)| sel != 0)
+                .map(|((pa, pb), _)| {
+                    pa.iter()
+                        .zip(pb)
+                        .fold(0.0, |s, (&x, &y)| combine(s, f(x, y)))
+                })
+                .reduce(|| 0.0, combine),
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        match mask {
+            None => a.iter().zip(b).fold(0.0, |s, (&x, &y)| combine(s, f(x, y))),
+            Some(m) => a
+                .chunks_exact(cn)
+                .zip(b.chunks_exact(cn))
+                .zip(m)
+                .filter(|(_, &sel)| sel != 0)
+                .fold(0.0, |s, ((pa, pb), _)| {
+                    pa.iter().zip(pb).fold(s, |s, (&x, &y)| combine(s, f(x, y)))
+                }),
+        }
+    }
+}
+
+/// `a - b` as OpenCV's `normDiff*_` take it: in `float` for `f32` (then widened), exactly
+/// for the other depths, so `u8` 0 − 255 is −255 and never wraps. OpenCV subtracts `i32` in
+/// `int`, which wraps on x86 when the difference leaves the `int` range; purecv keeps the
+/// exact difference there.
+#[inline]
+fn norm_diff_value<T: DataType + ToPrimitive>(a: T, b: T) -> f64 {
+    if T::depth() == Depth::CV_32F {
+        (a.to_f32().unwrap_or(0.0) - b.to_f32().unwrap_or(0.0)) as f64
+    } else {
+        a.to_f64().unwrap_or(0.0) - b.to_f64().unwrap_or(0.0)
+    }
+}
+
+/// `NORM_HAMMING` (`two_bit` false: set bits) or `NORM_HAMMING2` (`two_bit` true: non-zero
+/// 2-bit cells, OpenCV's `cellSize` 2) of the bytes of `a`, xor-ed with `b` when given.
+/// A mask is applied as OpenCV does, with `bitwise_and`: its bytes are bit masks.
+/// Source: [`normHamming`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L53-L100)
+/// and the Hamming branches of `cv::norm`
+/// ([one array](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L679-L701),
+/// [two arrays](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1145-L1168)).
+fn hamming_norm<T: ToPrimitive>(
+    a: &[T],
+    b: Option<&[T]>,
+    mask: Option<&[u8]>,
+    two_bit: bool,
+) -> f64 {
+    let byte = |x: &T| x.to_u8().unwrap_or(0);
+    let mut total = 0u64;
+    for (i, x) in a.iter().enumerate() {
+        let mut v = byte(x);
+        if let Some(b) = b {
+            v ^= byte(&b[i]);
+        }
+        if let Some(m) = mask {
+            v &= m[i];
+        }
+        total += if two_bit {
+            ((v | (v >> 1)) & 0x55).count_ones()
+        } else {
+            v.count_ones()
+        } as u64;
+    }
+    total as f64
+}
+
+/// Calculates an absolute array norm, like
+/// [`cv::norm(src, normType, mask)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L603-L791).
 ///
-/// Returns the norm value as f64.
+/// `norm_type` is [`NormTypes::Inf`], [`NormTypes::L1`], [`NormTypes::L2`],
+/// [`NormTypes::L2Sqr`] (the square of `L2`), or, for a single-channel `u8` source,
+/// [`NormTypes::Hamming`] (set bits) and [`NormTypes::Hamming2`] (non-zero 2-bit cells).
+/// Every channel takes part. A `mask` is a single-channel `u8` matrix of the source's
+/// rows and columns: a non-zero byte selects every channel of its pixel. For the Hamming
+/// norms OpenCV ANDs the mask into the bytes instead, so a mask byte of 1 keeps only bit 0;
+/// purecv does the same. An empty source has norm 0.
+///
+/// # Errors
+/// `InvalidInput` for `Hamming`/`Hamming2` on anything but one `u8` channel and for
+/// `Relative` or `MinMax` (see [`norm_relative`]); `InvalidDimensions` for a mask of the
+/// wrong shape.
+///
+/// # Example
+/// ```
+/// use purecv::core::{norm, Matrix, NormTypes};
+///
+/// let src = Matrix::from_vec(1, 2, 1, vec![3.0f32, -4.0]);
+/// assert_eq!(norm(&src, NormTypes::L2, None).unwrap(), 5.0);
+/// assert_eq!(norm(&src, NormTypes::L2Sqr, None).unwrap(), 25.0);
+/// ```
 pub fn norm<T>(src: &Matrix<T>, norm_type: NormTypes, mask: Option<&Matrix<u8>>) -> Result<f64>
 where
     T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
 {
+    check_norm_type::<T>("norm", norm_type, src.channels)?;
+    check_norm_mask("norm", src.rows, src.cols, mask)?;
+    let cn = src.channels;
+    let m = mask.map(|m| m.data.as_slice());
     match norm_type {
-        NormTypes::Inf => {
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .reduce(|| 0.0, f64::max))
-                } else {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .reduce(|| 0.0, f64::max))
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .fold(0.0, f64::max))
-                } else {
-                    Ok(src
-                        .data
-                        .iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .fold(0.0, f64::max))
-                }
-            }
+        NormTypes::Inf => Ok(fold_norm(&src.data, cn, m, f64::max, |x: T| {
+            x.to_f64().unwrap_or(0.0).abs()
+        })),
+        NormTypes::L1 => Ok(fold_norm(&src.data, cn, m, add_f64, |x: T| {
+            x.to_f64().unwrap_or(0.0).abs()
+        })),
+        NormTypes::L2 | NormTypes::L2Sqr => {
+            let sq_sum = norm_l2_sq(src, m);
+            Ok(if norm_type == NormTypes::L2 {
+                sq_sum.sqrt()
+            } else {
+                sq_sum
+            })
         }
-        NormTypes::L1 => {
-            #[cfg(feature = "parallel")]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                } else {
-                    Ok(src
-                        .data
-                        .par_iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                if let Some(m) = mask {
-                    Ok(src
-                        .data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                } else {
-                    Ok(src
-                        .data
-                        .iter()
-                        .map(|&x| x.to_f64().unwrap_or(0.0).abs())
-                        .sum::<f64>())
-                }
-            }
-        }
-        NormTypes::L2 => {
-            // SIMD fast-path for L2 norm without mask
-            #[cfg(feature = "simd")]
-            {
-                if mask.is_none() && T::has_simd() {
-                    if let Some(sq_sum) = T::simd_norm_l2_sq(&src.data) {
-                        return Ok(sq_sum.sqrt());
-                    }
-                }
-            }
-
-            #[cfg(feature = "parallel")]
-            {
-                let sq_sum = if let Some(m) = mask {
-                    src.data
-                        .par_iter()
-                        .zip(m.data.par_iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                } else {
-                    src.data
-                        .par_iter()
-                        .map(|&x| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                };
-                Ok(sq_sum.sqrt())
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                let sq_sum = if let Some(m) = mask {
-                    src.data
-                        .iter()
-                        .zip(m.data.iter())
-                        .filter(|(_, &mask_val)| mask_val != 0)
-                        .map(|(&x, _)| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                } else {
-                    src.data
-                        .iter()
-                        .map(|&x| {
-                            let val = x.to_f64().unwrap_or(0.0);
-                            val * val
-                        })
-                        .sum::<f64>()
-                };
-                Ok(sq_sum.sqrt())
-            }
-        }
-        _ => Err(cv_err!(
-            tags::CORE,
-            NotImplemented,
-            "norm: norm type {:?} is not implemented",
-            norm_type
+        // check_norm_type admits only Hamming and Hamming2 here
+        _ => Ok(hamming_norm(
+            &src.data,
+            None,
+            m,
+            norm_type == NormTypes::Hamming2,
         )),
     }
+}
+
+/// The sum of squares behind `L2` and `L2Sqr`, with the SIMD fast path when unmasked.
+fn norm_l2_sq<T>(src: &Matrix<T>, mask: Option<&[u8]>) -> f64
+where
+    T: ToPrimitive + Copy + Sync + Send + SimdElement,
+{
+    #[cfg(feature = "simd")]
+    {
+        if mask.is_none() && T::has_simd() {
+            if let Some(sq_sum) = T::simd_norm_l2_sq(&src.data) {
+                return sq_sum;
+            }
+        }
+    }
+    fold_norm(&src.data, src.channels, mask, add_f64, |x: T| {
+        let v = x.to_f64().unwrap_or(0.0);
+        v * v
+    })
+}
+
+/// Calculates the norm of the difference of two arrays, like
+/// [`cv::norm(src1, src2, normType, mask)`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1073-L1263)
+/// without `NORM_RELATIVE` (see [`norm_relative`]).
+///
+/// Norm types and the mask follow [`norm`]; Hamming counts the bits of `src1 ^ src2`.
+/// Differences never overflow: `u8` 0 and 255 differ by 255. For `f32` the difference is
+/// rounded to `f32` first, as OpenCV subtracts in `float`.
+///
+/// # Errors
+/// `InvalidDimensions` when the sources differ in rows or columns (OpenCV's `sameSize`)
+/// or the mask has the wrong shape; `IncompatibleChannels` when their channel counts differ
+/// (OpenCV's type check); `InvalidInput` as for [`norm`].
+///
+/// # Example
+/// ```
+/// use purecv::core::{norm_diff, Matrix, NormTypes};
+///
+/// let a = Matrix::from_vec(1, 2, 1, vec![0u8, 255]);
+/// let b = Matrix::from_vec(1, 2, 1, vec![255u8, 0]);
+/// assert_eq!(norm_diff(&a, &b, NormTypes::L1, None).unwrap(), 510.0);
+/// ```
+pub fn norm_diff<T>(
+    src1: &Matrix<T>,
+    src2: &Matrix<T>,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<f64>
+where
+    T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
+{
+    if src1.channels != src2.channels {
+        cv_bail!(
+            tags::CORE,
+            IncompatibleChannels,
+            "norm_diff: sources have {} and {} channels",
+            src1.channels,
+            src2.channels
+        );
+    }
+    if src1.rows != src2.rows || src1.cols != src2.cols {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "norm_diff: sources are {}×{} and {}×{}",
+            src1.rows,
+            src1.cols,
+            src2.rows,
+            src2.cols
+        );
+    }
+    check_norm_type::<T>("norm_diff", norm_type, src1.channels)?;
+    check_norm_mask("norm_diff", src1.rows, src1.cols, mask)?;
+    let (a, b, cn) = (&src1.data, &src2.data, src1.channels);
+    let m = mask.map(|m| m.data.as_slice());
+    match norm_type {
+        NormTypes::Inf => Ok(fold_norm_diff(a, b, cn, m, f64::max, |x: T, y: T| {
+            norm_diff_value(x, y).abs()
+        })),
+        NormTypes::L1 => Ok(fold_norm_diff(a, b, cn, m, add_f64, |x: T, y: T| {
+            norm_diff_value(x, y).abs()
+        })),
+        NormTypes::L2 | NormTypes::L2Sqr => {
+            let sq_sum = fold_norm_diff(a, b, cn, m, add_f64, |x: T, y: T| {
+                let d = norm_diff_value(x, y);
+                d * d
+            });
+            Ok(if norm_type == NormTypes::L2 {
+                sq_sum.sqrt()
+            } else {
+                sq_sum
+            })
+        }
+        _ => Ok(hamming_norm(
+            a,
+            Some(b),
+            m,
+            norm_type == NormTypes::Hamming2,
+        )),
+    }
+}
+
+/// Calculates the relative difference norm `norm_diff(src1, src2) / (norm(src2) + DBL_EPSILON)`,
+/// which is `cv::norm(src1, src2, normType | NORM_RELATIVE, mask)`
+/// ([norm.cpp](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1092-L1095)).
+/// The mask applies to both norms. `src2` all zero divides by `f64::EPSILON`; both zero
+/// gives 0. `norm_type` is the plain norm (`L2`, not `L2 | Relative`), since [`NormTypes`]
+/// cannot hold a combination.
+///
+/// # Errors
+/// As [`norm_diff`].
+pub fn norm_relative<T>(
+    src1: &Matrix<T>,
+    src2: &Matrix<T>,
+    norm_type: NormTypes,
+    mask: Option<&Matrix<u8>>,
+) -> Result<f64>
+where
+    T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
+{
+    let diff = norm_diff(src1, src2, norm_type, mask)?;
+    Ok(diff / (norm(src2, norm_type, mask)? + f64::EPSILON))
 }
 
 /// Normalizes the norm or value range of an array, keeping the element type.
@@ -1382,9 +1599,7 @@ where
 ///
 /// With a `mask`, only the selected pixels of `dst` are written and the others are kept;
 /// without a mask `dst` is replaced. `MinMax` measures the range over the selected pixels.
-/// `L1`, `L2` and `Inf` measure the norm with [`norm`], which pairs the mask with elements
-/// rather than pixels, so on a multi-channel source the norm is not taken over the selected
-/// pixels (#214).
+/// `L1`, `L2` and `Inf` measure the norm of the selected pixels with [`norm`].
 ///
 /// This is [`cv::normalize`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/norm.cpp#L1369-L1414);
 /// the output is `saturate_cast<T>(x * scale + shift)` through
@@ -1522,7 +1737,6 @@ where
             (scale, shift)
         }
         NormTypes::L1 | NormTypes::L2 | NormTypes::Inf => {
-            // `norm` pairs the mask with elements on a multi-channel source, see #214.
             let n = norm(src, norm_type, mask)?;
             (if n > f64::EPSILON { alpha / n } else { 0.0 }, 0.0)
         }

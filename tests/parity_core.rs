@@ -2478,9 +2478,9 @@ fn norm_inf_l1_l2_match_opencv() {
     assert_eq!(norm(&two_ch, NormTypes::Inf, None).unwrap(), 12.0);
 }
 
-/// OpenCV: `norm(src, NORM_L2SQR)` = 177.5 and `norm(u8, NORM_HAMMING)` = popcount (12).
+/// `core_stats.py`, `norm.l2sqr` = 177.5, `norm.hamming` = 12 (popcount) and `norm.hamming2`
+/// = 7 (non-zero 2-bit cells).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #214"]
 fn norm_l2sqr_and_hamming_are_supported_by_opencv() {
     assert_eq!(
         norm(&row(&NORM_SRC), NormTypes::L2Sqr, None).unwrap(),
@@ -2489,6 +2489,469 @@ fn norm_l2sqr_and_hamming_are_supported_by_opencv() {
     let bits = row(&[0b1011u8, 0xFF, 0, 0b1000_0000]);
     assert_eq!(norm(&bits, NormTypes::Hamming, None).unwrap(), 12.0);
     assert_eq!(norm(&bits, NormTypes::Hamming2, None).unwrap(), 7.0);
+}
+
+/// The norms `core_stats.py` measures per depth in `norm_types`, in the order `NORM_KINDS`.
+const NORM_KINDS: [NormTypes; 4] = [
+    NormTypes::Inf,
+    NormTypes::L1,
+    NormTypes::L2,
+    NormTypes::L2Sqr,
+];
+
+/// `|purecv - OpenCV| <= tol * max(1, |OpenCV|)`; `tol` 0 asks for the exact value.
+fn assert_norm(got: f64, want: f64, tol: f64, what: &str) {
+    assert!(
+        (got - want).abs() <= tol * want.abs().max(1.0),
+        "{what}: purecv {got} vs OpenCV {want}"
+    );
+}
+
+/// Checks one depth of `core_stats.py`, `norm_types.<depth>`: `$a` and `$b` are its `a` and
+/// `b` (12 values), shaped as 3×4×1 (`single`) and 2×2×3 (`multi`); `pixel_mask` selects
+/// pixels (0, 0) and (1, 1) of the 2×2 matrix. Each row is `[inf, l1, l2, l2sqr]`.
+macro_rules! check_norm_depth {
+    ($name:expr, $a:expr, $b:expr, $tol:expr,
+     single: $single:expr, masked: $masked:expr, diff: $diff:expr, diff_masked: $diff_masked:expr) => {{
+        let (a1, b1) = (
+            Matrix::from_vec(3, 4, 1, $a.to_vec()),
+            Matrix::from_vec(3, 4, 1, $b.to_vec()),
+        );
+        let (a3, b3) = (
+            Matrix::from_vec(2, 2, 3, $a.to_vec()),
+            Matrix::from_vec(2, 2, 3, $b.to_vec()),
+        );
+        let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0, 0, 1]);
+        for (k, &t) in NORM_KINDS.iter().enumerate() {
+            let what = |key: &str| format!("norm_types.{}.{}_{:?}", $name, key, t);
+            assert_norm(
+                norm(&a1, t, None).unwrap(),
+                $single[k],
+                $tol,
+                &what("single"),
+            );
+            assert_norm(
+                norm(&a3, t, None).unwrap(),
+                $single[k],
+                $tol,
+                &what("multi"),
+            );
+            assert_norm(
+                norm(&a3, t, Some(&mask)).unwrap(),
+                $masked[k],
+                $tol,
+                &what("multi_masked"),
+            );
+            assert_norm(
+                norm_diff(&a1, &b1, t, None).unwrap(),
+                $diff[k],
+                $tol,
+                &what("diff_single"),
+            );
+            assert_norm(
+                norm_diff(&a3, &b3, t, None).unwrap(),
+                $diff[k],
+                $tol,
+                &what("diff_multi"),
+            );
+            assert_norm(
+                norm_diff(&a3, &b3, t, Some(&mask)).unwrap(),
+                $diff_masked[k],
+                $tol,
+                &what("diff_multi_masked"),
+            );
+        }
+    }};
+}
+
+/// `core_stats.py`, `norm_types.<depth>.{single,multi,multi_masked}_*`: every norm on every
+/// depth. A mask on a multi-channel source selects pixels (all channels of a pixel), as
+/// OpenCV's `normL1_` & co. step `src += cn` per mask byte.
+#[test]
+fn norm_every_depth_matches_opencv() {
+    // exact for 8- and 16-bit inputs, where OpenCV sums in int
+    check_norm_depth!("u8", [0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+        [255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255], 0.0,
+        single: [255.0, 1048.0, 444.4569720456638, 197542.0],
+        masked: [255.0, 609.0, 364.3610846399489, 132759.0],
+        diff: [255.0, 1828.0, 615.7012262453276, 379088.0],
+        diff_masked: [255.0, 1029.0, 494.00708496943645, 244043.0]);
+    check_norm_depth!("i8", [-128i8, 127, -5, 0, 3, -100, 60, 1, -17, 64, -127, 33],
+        [127i8, -128, 5, -1, -3, 100, -60, 1, 17, -64, 127, -33], 0.0,
+        single: [128.0, 665.0, 260.2902226361951, 67751.0],
+        masked: [128.0, 484.0, 232.06033698157037, 53852.0],
+        diff: [255.0, 1329.0, 520.5756429184908, 270999.0],
+        diff_masked: [255.0, 968.0, 464.11851934608256, 215406.0]);
+    check_norm_depth!("u16", [0u16, 65535, 7, 1000, 3, 40000, 1, 90, 17, 640, 60000, 33],
+        [65535u16, 0, 7, 0, 60000, 1, 90, 1, 640, 17, 0, 65535], 0.0,
+        single: [65535.0, 167326.0, 97448.73196712208, 9496255362.0],
+        masked: [65535.0, 126215.0, 88855.20222811942, 7895246963.0],
+        diff: [65535.0, 358992.0, 147246.51630514048, 21681536564.0],
+        diff_masked: [65535.0, 257195.0, 128376.68239598654, 16480572583.0]);
+    check_norm_depth!("i16", [-32768i16, 32767, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33],
+        [32767i16, -32768, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33], 0.0,
+        single: [32768.0, 97834.0, 55219.46328967713, 3049189126.0],
+        masked: [32768.0, 96213.0, 55207.14470972032, 3047828827.0],
+        diff: [65535.0, 195667.0, 110438.92655671731, 12196756499.0],
+        diff_masked: [65535.0, 192426.0, 110414.28941038383, 12191315306.0]);
+    // squares near 2^62 round in f64; the order of the sum may differ
+    check_norm_depth!("i32",
+        [-2000000000i32, 2147483647, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33],
+        [5i32, 5, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33], 1e-15,
+        single: [2147483647.0, 4147515946.0, 2934567432.354246, 8.611686015034192e18],
+        masked: [2147483647.0, 4147514325.0, 2934567432.354014, 8.611686015032831e18],
+        diff: [2147483642.0, 4147548244.0, 2934567432.563898, 8.611686016264668e18],
+        diff_masked: [2147483642.0, 4147545003.0, 2934567432.5629706, 8.611686016259227e18]);
+    check_norm_depth!("f32",
+        [3.0f32, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0],
+        [1.0f32, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0], 1e-12,
+        single: [1000.25, 1098.900000013411, 1002.5092144214972, 1005024.7250000074],
+        masked: [65.5, 75.30000001192093, 65.72358785099267, 4319.590000007152],
+        diff: [999.5, 1161.450000025332, 1008.1842254766879, 1016435.4325000289],
+        diff_masked: [131.0, 139.35000002384186, 131.11415827449227, 17190.92250002861]);
+    check_norm_depth!("f64",
+        [3.0f64, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0],
+        [1.0f64, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0], 1e-12,
+        single: [1000.25, 1098.9, 1002.5092144214934, 1005024.725],
+        masked: [65.5, 75.3, 65.72358785093827, 4319.59],
+        diff: [999.5, 1161.45, 1008.1842254766735, 1016435.4325],
+        diff_masked: [131.0, 139.35, 131.11415827438316, 17190.9225]);
+}
+
+/// `core_stats.py`, `norm_types.mask_rules`: the mask is one 8-bit channel of the source's
+/// size; any non-zero byte selects; an all-zero mask gives 0.
+#[test]
+fn norm_mask_rules_match_opencv() {
+    let a3 = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            3.0f32, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0,
+        ],
+    );
+    let wrong_size = Matrix::from_vec(2, 3, 1, vec![1u8; 6]);
+    assert!(norm(&a3, NormTypes::L2, Some(&wrong_size)).is_err());
+    assert!(norm_diff(&a3, &a3, NormTypes::L2, Some(&wrong_size)).is_err());
+    let three_channel = Matrix::from_vec(2, 2, 3, vec![1u8; 12]);
+    assert!(norm(&a3, NormTypes::L2, Some(&three_channel)).is_err());
+    let zeros = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+    assert_eq!(norm(&a3, NormTypes::L2, Some(&zeros)).unwrap(), 0.0);
+    assert_eq!(norm(&a3, NormTypes::Inf, Some(&zeros)).unwrap(), 0.0);
+    // `mask_255_l1` equals `multi_masked_l1` of f32
+    let mask_255 = Matrix::from_vec(2, 2, 1, vec![255u8, 0, 0, 255]);
+    assert_norm(
+        norm(&a3, NormTypes::L1, Some(&mask_255)).unwrap(),
+        75.30000001192093,
+        1e-12,
+        "mask_255_l1",
+    );
+}
+
+/// `core_stats.py`, `norm_types.hamming`: `Hamming` counts set bits, `Hamming2` non-zero
+/// 2-bit cells (`cellSize` 2). With a mask OpenCV takes `bitwise_and(src, mask)`, so mask
+/// bytes act as bit masks, not as a pixel selection.
+#[test]
+fn norm_hamming_matches_opencv() {
+    let a = Matrix::from_vec(2, 4, 1, vec![11u8, 255, 0, 128, 85, 170, 195, 1]);
+    let b = Matrix::from_vec(2, 4, 1, vec![255u8, 15, 0, 129, 170, 170, 60, 128]);
+    let mask = Matrix::from_vec(2, 4, 1, vec![255u8, 1, 0, 15, 240, 255, 3, 0]);
+    assert_eq!(norm(&a, NormTypes::Hamming, None).unwrap(), 25.0);
+    assert_eq!(norm(&a, NormTypes::Hamming2, None).unwrap(), 18.0);
+    assert_eq!(norm(&a, NormTypes::Hamming, Some(&mask)).unwrap(), 12.0);
+    assert_eq!(norm(&a, NormTypes::Hamming2, Some(&mask)).unwrap(), 10.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming, None).unwrap(), 28.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming2, None).unwrap(), 16.0);
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Hamming, Some(&mask)).unwrap(),
+        12.0
+    );
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Hamming2, Some(&mask)).unwrap(),
+        7.0
+    );
+    assert_norm(
+        norm_relative(&a, &b, NormTypes::Hamming, None).unwrap(),
+        1.037037037037037,
+        1e-15,
+        "relative_hamming",
+    );
+    // `norm_types.u8.single_hamming` / `single_hamming2` / `diff_single_hamming2`
+    let u8a = Matrix::from_vec(
+        3,
+        4,
+        1,
+        vec![0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+    );
+    let u8b = Matrix::from_vec(3, 4, 1, vec![255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255]);
+    assert_eq!(norm(&u8a, NormTypes::Hamming, None).unwrap(), 33.0);
+    assert_eq!(norm(&u8a, NormTypes::Hamming2, None).unwrap(), 24.0);
+    assert_eq!(
+        norm_diff(&u8a, &u8b, NormTypes::Hamming2, None).unwrap(),
+        38.0
+    );
+}
+
+/// `core_stats.py`, `norm_types.hamming.{u8_three_channel,u8_two_channel_diff,i8,u16,f32,
+/// diff_f32}` and `norm_types.<depth>.*_hamming*`: OpenCV asserts `type() == CV_8U`, so
+/// Hamming needs one `u8` channel.
+#[test]
+fn norm_hamming_rejects_non_u8() {
+    for t in [NormTypes::Hamming, NormTypes::Hamming2] {
+        assert!(norm(&row(&[1i8, 2]), t, None).is_err());
+        assert!(norm(&row(&[1u16, 2]), t, None).is_err());
+        assert!(norm(&row(&[1i16, 2]), t, None).is_err());
+        assert!(norm(&row(&[1i32, 2]), t, None).is_err());
+        assert!(norm(&row(&[1.0f32, 2.0]), t, None).is_err());
+        assert!(norm(&row(&[1.0f64, 2.0]), t, None).is_err());
+        assert!(norm_diff(&row(&[1.0f32]), &row(&[2.0f32]), t, None).is_err());
+        assert!(norm_relative(&row(&[1i16]), &row(&[2i16]), t, None).is_err());
+        let three = Matrix::from_vec(2, 1, 3, vec![11u8, 255, 0, 85, 170, 195]);
+        assert!(norm(&three, t, None).is_err());
+        let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
+        assert!(norm_diff(&two, &two, t, None).is_err());
+    }
+    // `norm.minmax_as_norm_type`: MinMax and Relative are not norm types
+    let f = row(&NORM_SRC);
+    assert!(norm(&f, NormTypes::MinMax, None).is_err());
+    assert!(norm(&f, NormTypes::Relative, None).is_err());
+    assert!(norm_diff(&f, &f, NormTypes::Relative, None).is_err());
+}
+
+/// `core_stats.py`, `norm_types.diff`: `u8` differences are taken without overflow
+/// (0 − 255 counts 255), and the empty rows of `norm_types.empty` are 0.
+#[test]
+fn norm_diff_matches_opencv() {
+    let a = row(&[0u8, 255, 10, 200]);
+    let b = row(&[255u8, 0, 10, 100]);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Inf, None).unwrap(), 255.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::L1, None).unwrap(), 610.0);
+    assert_norm(
+        norm_diff(&a, &b, NormTypes::L2, None).unwrap(),
+        374.2325480232846,
+        1e-15,
+        "u8_l2",
+    );
+    assert_eq!(norm_diff(&a, &b, NormTypes::L2Sqr, None).unwrap(), 140050.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming, None).unwrap(), 20.0);
+    assert_eq!(norm_diff(&a, &b, NormTypes::Hamming2, None).unwrap(), 11.0);
+    // `norm.two_array_l2`
+    let ones = row(&[1.0f32; 6]);
+    assert_norm(
+        norm_diff(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap(),
+        norm_relative(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap()
+            * (6.0f64.sqrt() + f64::EPSILON),
+        1e-15,
+        "two_array_l2 vs relative_l2",
+    );
+    // `norm_types.empty`
+    let e = Matrix::<f32>::new(0, 3, 1);
+    for t in NORM_KINDS {
+        assert_eq!(norm(&e, t, None).unwrap(), 0.0);
+    }
+    assert_eq!(norm_diff(&e, &e, NormTypes::L2, None).unwrap(), 0.0);
+    assert_eq!(norm_relative(&e, &e, NormTypes::L2, None).unwrap(), 0.0);
+    let e8 = Matrix::<u8>::new(0, 0, 1);
+    for t in [
+        NormTypes::Inf,
+        NormTypes::L1,
+        NormTypes::L2,
+        NormTypes::L2Sqr,
+    ] {
+        assert_eq!(norm(&e8, t, None).unwrap(), 0.0);
+    }
+    assert_eq!(norm(&e8, NormTypes::Hamming, None).unwrap(), 0.0);
+    assert_eq!(norm(&e8, NormTypes::Hamming2, None).unwrap(), 0.0);
+    assert_eq!(norm_diff(&e8, &e8, NormTypes::Hamming, None).unwrap(), 0.0);
+}
+
+/// `core_stats.py`, `norm_types.diff.{shape_mismatch,transposed_shape,channel_mismatch}`:
+/// OpenCV asserts `sameSize` and equal types; with one `T` a channel mismatch is the only
+/// type mismatch left.
+#[test]
+fn norm_diff_rejects_shape_mismatch() {
+    let a = row(&[0u8, 255, 10, 200]);
+    assert!(norm_diff(&a, &row(&[0u8; 3]), NormTypes::L2, None).is_err());
+    let column = Matrix::from_vec(4, 1, 1, vec![0u8, 255, 10, 200]);
+    assert!(norm_diff(&a, &column, NormTypes::L2, None).is_err());
+    let one = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
+    let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
+    assert!(norm_diff(&one, &two, NormTypes::L2, None).is_err());
+    assert!(norm_relative(&one, &two, NormTypes::L2, None).is_err());
+}
+
+/// `core_stats.py`, `norm_types.<depth>.relative_multi{,_masked}_*` and
+/// `norm_types.diff.relative_*`: `norm_diff / (norm(src2) + DBL_EPSILON)`, the mask applying
+/// to both; `src2` all zero divides by `DBL_EPSILON`, both zero gives 0.
+#[test]
+fn norm_relative_matches_opencv() {
+    let mask = Matrix::from_vec(2, 2, 1, vec![1u8, 0, 0, 1]);
+    let u8a = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![0u8, 255, 7, 128, 3, 200, 1, 90, 17, 64, 250, 33],
+    );
+    let u8b = Matrix::from_vec(2, 2, 3, vec![255u8, 0, 7, 0, 250, 1, 90, 1, 64, 17, 0, 255]);
+    let u8_rel = [
+        1.0,
+        1.9446808510638298,
+        1.3595713719258675,
+        1.8484343153603855,
+    ];
+    let u8_rel_masked = [
+        1.0,
+        1.9269662921348314,
+        1.368089046124633,
+        1.8716676381262078,
+    ];
+    let i16a = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            -32768i16, 32767, -5, 0, 3, -1000, 600, 1, -17, 640, -30000, 33,
+        ],
+    );
+    let i16b = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            32767i16, -32768, 5, -1, -3, 1000, -600, 1, 17, -640, 30000, -33,
+        ],
+    );
+    let i16_rel = [
+        1.999969482421875,
+        1.9999693361271529,
+        1.999999999262099,
+        3.9999999970483957,
+    ];
+    let i16_rel_masked = [
+        1.999969482421875,
+        2.0,
+        1.9999999998359486,
+        3.999999999343795,
+    ];
+    let fa = [
+        3.0, -4.0, 0.5, 12.0, -1.5, 2.5, 1000.25, -7.25, 0.1, -0.3, 65.5, 2.0,
+    ];
+    let fb = [
+        1.0, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0,
+    ];
+    let f32a = Matrix::from_vec(2, 2, 3, fa.map(|v: f64| v as f32).to_vec());
+    let f32b = Matrix::from_vec(2, 2, 3, fb.map(|v: f64| v as f32).to_vec());
+    let f32_rel = [
+        15.259541984732824,
+        12.323076921397387,
+        15.02567174571983,
+        225.7708114101232,
+    ];
+    let f32_rel_masked = [
+        2.0,
+        1.9892933618861903,
+        2.0003091010157292,
+        4.001236499606355,
+    ];
+    let f64a = Matrix::from_vec(2, 2, 3, fa.to_vec());
+    let f64b = Matrix::from_vec(2, 2, 3, fb.to_vec());
+    let f64_rel = [
+        15.259541984732824,
+        12.323076923076924,
+        15.025671745733543,
+        225.77081141053526,
+    ];
+    let f64_rel_masked = [
+        2.0,
+        1.9892933618843682,
+        2.0003091010157292,
+        4.001236499606357,
+    ];
+    for (k, &t) in NORM_KINDS.iter().enumerate() {
+        let what = |d: &str| format!("norm_types.{d}.relative_multi_{t:?}");
+        assert_norm(
+            norm_relative(&u8a, &u8b, t, None).unwrap(),
+            u8_rel[k],
+            1e-15,
+            &what("u8"),
+        );
+        assert_norm(
+            norm_relative(&u8a, &u8b, t, Some(&mask)).unwrap(),
+            u8_rel_masked[k],
+            1e-15,
+            &what("u8 masked"),
+        );
+        assert_norm(
+            norm_relative(&i16a, &i16b, t, None).unwrap(),
+            i16_rel[k],
+            1e-15,
+            &what("i16"),
+        );
+        assert_norm(
+            norm_relative(&i16a, &i16b, t, Some(&mask)).unwrap(),
+            i16_rel_masked[k],
+            1e-15,
+            &what("i16 masked"),
+        );
+        assert_norm(
+            norm_relative(&f32a, &f32b, t, None).unwrap(),
+            f32_rel[k],
+            1e-12,
+            &what("f32"),
+        );
+        assert_norm(
+            norm_relative(&f32a, &f32b, t, Some(&mask)).unwrap(),
+            f32_rel_masked[k],
+            1e-12,
+            &what("f32 masked"),
+        );
+        assert_norm(
+            norm_relative(&f64a, &f64b, t, None).unwrap(),
+            f64_rel[k],
+            1e-12,
+            &what("f64"),
+        );
+        assert_norm(
+            norm_relative(&f64a, &f64b, t, Some(&mask)).unwrap(),
+            f64_rel_masked[k],
+            1e-12,
+            &what("f64 masked"),
+        );
+    }
+    // `norm_types.diff.relative_src2_zero_f32_*`, `relative_src2_zero_u8_hamming`,
+    // `relative_both_zero_f32_l2`
+    let src = row(&[3.0f32, -4.0, 0.0, 12.0, -1.5, 2.5]);
+    let zeros = row(&[0.0f32; 6]);
+    let src2_zero = [
+        5.404319552844595e16,
+        1.035827914295214e17,
+        6.000106419596382e16,
+        7.99388933858263e17,
+    ];
+    for (k, &t) in NORM_KINDS.iter().enumerate() {
+        assert_norm(
+            norm_relative(&src, &zeros, t, None).unwrap(),
+            src2_zero[k],
+            1e-15,
+            "src2 zero",
+        );
+    }
+    assert_norm(
+        norm_relative(
+            &row(&[0u8, 255, 10, 200]),
+            &row(&[0u8; 4]),
+            NormTypes::Hamming,
+            None,
+        )
+        .unwrap(),
+        5.854679515581645e16,
+        1e-15,
+        "relative_src2_zero_u8_hamming",
+    );
+    assert_eq!(
+        norm_relative(&zeros, &zeros, NormTypes::L2, None).unwrap(),
+        0.0
+    );
 }
 
 #[test]
