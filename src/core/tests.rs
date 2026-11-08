@@ -191,8 +191,8 @@ mod core_tests {
         assert_eq!(f_nd_v.data, vec![3, 4, 1, 2]);
         let f_nd_h = flip_nd(&m, 1).unwrap(); // horizontal (axis 1)
         assert_eq!(f_nd_h.data, vec![2, 1, 4, 3]);
-        let f_nd_both = flip_nd(&m, -1).unwrap(); // both
-        assert_eq!(f_nd_both.data, vec![4, 3, 2, 1]);
+        let f_nd_end = flip_nd(&m, -1).unwrap(); // counts from the end: axis 1
+        assert_eq!(f_nd_end.data, vec![2, 1, 4, 3]);
 
         // Transpose test
         let m_rect = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
@@ -321,11 +321,11 @@ mod core_tests {
         let m = Matrix::from_vec(2, 2, 1, vec![10.0f64, 20.0, 30.0, 40.0]);
 
         // Sum
-        let s = sum(&m);
+        let s = sum(&m).unwrap();
         assert_eq!(s.v[0], 100.0);
 
         // Mean
-        let mn = mean(&m);
+        let mn = mean(&m).unwrap();
         assert_eq!(mn.v[0], 25.0);
 
         // MinMaxLoc
@@ -391,8 +391,7 @@ mod core_tests {
 
         // Test Matrix::ones_with_type
         let o = Matrix::<i16>::ones_with_type(2, 2, CV_16SC2).unwrap();
-        assert_eq!(o.data.len(), 8);
-        assert!(o.data.iter().all(|&v| v == 1));
+        assert_eq!(o.data, vec![1, 0, 1, 0, 1, 0, 1, 0]); // channel 0 only, as Mat::ones
         assert_eq!(o.mat_type(), CV_16SC2);
 
         // Test error when depth mismatch on new_with_type
@@ -803,7 +802,7 @@ mod core_tests {
         assert_eq!(o.cols, 2);
         assert_eq!(o.channels, 3);
         assert_eq!(o.data.len(), 12);
-        assert!(o.data.iter().all(|&v| v == 1));
+        assert_eq!(o.data, vec![1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]);
     }
 
     // ---- with_type error cases ----
@@ -1306,7 +1305,7 @@ mod core_tests {
     fn test_determinant() {
         // 2×2: det([1,2;3,4]) = 1*4 - 2*3 = -2
         let m2 = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 3.0, 4.0]);
-        assert!((determinant(&m2) - (-2.0)).abs() < 1e-9);
+        assert!((determinant(&m2).unwrap() - (-2.0)).abs() < 1e-9);
 
         // 3×3: det([1,2,3;0,1,4;5,6,0]) = 1
         let m3 = Matrix::from_vec(
@@ -1315,17 +1314,17 @@ mod core_tests {
             1,
             vec![1.0f64, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0],
         );
-        assert!((determinant(&m3) - 1.0).abs() < 1e-9);
+        assert!((determinant(&m3).unwrap() - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_invert() {
-        // inv([4,7;2,6]) = [0.6,-0.7;-0.2,0.4], det = 10
+        // inv([4,7;2,6]) = [0.6,-0.7;-0.2,0.4]; the return value is a success flag (1.0)
         let m = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
         let mut dst = Matrix::<f64>::new(2, 2, 1);
 
-        let det = invert(&m, &mut dst, DecompTypes::DECOMP_LU).unwrap();
-        assert!((det - 10.0).abs() < 1e-9);
+        let ok = invert(&m, &mut dst, DecompTypes::DECOMP_LU).unwrap();
+        assert_eq!(ok, 1.0);
         assert!((dst.data[0] - 0.6).abs() < 1e-9);
         assert!((dst.data[1] - (-0.7)).abs() < 1e-9);
         assert!((dst.data[2] - (-0.2)).abs() < 1e-9);
@@ -1378,6 +1377,19 @@ mod core_tests {
     // -----------------------------------------------------------------------
     // DynamicMatrix
     // -----------------------------------------------------------------------
+
+    /// `Mat::ones` writes `Scalar(1)`: only channel 0 (`core_mat_initializers.js` keys
+    /// `ones_1x1_8uc3`, `ones_2x2_32fc2`).
+    #[test]
+    fn dynamic_ones_sets_only_channel_0() {
+        let dm = DynamicMatrix::ones(1, 1, CV_8UC3).unwrap();
+        assert_eq!(dm.data_u8(), Some(&[1u8, 0, 0][..]));
+        let dm = DynamicMatrix::ones(2, 2, CV_32FC2).unwrap();
+        assert_eq!(
+            dm.data_f32(),
+            Some(&[1.0f32, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0][..])
+        );
+    }
 
     #[test]
     fn test_dynamic_matrix() {
@@ -1452,7 +1464,7 @@ mod core_tests {
 
     #[test]
     fn test_cv_log2_value() {
-        assert_eq!(CV_LOG2, std::f64::consts::LOG2_E);
+        assert_eq!(CV_LOG2, std::f64::consts::LN_2);
     }
 
     #[test]
@@ -1475,7 +1487,8 @@ mod core_tests {
         assert!((CV_PI / 2.0 - CV_PI_2).abs() < 1e-15);
         assert!((CV_2PI - 2.0 * CV_PI).abs() < 1e-15);
         assert!((CV_PI / 4.0 - CV_PI_4).abs() < 1e-15);
-        assert!((CV_LOG2 * CV_LN2 - 1.0).abs() < 1e-15);
+        // OpenCV's CV_LOG2 is ln 2, the same value as CV_LN2 (cvdef.h).
+        assert_eq!(CV_LOG2, CV_LN2);
     }
 
     #[test]
@@ -1485,12 +1498,7 @@ mod core_tests {
         let mut m1 = Matrix::<u8>::zeros(2, 2, 1);
         let mut m2 = Matrix::<u8>::zeros(2, 2, 1);
 
-        // Identical matrices, PSNR should be infinite, but we cap log(0) basically, wait our PSNR returns 0.0 or inf?
-        // Let's test with a difference.
-        m1.data = vec![10, 20, 30, 40];
-        m2.data = vec![10, 20, 30, 40]; // same
-
-        // Let's make them differ by 10 per element
+        // The two matrices differ by 10 per element.
         m1.data = vec![10, 20, 30, 40];
         m2.data = vec![20, 30, 40, 50]; // mse = 100
 
@@ -1515,7 +1523,7 @@ mod core_tests {
         assert!((CV_2PI - 2.0 * std::f64::consts::PI).abs() < f64::EPSILON);
         assert!((CV_PI_2 - std::f64::consts::FRAC_PI_2).abs() < f64::EPSILON);
         assert!((CV_PI_4 - std::f64::consts::FRAC_PI_4).abs() < f64::EPSILON);
-        assert!((CV_LOG2 - std::f64::consts::LOG2_E).abs() < f64::EPSILON);
+        assert!((CV_LOG2 - std::f64::consts::LN_2).abs() < f64::EPSILON);
         assert!((CV_LN2 - std::f64::consts::LN_2).abs() < f64::EPSILON);
         assert!((CV_SQRT2 - std::f64::consts::SQRT_2).abs() < f64::EPSILON);
         assert!((CV_E - std::f64::consts::E).abs() < f64::EPSILON);
@@ -1894,5 +1902,73 @@ mod saturate_tests {
         }
         assert!(saturate_cast::<f64>(f64::NAN).is_nan());
         assert!(f32::saturate_from_f32(f32::NAN).is_nan());
+    }
+
+    /// A reflected border far wider than the image is a periodic tiling of the source, built here
+    /// from the period (Reflect: `abc|cba`, Reflect101: `abc|b`) and not from `border_interpolate`.
+    /// The border indices used to cost one fold step per period, which made this quadratic: the
+    /// 20000 wide borders took about a second before the constant time mapping.
+    #[test]
+    fn copy_make_border_wide_reflected_border_on_a_small_source() {
+        use crate::core::matrix::Matrix;
+        use crate::core::structural::copy_make_border;
+        use crate::core::types::{BorderTypes, Scalar};
+
+        // Native: wide enough that the old per-period fold was visibly slow. Miri: a few periods
+        // are enough for correctness, and its ~1000x slowdown makes 20000 too costly.
+        const BORDER: usize = if cfg!(miri) { 400 } else { 20_000 };
+        let none = Scalar::all(0u8);
+
+        // 2x3 source, border on the columns only; row r of the output tiles source row r.
+        let src = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
+        for (border_type, period) in [
+            (BorderTypes::Reflect as i32, &[0usize, 1, 2, 2, 1, 0][..]),
+            (BorderTypes::Reflect101 as i32, &[0usize, 1, 2, 1][..]),
+        ] {
+            let dst = copy_make_border(&src, 0, 0, BORDER, BORDER, border_type, none).unwrap();
+            assert_eq!((dst.rows, dst.cols), (2, 3 + 2 * BORDER));
+            for y in 0..2 {
+                for x in 0..dst.cols {
+                    let k = (x as i64 - BORDER as i64).rem_euclid(period.len() as i64) as usize;
+                    assert_eq!(
+                        dst.data[y * dst.cols + x],
+                        src.data[y * 3 + period[k]],
+                        "type {border_type} at ({y}, {x})"
+                    );
+                }
+            }
+        }
+
+        // 2x1 source, border on the rows only: the row map uses the same index mapping.
+        let col = Matrix::<u8>::from_vec(2, 1, 1, vec![10, 20]);
+        let dst = copy_make_border(
+            &col,
+            BORDER,
+            BORDER,
+            0,
+            0,
+            BorderTypes::Reflect as i32,
+            none,
+        )
+        .unwrap();
+        assert_eq!((dst.rows, dst.cols), (2 + 2 * BORDER, 1));
+        for y in 0..dst.rows {
+            let k = (y as i64 - BORDER as i64).rem_euclid(4) as usize;
+            assert_eq!(dst.data[y], [10, 20, 20, 10][k], "row {y}");
+        }
+        let dst = copy_make_border(
+            &col,
+            BORDER,
+            BORDER,
+            0,
+            0,
+            BorderTypes::Reflect101 as i32,
+            none,
+        )
+        .unwrap();
+        for y in 0..dst.rows {
+            let k = (y as i64 - BORDER as i64).rem_euclid(2) as usize;
+            assert_eq!(dst.data[y], [10, 20][k], "row {y}");
+        }
     }
 }

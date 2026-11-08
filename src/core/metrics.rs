@@ -53,7 +53,7 @@ use crate::cv_bail;
 /// the fidelity of its representation. It’s frequently used to measure the quality of
 /// reconstruction of lossy compression codecs (e.g., for image compression).
 ///
-/// In PureCV, it calculates: `10 * log10((255 ^ 2) / MSE)`.
+/// In PureCV, it calculates OpenCV's `20 * log10(255 / (sqrt(MSE) + DBL_EPSILON))`.
 /// This implementation relies on iterating over the arrays to calculate the Mean Squared Error (MSE),
 /// automatically adapting correctly given internal parameter precision via ` Into<f64> `.
 ///
@@ -64,7 +64,7 @@ use crate::cv_bail;
 ///
 /// # Returns
 ///
-/// * `Result<f64>` - The calculated PSNR value. Extremely high (or technically `f64::INFINITY`) if exactly the same.
+/// * `Result<f64>` - The calculated PSNR value; 361.2 (`20 * log10(255 / DBL_EPSILON)`) if the inputs are identical.
 ///
 /// # Errors
 /// Returns `PureCvError::InvalidDimensions` if matrix dimensionalities do not directly match.
@@ -86,23 +86,19 @@ where
         );
     }
 
-    let mut mse = 0.0;
+    let mut sse = 0.0;
     for (v1, v2) in img1.data.iter().zip(img2.data.iter()) {
         let diff = (*v1).into() - (*v2).into();
-        mse += diff * diff;
+        sse += diff * diff;
     }
 
-    if mse == 0.0 {
-        // Perfect match
-        return Ok(f64::INFINITY);
-    }
-
-    mse /= (img1.rows * img1.cols * img1.channels) as f64;
-    // Assuming 8-bit depth as maximum signal. If using f32/f64, max might be 1.0.
-    // For general purpose, we might need a `max_val` parameter, assuming 255.0 for now.
+    // OpenCV: `20 * log10(R / (sqrt(sse / n) + DBL_EPSILON))`, so identical inputs give
+    // `20 * log10(R / DBL_EPSILON)` = 361.2 rather than infinity.
+    let n = (img1.rows * img1.cols * img1.channels) as f64;
+    let rmse = (sse / n).sqrt();
+    // `R` is fixed at OpenCV's default of 255.
     let max_val = 255.0;
-    let psnr_val = 10.0 * (max_val * max_val / mse).log10();
-    Ok(psnr_val)
+    Ok(20.0 * (max_val / (rmse + f64::EPSILON)).log10())
 }
 
 /// Computes the Mahalanobis distance between two vectors.

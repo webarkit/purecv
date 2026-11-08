@@ -2717,8 +2717,8 @@ fn normalize_rejects_mismatched_dtype() {
 #[test]
 fn sum_mean_mean_std_dev_match_opencv() {
     let bgr = Matrix::from_vec(2, 2, 3, vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    assert_eq!(sum(&bgr).v, [22.0, 26.0, 30.0, 0.0]);
-    assert_eq!(mean(&bgr).v, [5.5, 6.5, 7.5, 0.0]);
+    assert_eq!(sum(&bgr).unwrap().v, [22.0, 26.0, 30.0, 0.0]);
+    assert_eq!(mean(&bgr).unwrap().v, [5.5, 6.5, 7.5, 0.0]);
     let (m, s) = mean_std_dev(&bgr);
     assert_eq!(m.v, [5.5, 6.5, 7.5, 0.0]);
     assert_close(&s.v[..3], &[3.3541019662496847; 3], 1e-12, "u8 std");
@@ -2764,9 +2764,8 @@ fn min_max_loc_matches_opencv() {
 // Constants, initialisers, has_no_zero (core_mat_initializers.js, core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`); purecv's is log2(e) = 1.442695….
+/// OpenCV's `CV_LOG2` is ln 2 = 0.693147… (`cvdef.h`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #226"]
 fn cv_log2_is_ln_2() {
     assert_eq!(purecv::core::constants::CV_LOG2, core::f64::consts::LN_2);
 }
@@ -2780,9 +2779,8 @@ fn ones_and_eye_single_channel_match_opencv() {
 
 /// OpenCV's `Mat::ones` / `Mat::eye` write `Scalar(alpha)`: only channel 0 gets the value on
 /// multi-channel types (`ones_1x1_8uc3`, `ones_2x2_32fc2`, `eye_2x2_8uc2`, `eye_3x3_32fc3`);
-/// purecv fills every channel.
+/// purecv filled every channel before #218.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn ones_and_eye_multi_channel_set_only_channel_0() {
     assert_eq!(Matrix::<u8>::ones(1, 1, 3).data, ONES_1X1_8UC3.to_vec());
     assert_eq!(Matrix::<f32>::ones(2, 2, 2).data, ONES_2X2_32FC2.to_vec());
@@ -2792,10 +2790,10 @@ fn ones_and_eye_multi_channel_set_only_channel_0() {
 
 /// OpenCV's `flipND` takes `axis` in `[-ndims, ndims)` and counts a negative axis from the
 /// end (`flip_nd_axis_minus1` flips the columns, `flip_nd_axis_minus2` the rows; 2 and -3 are
-/// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`); purecv maps every negative axis to
-/// "both" and accepts axis 2.
+/// errors, `flip_nd_axis_2`, `flip_nd_axis_minus3`). Values: `core_misc.py` keys
+/// `flip_nd_axis_minus1`, `flip_nd_axis_minus2` (flips) and `flip_nd_axis_2`,
+/// `flip_nd_axis_minus3` (errors).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn flip_nd_negative_axis_counts_from_the_end() {
     let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
     let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
@@ -2812,6 +2810,93 @@ fn flip_nd_non_negative_axis_matches_opencv() {
     let flip = |axis| purecv::core::structural::flip_nd(&m, axis);
     assert_eq!(flip(0).unwrap().data, vec![4, 5, 6, 1, 2, 3], "axis 0");
     assert_eq!(flip(1).unwrap().data, vec![3, 2, 1, 6, 5, 4], "axis 1");
+}
+
+/// OpenCV's `flipND` raises "given axis is out of range" outside `[-ndims, ndims)`
+/// (`core_misc.py` keys `flip_nd_axis_2`, `flip_nd_axis_minus3`).
+#[test]
+fn flip_nd_axis_out_of_range_is_err() {
+    let m = Matrix::from_vec(2, 3, 1, vec![1i32, 2, 3, 4, 5, 6]);
+    for axis in [2, 3, i32::MAX, -3, -4, i32::MIN] {
+        assert!(
+            purecv::core::structural::flip_nd(&m, axis).is_err(),
+            "axis {axis}"
+        );
+    }
+}
+
+/// `cv::sum` and `cv::mean` assert `cn <= 4`: `core_stats.py` keys `five_channel_sum`
+/// (`cv2.sumElems`) and `five_channel_mean` both raise `cn <= 4 && func != 0`. Four channels
+/// still work.
+#[test]
+fn sum_mean_reject_more_than_four_channels() {
+    let five = Matrix::from_vec(1, 2, 5, vec![1.0f32; 10]);
+    assert!(sum(&five).is_err());
+    assert!(mean(&five).is_err());
+    let four = Matrix::from_vec(1, 2, 4, vec![1.0f32; 8]);
+    assert_eq!(sum(&four).unwrap().v, [2.0; 4]);
+    assert_eq!(mean(&four).unwrap().v, [1.0; 4]);
+}
+
+/// `cv::mean` of an empty matrix is zero, not NaN: `core_stats.py` keys `mean_empty_0x3_u8`,
+/// `mean_empty_0x0_f32` and `mean_empty_3x0_u8`.
+#[test]
+fn mean_of_an_empty_matrix_is_zero() {
+    assert_eq!(mean(&Matrix::<u8>::zeros(0, 3, 3)).unwrap().v, [0.0; 4]);
+    assert_eq!(mean(&Matrix::<f32>::zeros(0, 0, 1)).unwrap().v, [0.0; 4]);
+    assert_eq!(mean(&Matrix::<u8>::zeros(3, 0, 1)).unwrap().v, [0.0; 4]);
+}
+
+/// `cv::determinant` asserts a square single-channel matrix: `core_misc.py` key
+/// `determinant_non_square` raises `mat.rows == mat.cols && ...`. The 2x2 f32 and 4x4 values
+/// stay as in `gemm_determinant_solve_trace_mahalanobis_match_opencv`. (OpenCV also rejects
+/// integer depths, `determinant_u8`; purecv keeps accepting them.)
+#[test]
+fn determinant_rejects_non_square_and_multi_channel() {
+    let non_square = Matrix::from_vec(2, 3, 1, vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert!(determinant(&non_square).is_err());
+    let two_channel = Matrix::from_vec(2, 2, 2, vec![1.0f32; 8]);
+    assert!(determinant(&two_channel).is_err());
+    // `core_misc.py` key `determinant_empty` raises `!mat.empty()`.
+    assert!(determinant(&Matrix::<f64>::zeros(0, 0, 1)).is_err());
+}
+
+// ---------------------------------------------------------------------------------------
+// has_non_zero (core_stats.py, key `non_zero`)
+// ---------------------------------------------------------------------------------------
+
+/// `hasNonZero` matches OpenCV 4.10.0: `core_stats.py` key `non_zero`
+/// (`has_non_zero`, `has_non_zero_all_zero`, `has_non_zero_all_nonzero`).
+#[test]
+fn has_non_zero_matches_opencv() {
+    let z = Matrix::from_vec(2, 3, 1, vec![0u8, 3, 0, 1, 0, 0]);
+    assert!(has_non_zero(&z).unwrap());
+    assert!(!has_non_zero(&Matrix::<u8>::zeros(2, 2, 1)).unwrap());
+    assert!(has_non_zero(&Matrix::<u8>::ones(2, 2, 1)).unwrap());
+}
+
+/// `hasNonZero` on a multi-channel input asserts `cn == 1`: `core_stats.py` key `non_zero`,
+/// `has_non_zero_multi_channel` is `cv2.error: -215 cn==1`.
+#[test]
+fn has_non_zero_rejects_multi_channel() {
+    let bgr = Matrix::from_vec(1, 2, 3, vec![1u8, 2, 3, 4, 5, 6]);
+    assert!(has_non_zero(&bgr).is_err());
+}
+
+/// An empty matrix has no non-zero element: `core_stats.py` key `non_zero`,
+/// `has_non_zero_empty` is `false` (measured on a 0x3 `uint8` array).
+#[test]
+fn has_non_zero_empty_is_false() {
+    let e = Matrix::<u8>::zeros(0, 3, 1);
+    assert!(!has_non_zero(&e).unwrap());
+}
+
+/// `has_no_zero` is purecv-only (OpenCV has no counterpart) and keeps its predicate:
+/// true when no element is zero.
+#[test]
+fn has_no_zero_keeps_its_predicate() {
+    assert!(has_no_zero(&Matrix::from_vec(1, 3, 1, vec![1u8, 2, 3])).unwrap());
+    assert!(!has_no_zero(&Matrix::from_vec(1, 3, 1, vec![1u8, 0, 3])).unwrap());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -3015,10 +3100,11 @@ fn border_interpolate_matches_opencv() {
     }
 }
 
-/// `copy_make_border` takes a raw `i32` whose value 1 means BORDER_REFLECT; OpenCV's
-/// `BorderTypes` has REPLICATE = 1, REFLECT = 2 and REFLECT_101 = 4 (the default).
+/// `copy_make_border` takes a raw `i32` that is an OpenCV `BorderTypes` value: REPLICATE = 1,
+/// REFLECT = 2 and REFLECT_101 = 4 (the default). It used to read 1 as REFLECT.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border.reflect_101` and
+/// `copy_make_border.replicate`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #222"]
 fn copy_make_border_uses_opencv_border_codes() {
     let src = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 3, 4, 5, 6]);
     let reflect_101 = copy_make_border(&src, 2, 1, 2, 1, 4, Scalar::all(9)).unwrap();
@@ -3039,8 +3125,9 @@ fn copy_make_border_uses_opencv_border_codes() {
     );
 }
 
-/// With purecv's own codes, 0 is BORDER_CONSTANT and 1 is BORDER_REFLECT; those two
-/// results equal OpenCV's.
+/// BORDER_CONSTANT (0) and BORDER_REFLECT (2) on one channel.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border.constant` and
+/// `copy_make_border.reflect`.
 #[test]
 fn copy_make_border_constant_and_reflect_values_match_opencv() {
     let src = Matrix::from_vec(2, 3, 1, vec![1u8, 2, 3, 4, 5, 6]);
@@ -3052,7 +3139,7 @@ fn copy_make_border_constant_and_reflect_values_match_opencv() {
             9, 9
         ]
     );
-    let reflect = copy_make_border(&src, 2, 1, 2, 1, 1, Scalar::all(9)).unwrap();
+    let reflect = copy_make_border(&src, 2, 1, 2, 1, 2, Scalar::all(9)).unwrap();
     assert_eq!(
         reflect.data,
         vec![
@@ -3060,6 +3147,428 @@ fn copy_make_border_constant_and_reflect_values_match_opencv() {
             6, 6
         ]
     );
+}
+
+/// The 2 x 3 x 3 source of the `copy_make_border_codes.3ch_*` keys of
+/// `scripts/opencv_ref/core_misc.py` (`img3`: 1..=18 in order).
+fn border_img3() -> Matrix<u8> {
+    Matrix::from_vec(2, 3, 3, (1u8..=18).collect())
+}
+
+/// `copy_make_border_codes.3ch_<code>` (top 2, bottom 1, left 2, right 1, value 9) of
+/// `scripts/opencv_ref/core_misc.py`, keyed by the BorderTypes value.
+fn border_img3_expected() -> Vec<(i32, Vec<u8>)> {
+    vec![
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4,
+                5, 6, 7, 8, 9, 7, 8, 9, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 10,
+                11, 12, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 10, 11, 12, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 4, 5, 6, 1,
+                2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 4, 5, 6, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8,
+                9, 7, 8, 9, 13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+                13, 14, 15, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 13, 14, 15, 16, 17, 18, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 10, 11, 12, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 1, 2, 3, 13, 14, 15, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 10, 11,
+                12, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3,
+            ],
+        ),
+        (
+            4,
+            vec![
+                7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6, 16, 17, 18, 13, 14, 15, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 13, 14, 15, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 4, 5, 6, 16, 17, 18, 13, 14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18, 13, 14,
+                15, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6,
+            ],
+        ),
+    ]
+}
+
+/// Every border code on a 3-channel u8 image and a 2-channel f32 image, with and without the
+/// BORDER_ISOLATED (16) flag. A plain `Matrix` is never a sub-matrix, so the flag changes nothing.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.3ch_<code>`,
+/// `3ch_<code>_isolated`, `f32_2ch_<code>` and `code_17_is_replicate_isolated`,
+/// `code_20_is_reflect_101_isolated`.
+#[test]
+fn copy_make_border_all_codes_match_opencv() {
+    let src = border_img3();
+    for (code, expected) in border_img3_expected() {
+        let plain = copy_make_border(&src, 2, 1, 2, 1, code, Scalar::all(9)).unwrap();
+        assert_eq!((plain.rows, plain.cols, plain.channels), (5, 6, 3));
+        assert_eq!(plain.data, expected, "code {code}");
+        let isolated = copy_make_border(&src, 2, 1, 2, 1, code | 16, Scalar::all(9)).unwrap();
+        assert_eq!(isolated.data, expected, "code {code} | BORDER_ISOLATED");
+    }
+    // The flag alone is BORDER_CONSTANT (16 & !16 == 0): `code_16` has the code-0 data.
+    let flag_only = copy_make_border(&src, 2, 1, 2, 1, 16, Scalar::all(9)).unwrap();
+    assert_eq!(flag_only.data, border_img3_expected()[0].1);
+
+    let f32_src = Matrix::from_vec(
+        2,
+        3,
+        2,
+        vec![
+            1.5f32, -2.5, 3.25, 4.0, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ],
+    );
+    let f32_expected: [(i32, Vec<f32>); 5] = [
+        (
+            0,
+            vec![
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0,
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, -2.5, 3.25, 4.0,
+                5.0, 6.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 9.0, 9.0,
+                9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1.5, -2.5, 1.5, -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 1.5, -2.5, 1.5,
+                -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 1.5, -2.5, 1.5, -2.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 7.0, 8.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+                11.0, 12.0, 7.0, 8.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0,
+            ],
+        ),
+        (
+            2,
+            vec![
+                9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0, 3.25, 4.0, 1.5,
+                -2.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 5.0, 6.5, 9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 11.0, 12.0, 9.0, 10.0, 7.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 11.0, 12.0,
+            ],
+        ),
+        (
+            3,
+            vec![
+                3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 9.0, 10.0, 11.0,
+                12.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 7.0, 8.0, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 9.0, 10.0, 11.0, 12.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 7.0, 8.0, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 1.5, -2.5,
+            ],
+        ),
+        (
+            4,
+            vec![
+                5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 3.25, 4.0, 11.0, 12.0, 9.0,
+                10.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 9.0, 10.0, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5,
+                3.25, 4.0, 5.0, 6.5, 3.25, 4.0, 11.0, 12.0, 9.0, 10.0, 7.0, 8.0, 9.0, 10.0, 11.0,
+                12.0, 9.0, 10.0, 5.0, 6.5, 3.25, 4.0, 1.5, -2.5, 3.25, 4.0, 5.0, 6.5, 3.25, 4.0,
+            ],
+        ),
+    ];
+    for (code, expected) in f32_expected {
+        let out = copy_make_border(&f32_src, 2, 1, 2, 1, code, Scalar::all(9.0)).unwrap();
+        assert_eq!(out.data, expected, "f32 code {code}");
+    }
+
+    // 17 = REPLICATE | ISOLATED and 20 = REFLECT_101 | ISOLATED.
+    let replicate = copy_make_border(&src, 2, 1, 2, 1, 17, Scalar::all(9)).unwrap();
+    assert_eq!(replicate.data, border_img3_expected()[1].1);
+    let reflect_101 = copy_make_border(&src, 2, 1, 2, 1, 20, Scalar::all(9)).unwrap();
+    assert_eq!(reflect_101.data, border_img3_expected()[4].1);
+}
+
+/// Borders wider than the image on every code: the old implementation indexed out of bounds
+/// (`top - 1 - y` underflowed past one image height). OpenCV's `borderInterpolate` folds
+/// repeatedly.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.3ch_<code>_top5`,
+/// `3ch_<code>_left7`, `3ch_<code>_oversized_all_checksum`, `1x1_<code>_all2` and
+/// `1row_<code>_top3_bottom3`.
+#[test]
+fn copy_make_border_wider_than_image_matches_opencv() {
+    let src = border_img3();
+    // top = 5 on 2 rows -> 7 rows of 3 pixels
+    let top5: [(i32, Vec<u8>); 5] = [
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4,
+                5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            4,
+            vec![
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 1,
+                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+    ];
+    for (code, expected) in top5 {
+        let out = copy_make_border(&src, 5, 0, 0, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!((out.rows, out.cols), (7, 3));
+        assert_eq!(out.data, expected, "top 5, code {code}");
+    }
+
+    // left = 7 on 3 columns -> 2 rows of 10 pixels
+    let left7: [(i32, Vec<u8>); 5] = [
+        (
+            0,
+            vec![
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 12,
+                13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            1,
+            vec![
+                1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10, 11, 12, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            2,
+            vec![
+                1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8, 9, 4, 5, 6, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18, 16, 17, 18, 13, 14, 15, 10,
+                11, 12, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            3,
+            vec![
+                7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+        (
+            4,
+            vec![
+                4, 5, 6, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 13, 14, 15, 16, 17, 18, 13, 14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18, 13,
+                14, 15, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+            ],
+        ),
+    ];
+    for (code, expected) in left7 {
+        let out = copy_make_border(&src, 0, 0, 7, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!((out.rows, out.cols), (2, 10));
+        assert_eq!(out.data, expected, "left 7, code {code}");
+    }
+
+    // All four sides wider than the image: top 5, bottom 4, left 7, right 8 -> 11 x 18 x 3.
+    // (sum of the data, sum of data[i] * (i + 1))
+    let checksums: [(i32, i64, i64); 5] = [
+        (0, 5355, 1_595_649),
+        (1, 5499, 2_053_917),
+        (2, 5400, 1_690_974),
+        (3, 5886, 1_749_699),
+        (4, 5985, 1_781_082),
+    ];
+    for (code, sum, weighted) in checksums {
+        for flags in [0, 16] {
+            let out = copy_make_border(&src, 5, 4, 7, 8, code | flags, Scalar::all(9)).unwrap();
+            assert_eq!((out.rows, out.cols, out.channels), (11, 18, 3));
+            let got_sum: i64 = out.data.iter().map(|&v| i64::from(v)).sum();
+            let got_weighted: i64 = out
+                .data
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| i64::from(v) * (i as i64 + 1))
+                .sum();
+            assert_eq!(
+                (got_sum, got_weighted),
+                (sum, weighted),
+                "all sides oversized, code {code} | {flags}"
+            );
+        }
+    }
+
+    // A 1 x 1 image with two pixels of border on every side is one value for every code but
+    // CONSTANT; a 1 x 3 image with 3 rows above and below repeats the row.
+    let one = Matrix::from_vec(1, 1, 1, vec![7u8]);
+    let row = Matrix::from_vec(1, 3, 1, vec![1u8, 2, 3]);
+    for code in 0..=4 {
+        let out = copy_make_border(&one, 2, 2, 2, 2, code, Scalar::all(3)).unwrap();
+        let mut expected = vec![if code == 0 { 3u8 } else { 7 }; 25];
+        if code == 0 {
+            expected[12] = 7;
+        }
+        assert_eq!(out.data, expected, "1x1, code {code}");
+
+        let out = copy_make_border(&row, 3, 3, 0, 0, code, Scalar::all(3)).unwrap();
+        let expected: Vec<u8> = if code == 0 {
+            [[3u8; 9].as_slice(), &[1, 2, 3], &[3; 9]].concat()
+        } else {
+            [1u8, 2, 3].repeat(7)
+        };
+        assert_eq!(out.data, expected, "1x3, code {code}");
+    }
+}
+
+/// BORDER_TRANSPARENT (5) and the codes that are not a BorderTypes value make
+/// `borderInterpolate` raise "Unknown/unsupported border type" as soon as there is a border to
+/// fill; OpenCV returns a plain copy first when every border is 0 (the border type is not looked
+/// at). Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.code_<n>`,
+/// `code_<n>_top_only`, `code_<n>_left_only` and `code_<n>_zero_borders`.
+#[test]
+fn copy_make_border_transparent_is_err() {
+    let src = border_img3();
+    for code in [5, 5 | 16, 6, 7, 8, 32, 33, 99, -1, -16] {
+        for (top, bottom, left, right) in [(2, 1, 2, 1), (2, 0, 0, 0), (0, 0, 2, 0)] {
+            let r = copy_make_border(&src, top, bottom, left, right, code, Scalar::all(9));
+            assert!(
+                matches!(r, Err(PureCvError::InvalidInput(_))),
+                "code {code}, borders {top}/{bottom}/{left}/{right}: {r:?}"
+            );
+        }
+        let copy = copy_make_border(&src, 0, 0, 0, 0, code, Scalar::all(9)).unwrap();
+        assert_eq!(copy.data, src.data, "zero borders, code {code}");
+        assert_eq!((copy.rows, copy.cols, copy.channels), (2, 3, 3));
+    }
+}
+
+/// `value` is used only by BORDER_CONSTANT. A 1- to 4-channel image takes channel `c` of the
+/// scalar (a bare number is `(v, 0, 0, 0)`); a 5-or-more-channel image asserts
+/// `value[0] == value[1] == value[2] == value[3]` and fills every channel with it.
+/// Values: `scripts/opencv_ref/core_misc.py`, keys `copy_make_border_codes.value_<n>ch_*`.
+#[test]
+fn copy_make_border_value_matches_opencv() {
+    let v1234 = Scalar::new(11u8, 22, 33, 44);
+    let bare9 = Scalar::from_value(9u8);
+    for cn in 1usize..=4 {
+        let src = Matrix::from_vec(2, 2, cn, (1..=(4 * cn) as u8).collect());
+        let fill = |s: Scalar<u8>| -> Vec<u8> {
+            // 4 x 4 pixels: a one-pixel frame of the scalar around the source
+            let mut out = Vec::new();
+            for y in 0..4 {
+                for x in 0..4 {
+                    if (1..=2).contains(&y) && (1..=2).contains(&x) {
+                        let i = ((y - 1) * 2 + (x - 1)) * cn;
+                        out.extend_from_slice(&src.data[i..i + cn]);
+                    } else {
+                        out.extend_from_slice(&s.v[..cn]);
+                    }
+                }
+            }
+            out
+        };
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, v1234).unwrap();
+        assert_eq!(out.data, fill(v1234), "{cn} channels, (11, 22, 33, 44)");
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, bare9).unwrap();
+        assert_eq!(out.data, fill(bare9), "{cn} channels, bare 9");
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::default()).unwrap();
+        assert_eq!(out.data, fill(Scalar::default()), "{cn} channels, default");
+        // REPLICATE ignores `value`
+        let a = copy_make_border(&src, 1, 1, 1, 1, 1, v1234).unwrap();
+        let b = copy_make_border(&src, 1, 1, 1, 1, 1, bare9).unwrap();
+        assert_eq!(a.data, b.data);
+    }
+    // spot-check the 3-channel layout against the script's literal rows
+    let src3 = Matrix::from_vec(2, 2, 3, (1u8..=12).collect());
+    let out = copy_make_border(&src3, 1, 1, 1, 1, 0, v1234).unwrap();
+    assert_eq!(
+        &out.data[12..24],
+        &[11, 22, 33, 1, 2, 3, 4, 5, 6, 11, 22, 33]
+    );
+    let out = copy_make_border(&src3, 1, 1, 1, 1, 0, bare9).unwrap();
+    assert_eq!(&out.data[12..24], &[9, 0, 0, 1, 2, 3, 4, 5, 6, 9, 0, 0]);
+
+    // more than four channels
+    for cn in [5usize, 6, 8] {
+        let src = Matrix::from_vec(1, 2, cn, (1..=(2 * cn) as u8).collect());
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::all(9)).unwrap();
+        let mut expected = vec![9u8; 4 * cn];
+        expected.extend([9u8].repeat(cn));
+        expected.extend_from_slice(&src.data);
+        expected.extend([9u8].repeat(cn));
+        expected.extend([9u8].repeat(4 * cn));
+        assert_eq!(out.data, expected, "{cn} channels, all four equal");
+        // (1, 2, 3, 4) and a bare number are not equal in all four slots
+        for bad in [v1234, bare9] {
+            let r = copy_make_border(&src, 1, 1, 1, 1, 0, bad);
+            assert!(
+                matches!(r, Err(PureCvError::InvalidInput(_))),
+                "{cn}: {r:?}"
+            );
+        }
+        // the default scalar is four zeros
+        let out = copy_make_border(&src, 1, 1, 1, 1, 0, Scalar::default()).unwrap();
+        assert_eq!(out.data[..cn], vec![0u8; cn][..]);
+        // REPLICATE and a zero border do not look at `value`
+        // (`value_<n>ch_1234_replicate`: the middle row is p0 p0 p1 p1)
+        let out = copy_make_border(&src, 1, 1, 1, 1, 1, v1234).unwrap();
+        let (p0, p1) = src.data.split_at(cn);
+        assert_eq!(
+            &out.data[4 * cn..8 * cn],
+            &[p0, p0, p1, p1].concat()[..],
+            "{cn} channels, replicate"
+        );
+        let out = copy_make_border(&src, 0, 0, 0, 0, 0, v1234).unwrap();
+        assert_eq!(out.data, src.data);
+    }
+}
+
+/// An empty source: BORDER_CONSTANT fills (`empty_src_constant`); the other codes have nothing to
+/// copy from. OpenCV does not define that result (its `empty_src_replicate` output is
+/// uninitialised memory), so purecv returns an error instead of looping or indexing.
+#[test]
+fn copy_make_border_empty_source() {
+    let empty = Matrix::<u8>::new(0, 3, 1);
+    let out = copy_make_border(&empty, 1, 1, 1, 1, 0, Scalar::all(5)).unwrap();
+    assert_eq!((out.rows, out.cols), (2, 5));
+    assert_eq!(out.data, vec![5u8; 10]);
+    for code in 1..=4 {
+        let r = copy_make_border(&empty, 1, 1, 1, 1, code, Scalar::all(5));
+        assert!(
+            matches!(r, Err(PureCvError::InvalidInput(_))),
+            "{code}: {r:?}"
+        );
+    }
 }
 
 #[test]
@@ -3106,19 +3615,166 @@ fn flip_rotate_transpose_repeat_match_opencv() {
 // check_range / compare / in_range / lut / sort (core_misc.py)
 // ---------------------------------------------------------------------------------------
 
-/// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`. purecv is inclusive.
+/// OpenCV's range is `[minVal, maxVal)`: 255 is outside `[0, 255)`.
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #213"]
 fn check_range_upper_bound_is_exclusive() {
     let a = row(&[0u8, 100, 255]);
     assert!(!check_range(&a, 0.0, 255.0));
     assert!(check_range(&a, 0.0, 256.0));
 }
 
+/// The lower bound stays inclusive: 5 passes `[5, 256)`, 4 fails it
+/// (`scripts/opencv_ref/core_misc.py`, `check_range.u8_lower_*`).
+#[test]
+fn check_range_lower_bound_is_inclusive() {
+    assert!(check_range(&row(&[5u8, 100]), 5.0, 256.0));
+    assert!(!check_range(&row(&[4u8, 100]), 5.0, 256.0));
+}
+
 #[test]
 fn check_range_nan_and_inside_values_match_opencv() {
     assert!(!check_range(&row(&[0.0f32, f32::NAN]), -f64::MAX, f64::MAX));
     assert!(check_range(&row(&[0.0f32, 1.0, 255.0]), 0.0, 255.5));
+}
+
+/// Integer depths check `[cvFloor(min), cvCeil(max) - 1]`, both inclusive, and the early-outs
+/// on the rounded bounds answer false even on an empty matrix: `core_misc.py`,
+/// `check_range.integer_rounding`.
+#[test]
+fn check_range_rounds_integer_bounds() {
+    assert!(check_range(&row(&[0u8, 254]), 0.5, 254.5));
+    assert!(check_range(&row(&[0u8]), 0.5, 256.0));
+    assert!(check_range(&row(&[5i16]), 5.5, 10.0));
+    assert!(check_range(&row(&[-1i32]), -0.5, 10.0));
+    assert!(check_range(&row(&[254u8]), 0.0, 254.5));
+    assert!(!check_range(&row(&[255u8]), 0.0, 254.5));
+    assert!(!check_range(&row(&[254u8]), 0.0, 254.0));
+    assert!(!check_range(&row(&[5u8]), 10.0, 5.0));
+    assert!(!check_range(&row(&[5u8]), 5.0, 5.0));
+    assert!(check_range(&row(&[5u8]), 5.2, 5.1));
+    assert!(check_range(&row(&[5u8]), 5.5, 5.6));
+
+    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 0.0, 256.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 10.0, 5.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 5.0, 5.0));
+    assert!(check_range(&Matrix::<u8>::zeros(0, 3, 1), 5.2, 5.1));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 300.0, 400.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), -10.0, -5.0));
+    assert!(!check_range(&Matrix::<i8>::zeros(0, 3, 1), 200.0, 300.0));
+    assert!(!check_range(&Matrix::<i8>::zeros(0, 3, 1), -300.0, -200.0));
+    assert!(!check_range(
+        &Matrix::<u16>::zeros(0, 3, 1),
+        70000.0,
+        80000.0
+    ));
+    assert!(!check_range(
+        &Matrix::<i16>::zeros(0, 3, 1),
+        40000.0,
+        50000.0
+    ));
+    assert!(!check_range(&Matrix::<i32>::zeros(0, 3, 1), 10.0, 5.0));
+
+    assert!(!check_range(&row(&[i32::MAX]), 0.0, 2147483647.0));
+    assert!(check_range(&row(&[i32::MAX]), 0.0, 2147483648.0));
+    assert!(check_range(&row(&[i32::MAX]), 0.0, 2147483647.5));
+    assert!(check_range(&row(&[i32::MAX]), -f64::MAX, f64::MAX));
+    assert!(check_range(&row(&[i32::MIN]), -f64::MAX, f64::MAX));
+    assert!(check_range(&row(&[i32::MIN]), -2147483647.5, 0.0));
+}
+
+/// purecv's own behaviour, not a parity target: an integer bound that does not fit an `int`
+/// saturates like `SaturateCast` (NaN gives 0, the rest clamps to the `i32` range). OpenCV's
+/// result here is build-dependent: an out-of-range conversion and a signed overflow in
+/// `cvCeil(maxVal) - 1`. For the record, the measured x86-64 wheel answers true on every row
+/// below except `[1e10, 5)` on `[5]`, where it agrees: `core_misc.py`,
+/// `check_range.integer_unrepresentable_bounds`.
+#[test]
+fn check_range_out_of_int_bounds_saturate() {
+    let (inf, nan) = (f64::INFINITY, f64::NAN);
+    let five = row(&[5u8]);
+    // NaN is 0: `[0, 9]`, then `[0, -1]`.
+    assert!(check_range(&five, nan, 10.0));
+    assert!(!check_range(&five, 0.0, nan));
+    assert!(!check_range(&five, nan, nan));
+    assert!(!check_range(&five, inf, inf));
+    assert!(!check_range(&five, -inf, -inf));
+    assert!(!check_range(&five, inf, -inf));
+    assert!(!check_range(&five, 1e10, 1e11));
+    assert!(!check_range(&five, 1e10, 5.0));
+    assert!(!check_range(&Matrix::<u8>::zeros(0, 3, 1), 1e10, 5.0));
+    assert!(!check_range(&five, 0.0, -1e10));
+    let five = row(&[5i32]);
+    assert!(!check_range(&five, -2147483649.0, -2147483648.0));
+    assert!(!check_range(&five, 2147483648.0, 2147483649.0));
+}
+
+/// The floating depths share `[min, max)` over the sign-toggled bit patterns, so -0 sorts
+/// below +0 and a NaN bound past the infinities on its sign's side: `core_misc.py`,
+/// `check_range.f32_bounds` and `check_range.f64_bounds`, on which every row here agrees.
+#[test]
+fn check_range_float_bounds_order_like_opencv() {
+    macro_rules! rows {
+        ($t:ty) => {
+            let (nan, inf) = (f64::NAN, f64::INFINITY);
+            let one = row(&[1.0 as $t]);
+            assert!(!check_range(&row(&[0.0 as $t]), 0.5, 10.0));
+            assert!(check_range(&row(&[0.5 as $t]), 0.5, 10.0));
+            assert!(!check_range(&row(&[<$t>::INFINITY]), -f64::MAX, f64::MAX));
+            assert!(!check_range(
+                &row(&[<$t>::NEG_INFINITY]),
+                -f64::MAX,
+                f64::MAX
+            ));
+            assert!(!check_range(&row(&[<$t>::NAN]), -f64::MAX, f64::MAX));
+            assert!(check_range(&row(&[<$t>::MIN]), -f64::MAX, f64::MAX));
+            assert!(!check_range(&row(&[<$t>::MAX]), -f64::MAX, f64::MAX));
+            assert!(!check_range(&row(&[<$t>::INFINITY]), -inf, inf));
+            assert!(!check_range(&row(&[<$t>::NAN]), -inf, inf));
+            assert!(check_range(&row(&[<$t>::MIN]), -inf, inf));
+            assert!(!check_range(&one, nan, 10.0));
+            assert!(check_range(&one, 0.0, nan));
+            assert!(!check_range(&one, nan, nan));
+            assert!(check_range(&one, -nan, 10.0));
+            assert!(!check_range(&one, 0.0, -nan));
+            assert!(!check_range(&row(&[<$t>::NAN]), nan, 10.0));
+            assert!(!check_range(&one, inf, inf));
+            assert!(!check_range(&one, -inf, -inf));
+            assert!(!check_range(&one, inf, -inf));
+            assert!(!check_range(&row(&[5.0 as $t]), 10.0, 5.0));
+            assert!(check_range(&Matrix::<$t>::zeros(0, 3, 1), 10.0, 5.0));
+            assert!(check_range(&Matrix::<$t>::zeros(0, 3, 1), nan, nan));
+            assert!(!check_range(&row(&[-0.0 as $t]), 0.0, 1.0));
+            assert!(check_range(&row(&[0.0 as $t]), -0.0, 1.0));
+            assert!(!check_range(&row(&[0.0 as $t]), 0.0, -0.0));
+            assert!(check_range(&row(&[-0.0 as $t]), -1.0, 0.0));
+            assert!(!check_range(&row(&[-0.0 as $t]), -1.0, -0.0));
+            assert!(!check_range(&row(&[0.0 as $t]), -1.0, -0.0));
+            assert!(check_range(&row(&[0.0 as $t]), -1e-50, 1.0));
+            assert!(!check_range(&one, 1e300, 1e301));
+            assert!(!check_range(&one, -1e301, -1e300));
+        };
+    }
+    rows!(f32);
+    rows!(f64);
+}
+
+/// Only f32 clamps its bounds to +-FLT_MAX and rounds them to f32: `core_misc.py`,
+/// `check_range.f32_bounds` against `check_range.f64_bounds`, keys `minf_in_minf_inf`,
+/// `max_in_minf_inf`, `0_in_0_1e-50`, `1_in_0.9999999999_1.00000000001` and
+/// `1_in_1.00000000001_2`.
+#[test]
+fn check_range_only_f32_clamps_and_rounds_its_bounds() {
+    let inf = f64::INFINITY;
+    assert!(!check_range(&row(&[f32::NEG_INFINITY]), -inf, inf));
+    assert!(check_range(&row(&[f64::NEG_INFINITY]), -inf, inf));
+    assert!(!check_range(&row(&[f32::MAX]), -inf, inf));
+    assert!(check_range(&row(&[f64::MAX]), -inf, inf));
+    assert!(!check_range(&row(&[0.0f32]), 0.0, 1e-50));
+    assert!(check_range(&row(&[0.0f64]), 0.0, 1e-50));
+    assert!(!check_range(&row(&[1.0f32]), 0.9999999999, 1.00000000001));
+    assert!(check_range(&row(&[1.0f64]), 0.9999999999, 1.00000000001));
+    assert!(check_range(&row(&[1.0f32]), 1.00000000001, 2.0));
+    assert!(!check_range(&row(&[1.0f64]), 1.00000000001, 2.0));
 }
 
 #[test]
@@ -3638,9 +4294,9 @@ fn gemm_determinant_solve_trace_mahalanobis_match_opencv() {
         ],
     );
     let sing = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 2.0, 4.0]);
-    assert!((determinant(&s) - 10.0).abs() < 1e-12);
-    assert!((determinant(&s4) + 20.0).abs() < 1e-12);
-    assert_eq!(determinant(&sing), 0.0);
+    assert!((determinant(&s).unwrap() - 10.0).abs() < 1e-12);
+    assert!((determinant(&s4).unwrap() + 20.0).abs() < 1e-12);
+    assert_eq!(determinant(&sing).unwrap(), 0.0);
 
     let mut inv = Matrix::<f64>::new(2, 2, 1);
     invert(&s, &mut inv, DecompTypes::DECOMP_LU).unwrap();
@@ -3668,13 +4324,53 @@ fn gemm_determinant_solve_trace_mahalanobis_match_opencv() {
     assert!((mahalanobis(&v1, &v2, &icov).unwrap() - 4.795831523312719).abs() < 1e-12);
 }
 
-/// OpenCV `invert(DECOMP_LU)` returns 1.0 on success (a non-zero flag), not the determinant.
+/// OpenCV `invert(DECOMP_LU)` returns 1.0 on success (a non-zero flag), not the determinant
+/// (`core_invert.py` key `regular_f64/LU`: ret 1.0 although det is 10).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #219"]
 fn invert_lu_returns_one_on_success() {
     let s = Matrix::from_vec(2, 2, 1, vec![4.0f64, 7.0, 2.0, 6.0]);
     let mut inv = Matrix::<f64>::new(2, 2, 1);
     assert_eq!(invert(&s, &mut inv, DecompTypes::DECOMP_LU).unwrap(), 1.0);
+}
+
+/// OpenCV `invert(DECOMP_LU)` of a singular matrix returns 0.0 and zeroes the output, whatever
+/// it held before (`core_invert.py` keys `singular_f64/LU`, `singular_3x3_f64/LU`).
+#[test]
+fn invert_singular_returns_zero_and_zero_matrix() {
+    let sing = Matrix::from_vec(2, 2, 1, vec![1.0f64, 2.0, 2.0, 4.0]);
+    let mut inv = Matrix::from_vec(2, 2, 1, vec![7.0f64; 4]);
+    assert_eq!(
+        invert(&sing, &mut inv, DecompTypes::DECOMP_LU).unwrap(),
+        0.0
+    );
+    assert_eq!(inv.data, vec![0.0; 4]);
+
+    let sing3 = Matrix::from_vec(
+        3,
+        3,
+        1,
+        vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    );
+    let mut inv3 = Matrix::from_vec(3, 3, 1, vec![7.0f64; 9]);
+    assert_eq!(
+        invert(&sing3, &mut inv3, DecompTypes::DECOMP_LU).unwrap(),
+        0.0
+    );
+    assert_eq!(inv3.data, vec![0.0; 9]);
+
+    // OpenCV creates `dst` as n x n first (`core_invert.py` calls cv2.invert with no preset
+    // output; every singular key comes back n x n), so an empty or wrong-sized `dst` is reshaped.
+    for mut dst in [
+        Matrix::<f64>::new(0, 0, 1),
+        Matrix::from_vec(1, 1, 1, vec![5.0f64]),
+    ] {
+        assert_eq!(
+            invert(&sing, &mut dst, DecompTypes::DECOMP_LU).unwrap(),
+            0.0
+        );
+        assert_eq!((dst.rows, dst.cols, dst.channels), (2, 2, 1));
+        assert_eq!(dst.data, vec![0.0; 4]);
+    }
 }
 
 #[test]
@@ -3690,9 +4386,9 @@ fn set_identity_and_psnr_match_opencv() {
     assert!((psnr(&rgb, &rgb3).unwrap() - 38.58837851428585).abs() < 1e-6);
 }
 
-/// OpenCV `PSNR` of identical images is `20*log10(R/DBL_EPSILON)` = 361.2, not infinity.
+/// OpenCV `PSNR` of identical images is `20*log10(R/DBL_EPSILON)` = 361.2, not infinity
+/// (`core_misc.py` key `psnr_identical`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #218"]
 fn psnr_identical_inputs_is_finite() {
     let rgb = Matrix::from_vec(1, 2, 3, vec![10u8, 20, 30, 40, 50, 60]);
     assert!((psnr(&rgb, &rgb).unwrap() - 361.20199909921956).abs() < 1e-6);
@@ -4558,9 +5254,9 @@ mod fft {
     }
 
     /// OpenCV returns 1 for 0 and -1 for negative sizes and for sizes above its table
-    /// (>= 2125764000). purecv returns 0, 0 and a computed value.
+    /// (>= 2125764000): `core_dft_dct.py` key `get_optimal_dft_size` (`0`, `-5`, `2125764000`,
+    /// `2147483647`).
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see #218"]
     fn get_optimal_dft_size_edges_match_opencv() {
         assert_eq!(get_optimal_dft_size(0), 1);
         assert_eq!(get_optimal_dft_size(-5), -1);

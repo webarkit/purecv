@@ -71,6 +71,90 @@ def main() -> None:
         "wrap_oversized_border": tolist(cv2.copyMakeBorder(img, 5, 0, 0, 0, cv2.BORDER_WRAP)),
     }
 
+    # --- copyMakeBorder, #222: every border code on multi-channel input, the BORDER_ISOLATED (16)
+    # flag, borders wider than the image, BORDER_TRANSPARENT, unknown codes, negative sizes, and
+    # the `value` argument of BORDER_CONSTANT on 1..4 and on more than 4 channels.
+    # copy.cpp: `borderType &= ~BORDER_ISOLATED`, then a switch through borderInterpolate; an
+    # all-zero border returns a plain copy before the border type is looked at.
+    img3 = np.array(
+        [[[1, 2, 3], [4, 5, 6], [7, 8, 9]], [[10, 11, 12], [13, 14, 15], [16, 17, 18]]], dtype=np.uint8
+    )
+    img2f = np.array([[[1.5, -2.5], [3.25, 4.0], [5.0, 6.5]], [[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]], dtype=np.float32)
+    codes = {
+        "constant": cv2.BORDER_CONSTANT,
+        "replicate": cv2.BORDER_REPLICATE,
+        "reflect": cv2.BORDER_REFLECT,
+        "wrap": cv2.BORDER_WRAP,
+        "reflect_101": cv2.BORDER_REFLECT_101,
+    }
+    cmb = {
+        "img_3ch": tolist(img3),
+        "img_2ch_f32": tolist(img2f),
+        "sizes_top_bottom_left_right": [2, 1, 2, 1],
+        "value": [9, 9, 9, 9],
+        "oversized_sizes_top_bottom_left_right": [5, 4, 7, 8],
+    }
+    for name, code in codes.items():
+        cmb[f"3ch_{name}"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, code | cv2.BORDER_ISOLATED, value=(9, 9, 9, 9)))
+        cmb[f"f32_2ch_{name}"] = tolist(cv2.copyMakeBorder(img2f, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        # borders wider than the image: top = 5 on 2 rows, then all four sides oversized
+        cmb[f"3ch_{name}_top5"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 5, 0, 0, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_left7"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 7, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_oversized_all"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 5, 4, 7, 8, code, value=(9, 9, 9, 9)))
+        cmb[f"3ch_{name}_oversized_all_isolated"] = attempt(
+            lambda code=code: cv2.copyMakeBorder(img3, 5, 4, 7, 8, code | cv2.BORDER_ISOLATED, value=(9, 9, 9, 9))
+        )
+        # all four sides oversized: shape, sum and position-weighted sum (sum of v[i] * (i + 1)) of
+        # the flattened result, so the test pins every pixel without a 600-number literal
+        wide = cv2.copyMakeBorder(img3, 5, 4, 7, 8, code, value=(9, 9, 9, 9))
+        cmb[f"3ch_{name}_oversized_all_checksum"] = [
+            list(wide.shape),
+            int(wide.astype(np.int64).sum()),
+            int((wide.astype(np.int64).ravel() * (np.arange(wide.size) + 1)).sum()),
+        ]
+        cmb[f"1x1_{name}_all2"] = attempt(lambda code=code: cv2.copyMakeBorder(np.array([[7]], np.uint8), 2, 2, 2, 2, code, value=3))
+        cmb[f"1row_{name}_top3_bottom3"] = attempt(
+            lambda code=code: cv2.copyMakeBorder(np.array([[1, 2, 3]], np.uint8), 3, 3, 0, 0, code, value=3)
+        )
+    # the flag alone, transparent, and codes that are not a BorderTypes value
+    for code in (5, 5 | 16, 6, 7, 8, 32, 33, 99, 16, -1, -16):
+        cmb[f"code_{code}"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 2, 1, 2, 1, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_top_only"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 2, 0, 0, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_left_only"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 2, 0, code, value=(9, 9, 9, 9)))
+        cmb[f"code_{code}_zero_borders"] = attempt(lambda code=code: cv2.copyMakeBorder(img3, 0, 0, 0, 0, code, value=(9, 9, 9, 9)))
+    cmb["code_17_is_replicate_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, 17, value=(9, 9, 9, 9)))
+    cmb["code_20_is_reflect_101_isolated"] = tolist(cv2.copyMakeBorder(img3, 2, 1, 2, 1, 20, value=(9, 9, 9, 9)))
+    # negative sizes
+    for i, side in enumerate(("top", "bottom", "left", "right")):
+        sizes = [1, 1, 1, 1]
+        sizes[i] = -1
+        cmb[f"negative_{side}"] = attempt(lambda sizes=sizes: cv2.copyMakeBorder(img3, *sizes, cv2.BORDER_CONSTANT, value=(9, 9, 9, 9)))
+        cmb[f"negative_{side}_replicate"] = attempt(lambda sizes=sizes: cv2.copyMakeBorder(img3, *sizes, cv2.BORDER_REPLICATE))
+    # empty source
+    cmb["empty_src_constant"] = attempt(lambda: cv2.copyMakeBorder(np.zeros((0, 3), np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=5))
+    cmb["empty_src_replicate"] = attempt(lambda: cv2.copyMakeBorder(np.zeros((0, 3), np.uint8), 1, 1, 1, 1, cv2.BORDER_REPLICATE))
+    # BORDER_CONSTANT `value` on 1..4 channels: the scalar is cast per channel, channels beyond
+    # the scalar's four are not an issue, a bare number is (v, 0, 0, 0)
+    for cn in (1, 2, 3, 4):
+        src_cn = np.arange(1, 1 + 2 * 2 * cn, dtype=np.uint8).reshape(2, 2, cn)
+        cmb[f"value_{cn}ch_src"] = tolist(src_cn)
+        cmb[f"value_{cn}ch_1234"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(11, 22, 33, 44)))
+        cmb[f"value_{cn}ch_bare_9"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=9))
+        cmb[f"value_{cn}ch_default"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_CONSTANT))
+        cmb[f"value_{cn}ch_ignored_by_replicate"] = tolist(cv2.copyMakeBorder(src_cn, 1, 1, 1, 1, cv2.BORDER_REPLICATE, value=(11, 22, 33, 44)))
+    # more than four channels: `CV_Assert(value[0] == value[1] && value[0] == value[2] && value[0] == value[3])`
+    for cn in (5, 6, 8):
+        src_cn = np.arange(1, 1 + 1 * 2 * cn, dtype=np.uint8).reshape(1, 2, cn)
+        cmb[f"value_{cn}ch_src"] = tolist(src_cn)
+        cmb[f"value_{cn}ch_all_equal_9"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(9, 9, 9, 9)))
+        cmb[f"value_{cn}ch_1234"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=(1, 2, 3, 4)))
+        cmb[f"value_{cn}ch_bare_9"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=9))
+        cmb[f"value_{cn}ch_default"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_CONSTANT))
+        cmb[f"value_{cn}ch_1234_replicate"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 1, 1, 1, 1, cv2.BORDER_REPLICATE, value=(1, 2, 3, 4)))
+        cmb[f"value_{cn}ch_1234_zero_borders"] = attempt(lambda s=src_cn: cv2.copyMakeBorder(s, 0, 0, 0, 0, cv2.BORDER_CONSTANT, value=(1, 2, 3, 4)))
+    results["copy_make_border_codes"] = cmb
+
     # --- flip / rotate / transpose / repeat
     m23 = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)
     results["structural"] = {
@@ -107,7 +191,110 @@ def main() -> None:
         "f32_0_255": [bool(cv2.checkRange(crf, True, 0.0, 255.0)[0]), tolist(cv2.checkRange(crf, True, 0.0, 255.0)[1])],
         "f32_0_255.5": bool(cv2.checkRange(crf, True, 0.0, 255.5)[0]),
         "f32_nan_default_bounds": bool(cv2.checkRange(nanf)[0]),
+        # lower bound is inclusive: 5 passes [5, 256), 4 fails it
+        "u8_lower_inclusive_5_in_5_256": bool(cv2.checkRange(np.array([[5, 100]], dtype=np.uint8), True, 5, 256)[0]),
+        "u8_lower_exclusive_4_in_5_256": bool(cv2.checkRange(np.array([[4, 100]], dtype=np.uint8), True, 5, 256)[0]),
     }
+
+    def in_range(vals, dtype, lo, hi):
+        src = np.array([vals], dtype=dtype) if vals else np.zeros((0, 3), dtype=dtype)
+        return bool(cv2.checkRange(src, True, lo, hi)[0])
+
+    inf, nan = float("inf"), float("nan")
+    flt_max = float(np.finfo(np.float32).max)
+    dbl_max = float(np.finfo(np.float64).max)
+    i32_max, i32_min = 2147483647, -2147483648
+    # Integer depths: [cvFloor(min), cvCeil(max) - 1], both inclusive; the per-depth and
+    # max < min early-outs answer false on the rounded bounds, so they show on empty matrices.
+    results["check_range"]["integer_rounding"] = {
+        "u8_0_254_in_0.5_254.5": in_range([0, 254], np.uint8, 0.5, 254.5),
+        "u8_0_in_0.5_256": in_range([0], np.uint8, 0.5, 256),
+        "i16_5_in_5.5_10": in_range([5], np.int16, 5.5, 10),
+        "i32_m1_in_m0.5_10": in_range([-1], np.int32, -0.5, 10),
+        "u8_254_in_0_254.5": in_range([254], np.uint8, 0, 254.5),
+        "u8_255_in_0_254.5": in_range([255], np.uint8, 0, 254.5),
+        "u8_254_in_0_254": in_range([254], np.uint8, 0, 254.0),
+        "u8_5_in_10_5": in_range([5], np.uint8, 10, 5),
+        "u8_5_in_5_5": in_range([5], np.uint8, 5, 5),
+        "u8_5_in_5.2_5.1": in_range([5], np.uint8, 5.2, 5.1),
+        "u8_5_in_5.5_5.6": in_range([5], np.uint8, 5.5, 5.6),
+        "u8_empty_in_0_256": in_range([], np.uint8, 0, 256),
+        "u8_empty_in_10_5": in_range([], np.uint8, 10, 5),
+        "u8_empty_in_5_5": in_range([], np.uint8, 5, 5),
+        "u8_empty_in_5.2_5.1": in_range([], np.uint8, 5.2, 5.1),
+        "u8_empty_in_300_400": in_range([], np.uint8, 300, 400),
+        "u8_empty_in_m10_m5": in_range([], np.uint8, -10, -5),
+        "i8_empty_in_200_300": in_range([], np.int8, 200, 300),
+        "i8_empty_in_m300_m200": in_range([], np.int8, -300, -200),
+        "u16_empty_in_70000_80000": in_range([], np.uint16, 70000, 80000),
+        "i16_empty_in_40000_50000": in_range([], np.int16, 40000, 50000),
+        "i32_empty_in_10_5": in_range([], np.int32, 10, 5),
+        "i32_max_in_0_2147483647": in_range([i32_max], np.int32, 0, 2147483647.0),
+        "i32_max_in_0_2147483648": in_range([i32_max], np.int32, 0, 2147483648.0),
+        "i32_max_in_0_2147483647.5": in_range([i32_max], np.int32, 0, 2147483647.5),
+        "i32_max_default_bounds": in_range([i32_max], np.int32, -dbl_max, dbl_max),
+        "i32_min_default_bounds": in_range([i32_min], np.int32, -dbl_max, dbl_max),
+        "i32_min_in_m2147483647.5_0": in_range([i32_min], np.int32, -2147483647.5, 0),
+    }
+    # A bound that does not fit an int: cvFloor and cvCeil give INT_MIN on this x86-64 build
+    # (cvtsd2si), and cvCeil(maxVal) - 1 then wraps to INT_MAX. A build-dependent record, not a
+    # target: purecv saturates these bounds instead.
+    results["check_range"]["integer_unrepresentable_bounds"] = {
+        "u8_5_in_nan_10": in_range([5], np.uint8, nan, 10),
+        "u8_5_in_0_nan": in_range([5], np.uint8, 0, nan),
+        "u8_5_in_nan_nan": in_range([5], np.uint8, nan, nan),
+        "u8_5_in_inf_inf": in_range([5], np.uint8, inf, inf),
+        "u8_5_in_minf_minf": in_range([5], np.uint8, -inf, -inf),
+        "u8_5_in_inf_minf": in_range([5], np.uint8, inf, -inf),
+        "u8_5_in_minf_inf": in_range([5], np.uint8, -inf, inf),
+        "u8_5_in_1e10_1e11": in_range([5], np.uint8, 1e10, 1e11),
+        "u8_5_in_1e10_5": in_range([5], np.uint8, 1e10, 5),
+        "u8_empty_in_1e10_5": in_range([], np.uint8, 1e10, 5),
+        "u8_5_in_0_m1e10": in_range([5], np.uint8, 0, -1e10),
+        "i32_5_in_m2147483649_m2147483648": in_range([5], np.int32, -2147483649.0, -2147483648.0),
+        "i32_5_in_2147483648_2147483649": in_range([5], np.int32, 2147483648.0, 2147483649.0),
+    }
+    # Floating depths: [min, max) over the sign-toggled bit patterns, so -0 < +0 and NaN sorts
+    # past the infinities by sign. Only f32 clamps its bounds to +-FLT_MAX and rounds them to f32.
+    for name, dtype, top in (("f32", np.float32, flt_max), ("f64", np.float64, dbl_max)):
+        results["check_range"][f"{name}_bounds"] = {
+            "0_in_0.5_10": in_range([0], dtype, 0.5, 10),
+            "0.5_in_0.5_10": in_range([0.5], dtype, 0.5, 10),
+            "max_default_bounds": in_range([top], dtype, -dbl_max, dbl_max),
+            "min_default_bounds": in_range([-top], dtype, -dbl_max, dbl_max),
+            "inf_default_bounds": in_range([inf], dtype, -dbl_max, dbl_max),
+            "minf_default_bounds": in_range([-inf], dtype, -dbl_max, dbl_max),
+            "nan_default_bounds": in_range([nan], dtype, -dbl_max, dbl_max),
+            "max_in_minf_inf": in_range([top], dtype, -inf, inf),
+            "min_in_minf_inf": in_range([-top], dtype, -inf, inf),
+            "inf_in_minf_inf": in_range([inf], dtype, -inf, inf),
+            "minf_in_minf_inf": in_range([-inf], dtype, -inf, inf),
+            "nan_in_minf_inf": in_range([nan], dtype, -inf, inf),
+            "1_in_nan_10": in_range([1], dtype, nan, 10),
+            "1_in_0_nan": in_range([1], dtype, 0, nan),
+            "1_in_nan_nan": in_range([1], dtype, nan, nan),
+            "1_in_mnan_10": in_range([1], dtype, -nan, 10),
+            "1_in_0_mnan": in_range([1], dtype, 0, -nan),
+            "nan_in_nan_10": in_range([nan], dtype, nan, 10),
+            "1_in_inf_inf": in_range([1], dtype, inf, inf),
+            "1_in_minf_minf": in_range([1], dtype, -inf, -inf),
+            "1_in_inf_minf": in_range([1], dtype, inf, -inf),
+            "5_in_10_5": in_range([5], dtype, 10, 5),
+            "empty_in_10_5": in_range([], dtype, 10, 5),
+            "empty_in_nan_nan": in_range([], dtype, nan, nan),
+            "m0_in_0_1": in_range([-0.0], dtype, 0.0, 1),
+            "0_in_m0_1": in_range([0.0], dtype, -0.0, 1),
+            "0_in_0_m0": in_range([0.0], dtype, 0, -0.0),
+            "m0_in_m1_0": in_range([-0.0], dtype, -1, 0.0),
+            "m0_in_m1_m0": in_range([-0.0], dtype, -1, -0.0),
+            "0_in_m1_m0": in_range([0.0], dtype, -1, -0.0),
+            "0_in_0_1e-50": in_range([0.0], dtype, 0, 1e-50),
+            "0_in_m1e-50_1": in_range([0.0], dtype, -1e-50, 1),
+            "1_in_1e300_1e301": in_range([1], dtype, 1e300, 1e301),
+            "1_in_m1e301_m1e300": in_range([1], dtype, -1e301, -1e300),
+            "1_in_0.9999999999_1.00000000001": in_range([1.0], dtype, 0.9999999999, 1.00000000001),
+            "1_in_1.00000000001_2": in_range([1.0], dtype, 1.00000000001, 2),
+        }
     a = np.array([[1, 5, 3]], dtype=np.uint8)
     b = np.array([[1, 2, 7]], dtype=np.uint8)
     rgb = np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8)
@@ -251,6 +438,7 @@ def main() -> None:
         "determinant_singular": cv2.determinant(sing),
         "determinant_non_square": attempt(lambda: cv2.determinant(A)),
         "determinant_u8": attempt(lambda: cv2.determinant(S.astype(np.uint8))),
+        "determinant_empty": attempt(lambda: cv2.determinant(np.zeros((0, 0), dtype=np.float64))),
         "solve_ok": bool(ok),
         "solve_x": tolist(x),
         "solve_singular_ok": bool(ok_s),

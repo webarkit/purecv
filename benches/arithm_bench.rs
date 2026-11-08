@@ -102,10 +102,14 @@ fn bench_arithm(c: &mut Criterion) {
     });
 
     // sum (reduction)
-    c.bench_function("sum_1024x1024_f32", |b| b.iter(|| sum(black_box(&v1))));
+    c.bench_function("sum_1024x1024_f32", |b| {
+        b.iter(|| sum(black_box(&v1)).unwrap())
+    });
 
     // mean (sum + divide)
-    c.bench_function("mean_1024x1024_f32", |b| b.iter(|| mean(black_box(&v1))));
+    c.bench_function("mean_1024x1024_f32", |b| {
+        b.iter(|| mean(black_box(&v1)).unwrap())
+    });
 
     // bitwise_and (u8)
     let mut u1 = Matrix::<u8>::new(size, size, 1);
