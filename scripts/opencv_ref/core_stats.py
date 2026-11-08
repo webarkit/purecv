@@ -267,6 +267,10 @@ def main() -> None:
         "constant_src_minmax": tolist(
             cv2.normalize(np.array([[5.0, 5.0, 5.0]], dtype=np.float32), None, 0, 255, cv2.NORM_MINMAX)
         ),
+        # a mask without elements (0x0) is no mask in cv::normalize (`mask.empty()`)
+        "f32_l2_alpha1_mask_empty": attempt(
+            lambda: tolist(cv2.normalize(s32, None, 1, 0, cv2.NORM_L2, -1, np.zeros((0, 0), np.uint8)))
+        ),
         "l2sqr_as_norm_type": attempt(lambda: cv2.normalize(s32, None, 1, 0, cv2.NORM_L2SQR)),
         # `rtype` is reduced with CV_MAT_DEPTH, so the channel bits of a full type code are ignored.
         "f32_dtype_CV_32FC3": attempt(lambda: tolist(cv2.normalize(s32, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_32FC3))),

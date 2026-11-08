@@ -1655,7 +1655,8 @@ where
 /// output is `saturate_cast<U>(x * scale + shift)`. See [`normalize`] for the parameters.
 ///
 /// Without a mask `dst` is replaced by the result. With a mask `dst` must already have
-/// the shape of `src` and only the selected elements are written. A destination
+/// the shape of `src` and only the selected elements are written. A mask without elements
+/// (0×0) is no mask, as in OpenCV. A destination
 /// type OpenCV has no depth for (`u32`, `u64`, `i64`) is handled like the others: values
 /// saturate to its range and nothing panics.
 ///
@@ -1680,6 +1681,8 @@ where
     T: DataType + Send + Sync + Default + Copy + ToPrimitive + SimdElement + 'static,
     U: SaturateCast + Default + Clone + Send,
 {
+    // A mask without elements is no mask, as OpenCV's `mask.empty()` tests.
+    let mask = mask.filter(|m| !m.data.is_empty());
     if let Some(m) = mask {
         if m.rows != src.rows || m.cols != src.cols || m.channels != 1 {
             cv_bail!(

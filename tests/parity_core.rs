@@ -3034,10 +3034,34 @@ fn norm_relative_matches_opencv() {
     );
 }
 
+/// Values from `core_stats.py`, `normalize.*`. `normalize.f32_l2_alpha1_mask_empty`: a mask
+/// without elements is no mask (`mask.empty()`), so the result equals `f32_l2_alpha1`.
 #[test]
 fn normalize_f32_matches_opencv() {
     let src = row(&[10.0f32, 20.0, 30.0, 250.0]);
     let mut dst = Matrix::<f32>::new(1, 4, 1);
+    let empty_mask = Matrix::<u8>::new(0, 0, 1);
+    normalize(
+        &src,
+        &mut dst,
+        1.0,
+        0.0,
+        NormTypes::L2,
+        -1,
+        Some(&empty_mask),
+    )
+    .unwrap();
+    assert_close(
+        &dst.data.iter().map(|&v| v as f64).collect::<Vec<_>>(),
+        &[
+            0.03955938667058945,
+            0.0791187733411789,
+            0.11867816746234894,
+            0.9889847040176392,
+        ],
+        1e-7,
+        "normalize L2 with an empty mask",
+    );
     normalize(&src, &mut dst, 0.0, 255.0, NormTypes::MinMax, -1, None).unwrap();
     assert_eq!(dst.data, vec![0.0f32, 10.625, 21.25, 255.0]);
     normalize(&src, &mut dst, 1.0, 0.0, NormTypes::L2, -1, None).unwrap();
