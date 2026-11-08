@@ -2735,14 +2735,19 @@ fn norm_diff_matches_opencv() {
     assert_eq!(norm_diff(&a, &b, NormTypes::L2Sqr, None).unwrap(), 140050.0);
     assert_eq!(norm_diff(&a, &b, NormTypes::Hamming, None).unwrap(), 20.0);
     assert_eq!(norm_diff(&a, &b, NormTypes::Hamming2, None).unwrap(), 11.0);
-    // `norm.two_array_l2`
+    // `norm.two_array_l2` and `norm.relative_l2` (src2 = `norm.relative_l2_src2`, all ones)
     let ones = row(&[1.0f32; 6]);
     assert_norm(
         norm_diff(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap(),
-        norm_relative(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap()
-            * (6.0f64.sqrt() + f64::EPSILON),
-        1e-15,
-        "two_array_l2 vs relative_l2",
+        12.62933094031509,
+        1e-12,
+        "two_array_l2",
+    );
+    assert_norm(
+        norm_relative(&row(&NORM_SRC), &ones, NormTypes::L2, None).unwrap(),
+        5.155902766086007,
+        1e-12,
+        "relative_l2",
     );
     // `norm_types.empty`
     let e = Matrix::<f32>::new(0, 3, 1);
