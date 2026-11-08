@@ -1903,4 +1903,70 @@ mod saturate_tests {
         assert!(saturate_cast::<f64>(f64::NAN).is_nan());
         assert!(f32::saturate_from_f32(f32::NAN).is_nan());
     }
+
+    /// A reflected border far wider than the image is a periodic tiling of the source, built here
+    /// from the period (Reflect: `abc|cba`, Reflect101: `abc|b`) and not from `border_interpolate`.
+    /// The border indices used to cost one fold step per period, which made this quadratic: the
+    /// 20000 wide borders took about a second before the constant time mapping.
+    #[test]
+    fn copy_make_border_wide_reflected_border_on_a_small_source() {
+        use crate::core::matrix::Matrix;
+        use crate::core::structural::copy_make_border;
+        use crate::core::types::{BorderTypes, Scalar};
+
+        const BORDER: usize = 20_000;
+        let none = Scalar::all(0u8);
+
+        // 2x3 source, border on the columns only; row r of the output tiles source row r.
+        let src = Matrix::<u8>::from_vec(2, 3, 1, vec![1, 2, 3, 4, 5, 6]);
+        for (border_type, period) in [
+            (BorderTypes::Reflect as i32, &[0usize, 1, 2, 2, 1, 0][..]),
+            (BorderTypes::Reflect101 as i32, &[0usize, 1, 2, 1][..]),
+        ] {
+            let dst = copy_make_border(&src, 0, 0, BORDER, BORDER, border_type, none).unwrap();
+            assert_eq!((dst.rows, dst.cols), (2, 3 + 2 * BORDER));
+            for y in 0..2 {
+                for x in 0..dst.cols {
+                    let k = (x as i64 - BORDER as i64).rem_euclid(period.len() as i64) as usize;
+                    assert_eq!(
+                        dst.data[y * dst.cols + x],
+                        src.data[y * 3 + period[k]],
+                        "type {border_type} at ({y}, {x})"
+                    );
+                }
+            }
+        }
+
+        // 2x1 source, border on the rows only: the row map uses the same index mapping.
+        let col = Matrix::<u8>::from_vec(2, 1, 1, vec![10, 20]);
+        let dst = copy_make_border(
+            &col,
+            BORDER,
+            BORDER,
+            0,
+            0,
+            BorderTypes::Reflect as i32,
+            none,
+        )
+        .unwrap();
+        assert_eq!((dst.rows, dst.cols), (2 + 2 * BORDER, 1));
+        for y in 0..dst.rows {
+            let k = (y as i64 - BORDER as i64).rem_euclid(4) as usize;
+            assert_eq!(dst.data[y], [10, 20, 20, 10][k], "row {y}");
+        }
+        let dst = copy_make_border(
+            &col,
+            BORDER,
+            BORDER,
+            0,
+            0,
+            BorderTypes::Reflect101 as i32,
+            none,
+        )
+        .unwrap();
+        for y in 0..dst.rows {
+            let k = (y as i64 - BORDER as i64).rem_euclid(2) as usize;
+            assert_eq!(dst.data[y], [10, 20][k], "row {y}");
+        }
+    }
 }
