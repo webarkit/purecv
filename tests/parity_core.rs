@@ -5185,6 +5185,17 @@ mod fft {
             1e-4,
             "inverse unscaled",
         );
+    }
+
+    /// Pins a divergence, not parity. OpenCV accepts `DFT_REAL_OUTPUT | DFT_COMPLEX_OUTPUT`:
+    /// on real input in the forward direction it returns the 2-channel spectrum (script key
+    /// `dft.real_and_complex_output_together`), and on a complex spectrum with `DFT_INVERSE` it
+    /// returns real output. purecv rejects the combination with an error. An issue for this is
+    /// pending maintainer approval; do not change the behaviour here. Once it exists, rename
+    /// this test to `..._current_behaviour` and name the issue (the guard in
+    /// `opencv_reference_links.rs` requires `#N` for that suffix).
+    #[test]
+    fn dft_real_and_complex_output_errors_today() {
         assert!(dft(&src(), DFT_REAL_OUTPUT | DFT_COMPLEX_OUTPUT, 0).is_err());
     }
 

@@ -56,7 +56,9 @@ pub const DFT_SCALE: i32 = 2;
 pub const DFT_ROWS: i32 = 4;
 /// Force complex (2-channel) output even for real input.
 pub const DFT_COMPLEX_OUTPUT: i32 = 16;
-/// Return only the real part of the result (1-channel output).
+/// Return only the real part of the result (1-channel output). Applies to the inverse transform
+/// of complex input; on a forward transform of real input it has no effect, since the output is
+/// the 1-channel CCS packing anyway.
 pub const DFT_REAL_OUTPUT: i32 = 32;
 
 // ---------------------------------------------------------------------------
@@ -177,7 +179,12 @@ impl DftFloat for f64 {}
 ///   nothing here.
 /// * Inverse transform of 1-channel input: the input is read as CCS and the output is 1-channel
 ///   real, whatever `DFT_REAL_OUTPUT` or `DFT_COMPLEX_OUTPUT` say.
-/// * Complex input: 2-channel output, or its real part with `DFT_REAL_OUTPUT`.
+/// * Complex (2-channel) input: 2-channel output, or the real part of the full transform with
+///   `DFT_REAL_OUTPUT`. This differs from OpenCV in both directions. Forward: OpenCV ignores
+///   `DFT_REAL_OUTPUT` and stays 2-channel. Inverse: OpenCV assumes the input is
+///   conjugate-symmetric and reads only columns `0 ..= N/2`, so it agrees with purecv only on a
+///   real signal's spectrum; purecv takes the real part of the full inverse of whatever it is
+///   given.
 ///
 /// CCS keeps the non-redundant half of the conjugate-symmetric spectrum `Y` of an `M`-row,
 /// `N`-column real matrix, as in the `dft` entry of the
