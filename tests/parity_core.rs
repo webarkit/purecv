@@ -5136,22 +5136,21 @@ mod fft {
         v.iter().map(|&v| v as f64).collect()
     }
 
-    /// purecv's `dft(src, 0)` on real input equals OpenCV's `dft(src, DFT_COMPLEX_OUTPUT)`.
+    /// `DFT_COMPLEX_OUTPUT` on real input: the full 2-channel spectrum, with `DFT_SCALE`,
+    /// `DFT_ROWS`, `nonzero_rows` and the inverse back to real output.
     #[test]
     fn dft_complex_output_matches_opencv() {
-        let d = dft(&src(), 0, 0).unwrap();
-        assert_eq!(d.channels, 2);
-        assert_close(&as_f64(&d), &f64s(&COMPLEX), 1e-4, "dft");
-        let d = dft(&src(), DFT_COMPLEX_OUTPUT, 0).unwrap();
+        const C: i32 = DFT_COMPLEX_OUTPUT;
+        let d = dft(&src(), C, 0).unwrap();
         assert_close(&as_f64(&d), &f64s(&COMPLEX), 1e-4, "dft COMPLEX_OUTPUT");
         let scaled: Vec<f64> = COMPLEX.iter().map(|&v| v as f64 / 12.0).collect();
         assert_close(
-            &as_f64(&dft(&src(), DFT_SCALE, 0).unwrap()),
+            &as_f64(&dft(&src(), C | DFT_SCALE, 0).unwrap()),
             &scaled,
             1e-5,
             "dft SCALE",
         );
-        let rows = dft(&src(), DFT_ROWS, 0).unwrap();
+        let rows = dft(&src(), C | DFT_ROWS, 0).unwrap();
         assert_close(
             &as_f64(&rows),
             &[
@@ -5161,21 +5160,21 @@ mod fft {
             1e-4,
             "dft ROWS",
         );
-        let rows_scaled = dft(&src(), DFT_ROWS | DFT_SCALE, 0).unwrap();
+        let rows_scaled = dft(&src(), C | DFT_ROWS | DFT_SCALE, 0).unwrap();
         assert_close(
             &as_f64(&rows_scaled)[..4],
             &[2.5, 0.0, -0.5, 0.5],
             1e-5,
             "dft ROWS|SCALE",
         );
-        let nz = dft(&src(), 0, 2).unwrap();
+        let nz = dft(&src(), C, 2).unwrap();
         assert_close(
             &as_f64(&nz)[..8],
             &[36.0, 0.0, -4.0, 4.0, -4.0, 0.0, -4.0, -4.0],
             1e-4,
             "nonzero_rows",
         );
-        let spec = dft(&src(), 0, 0).unwrap();
+        let spec = dft(&src(), C, 0).unwrap();
         let back = dft(&spec, DFT_INVERSE | DFT_SCALE | DFT_REAL_OUTPUT, 0).unwrap();
         assert_eq!(back.channels, 1);
         assert_close(&as_f64(&back), &as_f64(&src()), 1e-4, "inverse real output");
@@ -5193,13 +5192,29 @@ mod fft {
     /// unless DFT_SCALE is passed (core_dft_dct.py, key `idft_default_no_scale`).
     #[test]
     fn idft_does_not_scale_by_default() {
-        let spec = dft(&src(), 0, 0).unwrap();
+        let spec = dft(&src(), DFT_COMPLEX_OUTPUT, 0).unwrap();
         let back = idft(&spec, 0, 0).unwrap();
+        assert_eq!(back.channels, 2);
         assert_close(
-            &as_f64(&back)[..4],
-            &[12.0, 0.0, 24.0, 0.0],
+            &as_f64(&back),
+            &ccs_ref::IDFT_DEFAULT_NO_SCALE,
             1e-4,
             "idft default",
+        );
+    }
+
+    /// `idft` with `DFT_ROWS`: each row is inverted on its own and `DFT_SCALE` divides by the
+    /// row length (core_dft_dct.py, key `idft_real_output_rows_scale`).
+    #[test]
+    fn idft_rows_real_output_matches_opencv() {
+        let spec = dft(&src(), DFT_COMPLEX_OUTPUT | DFT_ROWS, 0).unwrap();
+        let back = idft(&spec, DFT_REAL_OUTPUT | DFT_ROWS | DFT_SCALE, 0).unwrap();
+        assert_eq!(back.channels, 1);
+        assert_close(
+            &as_f64(&back),
+            &ccs_ref::IDFT_REAL_OUTPUT_ROWS_SCALE,
+            1e-5,
+            "idft ROWS",
         );
     }
 
@@ -5224,14 +5239,320 @@ mod fft {
         );
     }
 
-    /// OpenCV's `dft(src, 0)` on real input returns the single-channel CCS packing
-    /// (`flags0_ccs_packed_1ch`); purecv returns the 2-channel complex spectrum.
+    /// `dft(src, 0)` on real input returns the single-channel CCS packing, like OpenCV
+    /// (core_dft_dct.py, key `flags0_ccs_packed_1ch`).
     #[test]
-    #[ignore = "diverges from OpenCV 4.10.0, see #223"]
     fn dft_real_input_returns_ccs_by_default() {
         let d = dft(&src(), 0, 0).unwrap();
         assert_eq!(d.channels, 1);
         assert_close(&as_f64(&d), &CCS, 1e-4, "dft CCS");
+    }
+
+    /// The `ramp` input of core_dft_dct.py: element `i` (row-major) is `((7 i + 3) mod 11) - 5`.
+    fn ramp<T: From<i8> + Default + Clone>(rows: usize, cols: usize) -> Matrix<T> {
+        let data = (0..rows * cols)
+            .map(|i| T::from(((7 * i + 3) % 11) as i8 - 5))
+            .collect();
+        Matrix::from_vec(rows, cols, 1, data)
+    }
+
+    /// One CCS shape of core_dft_dct.py (`CCS_SHAPES`) and its `dft_ccs` keys.
+    struct CcsCase {
+        rows: usize,
+        cols: usize,
+        /// `f32_RxC`
+        f32: &'static [f64],
+        /// `f64_RxC`
+        f64: &'static [f64],
+        /// `rows_RxC` (`DFT_ROWS`)
+        rows_flag: &'static [f64],
+        /// `inv_RxC` (`DFT_INVERSE` of the f32 CCS)
+        inv: &'static [f64],
+        /// `inv_scale_RxC`
+        inv_scale: &'static [f64],
+        /// `inv_scale_f64_RxC`
+        inv_scale_f64: &'static [f64],
+    }
+
+    macro_rules! ccs_case {
+        ($r:expr, $c:expr, $f32:ident, $f64:ident, $rows:ident, $inv:ident, $is:ident, $is64:ident) => {
+            CcsCase {
+                rows: $r,
+                cols: $c,
+                f32: &ccs_ref::$f32,
+                f64: &ccs_ref::$f64,
+                rows_flag: &ccs_ref::$rows,
+                inv: &ccs_ref::$inv,
+                inv_scale: &ccs_ref::$is,
+                inv_scale_f64: &ccs_ref::$is64,
+            }
+        };
+    }
+
+    /// 1×N, N×1 and every even/odd combination of rows and cols.
+    fn ccs_cases() -> [CcsCase; 8] {
+        [
+            ccs_case!(
+                1,
+                6,
+                F32_1X6,
+                F64_1X6,
+                ROWS_1X6,
+                INV_1X6,
+                INV_SCALE_1X6,
+                INV_SCALE_F64_1X6
+            ),
+            ccs_case!(
+                1,
+                5,
+                F32_1X5,
+                F64_1X5,
+                ROWS_1X5,
+                INV_1X5,
+                INV_SCALE_1X5,
+                INV_SCALE_F64_1X5
+            ),
+            ccs_case!(
+                6,
+                1,
+                F32_6X1,
+                F64_6X1,
+                ROWS_6X1,
+                INV_6X1,
+                INV_SCALE_6X1,
+                INV_SCALE_F64_6X1
+            ),
+            ccs_case!(
+                5,
+                1,
+                F32_5X1,
+                F64_5X1,
+                ROWS_5X1,
+                INV_5X1,
+                INV_SCALE_5X1,
+                INV_SCALE_F64_5X1
+            ),
+            ccs_case!(
+                4,
+                6,
+                F32_4X6,
+                F64_4X6,
+                ROWS_4X6,
+                INV_4X6,
+                INV_SCALE_4X6,
+                INV_SCALE_F64_4X6
+            ),
+            ccs_case!(
+                4,
+                5,
+                F32_4X5,
+                F64_4X5,
+                ROWS_4X5,
+                INV_4X5,
+                INV_SCALE_4X5,
+                INV_SCALE_F64_4X5
+            ),
+            ccs_case!(
+                3,
+                6,
+                F32_3X6,
+                F64_3X6,
+                ROWS_3X6,
+                INV_3X6,
+                INV_SCALE_3X6,
+                INV_SCALE_F64_3X6
+            ),
+            ccs_case!(
+                3,
+                5,
+                F32_3X5,
+                F64_3X5,
+                ROWS_3X5,
+                INV_3X5,
+                INV_SCALE_3X5,
+                INV_SCALE_F64_3X5
+            ),
+        ]
+    }
+
+    /// The CCS layout for every shape, f32 and f64 (core_dft_dct.py, keys `dft_ccs.f32_RxC`,
+    /// `dft_ccs.f64_RxC`). `DFT_REAL_OUTPUT` does not change a forward transform of real input:
+    /// key `dft_ccs.fwd_real_output_4x6` equals `dft_ccs.f32_4x6`.
+    #[test]
+    fn dft_ccs_shapes_match_opencv() {
+        for case in ccs_cases() {
+            let what = format!("{}x{}", case.rows, case.cols);
+            let d = dft(&ramp::<f32>(case.rows, case.cols), 0, 0).unwrap();
+            assert_eq!(
+                (d.rows, d.cols, d.channels),
+                (case.rows, case.cols, 1),
+                "{what}"
+            );
+            assert_close(&as_f64(&d), case.f32, 1e-4, &format!("f32 {what}"));
+            let d = dft(&ramp::<f64>(case.rows, case.cols), 0, 0).unwrap();
+            assert_eq!(d.channels, 1, "f64 {what}");
+            assert_close(&d.data, case.f64, 1e-9, &format!("f64 {what}"));
+        }
+        let d = dft(&ramp::<f32>(4, 6), DFT_REAL_OUTPUT, 0).unwrap();
+        assert_eq!(d.channels, 1);
+        assert_close(&as_f64(&d), &ccs_ref::F32_4X6, 1e-4, "REAL_OUTPUT 4x6");
+    }
+
+    /// With `DFT_ROWS` each row is packed on its own; an N×1 input is N length-1 rows
+    /// (core_dft_dct.py, keys `dft_ccs.rows_RxC`).
+    #[test]
+    fn dft_ccs_rows_flag_matches_opencv() {
+        for case in ccs_cases() {
+            let what = format!("ROWS {}x{}", case.rows, case.cols);
+            let d = dft(&ramp::<f32>(case.rows, case.cols), DFT_ROWS, 0).unwrap();
+            assert_eq!(d.channels, 1, "{what}");
+            assert_close(&as_f64(&d), case.rows_flag, 1e-4, &what);
+        }
+    }
+
+    /// Forward `nonzero_rows`: rows from `nonzero_rows` on are read as zero
+    /// (core_dft_dct.py, keys `dft_ccs.nz2_*`, `dft_ccs.nz2_rows_*`).
+    #[test]
+    fn dft_ccs_nonzero_rows_matches_opencv() {
+        use ccs_ref::*;
+        for (r, c, flags, want) in [
+            (4, 6, 0, &NZ2_4X6[..]),
+            (3, 5, 0, &NZ2_3X5[..]),
+            (4, 6, DFT_ROWS, &NZ2_ROWS_4X6[..]),
+            (3, 5, DFT_ROWS, &NZ2_ROWS_3X5[..]),
+        ] {
+            let d = dft(&ramp::<f32>(r, c), flags, 2).unwrap();
+            assert_eq!(d.channels, 1);
+            assert_close(
+                &as_f64(&d),
+                want,
+                1e-4,
+                &format!("nz2 {r}x{c} flags {flags}"),
+            );
+        }
+    }
+
+    /// Single-channel `DFT_INVERSE` input is read as CCS and gives real output; `DFT_SCALE`
+    /// divides by the element count, or the row length with `DFT_ROWS` (core_dft_dct.py, keys
+    /// `dft_ccs.inv_scale_RxC`, `dft_ccs.inv_scale_f64_RxC`, `dft_ccs.inv_rows_scale_3x6`,
+    /// `dft.idft_scale_real_fixture_scale`).
+    #[test]
+    fn idft_of_ccs_with_scale_round_trips() {
+        for case in ccs_cases() {
+            let what = format!("{}x{}", case.rows, case.cols);
+            let ccs = dft(&ramp::<f32>(case.rows, case.cols), 0, 0).unwrap();
+            let back = idft(&ccs, DFT_SCALE, 0).unwrap();
+            assert_eq!(
+                (back.rows, back.cols, back.channels),
+                (case.rows, case.cols, 1),
+                "{what}"
+            );
+            assert_close(&as_f64(&back), case.inv_scale, 1e-5, &format!("f32 {what}"));
+            let ccs = dft(&ramp::<f64>(case.rows, case.cols), 0, 0).unwrap();
+            let back = idft(&ccs, DFT_SCALE, 0).unwrap();
+            assert_close(
+                &back.data,
+                case.inv_scale_f64,
+                1e-12,
+                &format!("f64 {what}"),
+            );
+        }
+        let ccs = dft(&ramp::<f32>(3, 6), DFT_ROWS, 0).unwrap();
+        let back = idft(&ccs, DFT_ROWS | DFT_SCALE, 0).unwrap();
+        assert_close(
+            &as_f64(&back),
+            &ccs_ref::INV_ROWS_SCALE_3X6,
+            1e-5,
+            "ROWS|SCALE 3x6",
+        );
+        let back = idft(&src(), DFT_SCALE, 0).unwrap();
+        assert_close(
+            &as_f64(&back),
+            &ccs_ref::IDFT_SCALE_REAL_FIXTURE_SCALE,
+            1e-5,
+            "idft(src, SCALE)",
+        );
+    }
+
+    /// Without `DFT_SCALE` the inverse of CCS input is unscaled, and `DFT_REAL_OUTPUT` or
+    /// `DFT_COMPLEX_OUTPUT` still give single-channel real output (core_dft_dct.py, keys
+    /// `dft_ccs.inv_RxC`; `dft_ccs.inv_real_output_4x6` and `dft_ccs.inv_complex_output_4x6`
+    /// equal `dft_ccs.inv_4x6`; `dft.idft_scale_real_fixture_default`).
+    #[test]
+    fn idft_of_ccs_real_output_matches_opencv() {
+        for case in ccs_cases() {
+            let what = format!("{}x{}", case.rows, case.cols);
+            let ccs = dft(&ramp::<f32>(case.rows, case.cols), 0, 0).unwrap();
+            let back = dft(&ccs, DFT_INVERSE, 0).unwrap();
+            assert_eq!(back.channels, 1, "{what}");
+            assert_close(&as_f64(&back), case.inv, 1e-4, &what);
+        }
+        let ccs = dft(&ramp::<f32>(4, 6), 0, 0).unwrap();
+        for flags in [DFT_REAL_OUTPUT, DFT_COMPLEX_OUTPUT] {
+            let back = dft(&ccs, DFT_INVERSE | flags, 0).unwrap();
+            assert_eq!(back.channels, 1, "flags {flags}");
+            assert_close(
+                &as_f64(&back),
+                &ccs_ref::INV_4X6,
+                1e-4,
+                &format!("flags {flags}"),
+            );
+        }
+        let back = idft(&src(), 0, 0).unwrap();
+        assert_close(
+            &as_f64(&back),
+            &ccs_ref::IDFT_SCALE_REAL_FIXTURE_DEFAULT,
+            1e-4,
+            "idft(src)",
+        );
+    }
+
+    /// Inverse `nonzero_rows` through `idft`: every input row is read and output rows from
+    /// `nonzero_rows` on are zero (core_dft_dct.py, keys `dft_ccs.inv_nz2_*`,
+    /// `dft_ccs.inv_nz2_rows_*`).
+    #[test]
+    fn idft_of_ccs_nonzero_rows_matches_opencv() {
+        use ccs_ref::*;
+        for (r, c, flags, want) in [
+            (4, 6, 0, &INV_NZ2_4X6[..]),
+            (3, 5, 0, &INV_NZ2_3X5[..]),
+            (4, 6, DFT_ROWS, &INV_NZ2_ROWS_4X6[..]),
+            (3, 5, DFT_ROWS, &INV_NZ2_ROWS_3X5[..]),
+        ] {
+            let ccs = dft(&ramp::<f32>(r, c), flags, 0).unwrap();
+            let back = idft(&ccs, flags, 2).unwrap();
+            assert_eq!(back.channels, 1);
+            assert_close(
+                &as_f64(&back),
+                want,
+                1e-4,
+                &format!("inv nz2 {r}x{c} flags {flags}"),
+            );
+        }
+    }
+
+    /// `DFT_COMPLEX_OUTPUT` keeps the 2-channel spectrum (core_dft_dct.py, keys
+    /// `dft.complex_output`, `dft.complex_output_nonzero_rows_2`,
+    /// `dft_ccs.nz2_complex_output_4x6`).
+    #[test]
+    fn dft_complex_output_is_unchanged() {
+        let d = dft(&src(), DFT_COMPLEX_OUTPUT, 0).unwrap();
+        assert_eq!(d.channels, 2);
+        assert_close(&as_f64(&d), &f64s(&COMPLEX), 1e-4, "complex");
+        let d = dft(&src(), DFT_COMPLEX_OUTPUT, 2).unwrap();
+        assert_close(
+            &as_f64(&d),
+            &ccs_ref::COMPLEX_OUTPUT_NONZERO_ROWS_2,
+            1e-4,
+            "complex nz2 3x4",
+        );
+        let d = dft(&ramp::<f32>(4, 6), DFT_COMPLEX_OUTPUT, 2).unwrap();
+        assert_close(
+            &as_f64(&d),
+            &ccs_ref::NZ2_COMPLEX_OUTPUT_4X6,
+            1e-4,
+            "complex nz2 4x6",
+        );
     }
 
     const CCS: [f64; 12] = [
@@ -5248,6 +5569,990 @@ mod fft {
         -0.5,
         -0.8660253882408142,
     ];
+
+    /// Reference values printed by core_dft_dct.py; each const names its key.
+    mod ccs_ref {
+        /// `dft_ccs.f32_1x6`
+        pub const F32_1X6: [f64; 6] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+        ];
+        /// `dft_ccs.f64_1x6`
+        pub const F64_1X6: [f64; 6] = [
+            5.0,
+            1.0000000000000009,
+            -1.7320508075688767,
+            -10.0,
+            -6.928203230275509,
+            1.0,
+        ];
+        /// `dft_ccs.rows_1x6`
+        pub const ROWS_1X6: [f64; 6] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+        ];
+        /// `dft_ccs.inv_1x6`
+        pub const INV_1X6: [f64; 6] = [
+            -12.0,
+            30.0,
+            6.000000953674316,
+            -18.0,
+            24.0,
+            -9.5367431640625e-07,
+        ];
+        /// `dft_ccs.inv_scale_1x6`
+        pub const INV_SCALE_1X6: [f64; 6] = [
+            -2.0,
+            5.0,
+            1.000000238418579,
+            -3.0,
+            4.0,
+            -1.5894572413799324e-07,
+        ];
+        /// `dft_ccs.inv_scale_f64_1x6`
+        pub const INV_SCALE_F64_1X6: [f64; 6] = [-2.0, 5.0, 1.0, -3.0, 4.0, 0.0];
+        /// `dft_ccs.f32_1x5`
+        pub const F32_1X5: [f64; 5] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+        ];
+        /// `dft_ccs.f64_1x5`
+        pub const F64_1X5: [f64; 5] = [
+            5.0,
+            2.399186938124422,
+            -3.3021975254650466,
+            -9.899186938124423,
+            3.2164408128881408,
+        ];
+        /// `dft_ccs.rows_1x5`
+        pub const ROWS_1X5: [f64; 5] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+        ];
+        /// `dft_ccs.inv_1x5`
+        pub const INV_1X5: [f64; 5] = [-10.0, 25.0, 4.999999046325684, -15.000000953674316, 20.0];
+        /// `dft_ccs.inv_scale_1x5`
+        pub const INV_SCALE_1X5: [f64; 5] =
+            [-2.0, 5.0, 0.9999998211860657, -3.000000238418579, 4.0];
+        /// `dft_ccs.inv_scale_f64_1x5`
+        pub const INV_SCALE_F64_1X5: [f64; 5] = [
+            -2.0000000000000004,
+            5.000000000000001,
+            0.9999999999999993,
+            -3.000000000000001,
+            4.000000000000001,
+        ];
+        /// `dft_ccs.f32_6x1`
+        pub const F32_6X1: [f64; 6] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+        ];
+        /// `dft_ccs.f64_6x1`
+        pub const F64_6X1: [f64; 6] = [
+            5.0,
+            1.0000000000000009,
+            -1.7320508075688767,
+            -10.0,
+            -6.928203230275509,
+            1.0,
+        ];
+        /// `dft_ccs.rows_6x1`
+        pub const ROWS_6X1: [f64; 6] = [-2.0, 5.0, 1.0, -3.0, 4.0, 0.0];
+        /// `dft_ccs.inv_6x1`
+        pub const INV_6X1: [f64; 6] = [
+            -12.0,
+            30.0,
+            6.000000953674316,
+            -18.0,
+            24.0,
+            -9.5367431640625e-07,
+        ];
+        /// `dft_ccs.inv_scale_6x1`
+        pub const INV_SCALE_6X1: [f64; 6] = [
+            -2.0,
+            5.0,
+            1.000000238418579,
+            -3.0,
+            4.0,
+            -1.5894572413799324e-07,
+        ];
+        /// `dft_ccs.inv_scale_f64_6x1`
+        pub const INV_SCALE_F64_6X1: [f64; 6] = [-2.0, 5.0, 1.0, -3.0, 4.0, 0.0];
+        /// `dft_ccs.f32_5x1`
+        pub const F32_5X1: [f64; 5] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+        ];
+        /// `dft_ccs.f64_5x1`
+        pub const F64_5X1: [f64; 5] = [
+            5.0,
+            2.399186938124422,
+            -3.3021975254650466,
+            -9.899186938124423,
+            3.2164408128881408,
+        ];
+        /// `dft_ccs.rows_5x1`
+        pub const ROWS_5X1: [f64; 5] = [-2.0, 5.0, 1.0, -3.0, 4.0];
+        /// `dft_ccs.inv_5x1`
+        pub const INV_5X1: [f64; 5] = [-10.0, 25.0, 4.999999046325684, -15.000000953674316, 20.0];
+        /// `dft_ccs.inv_scale_5x1`
+        pub const INV_SCALE_5X1: [f64; 5] =
+            [-2.0, 5.0, 0.9999998211860657, -3.000000238418579, 4.0];
+        /// `dft_ccs.inv_scale_f64_5x1`
+        pub const INV_SCALE_F64_5X1: [f64; 5] = [
+            -2.0000000000000004,
+            5.000000000000001,
+            0.9999999999999993,
+            -3.000000000000001,
+            4.000000000000001,
+        ];
+        /// `dft_ccs.f32_4x6`
+        pub const F32_4X6: [f64; 24] = [
+            3.0,
+            9.5,
+            2.598074197769165,
+            -1.5,
+            -18.186534881591797,
+            -7.0,
+            2.0,
+            -9.52627944946289,
+            5.5,
+            -31.52627944946289,
+            16.5,
+            0.0,
+            9.0,
+            -5.5,
+            -9.52627944946289,
+            5.5,
+            -9.526280403137207,
+            -11.0,
+            13.0,
+            9.52627944946289,
+            -5.5,
+            -12.47372055053711,
+            -16.5,
+            11.0,
+        ];
+        /// `dft_ccs.f64_4x6`
+        pub const F64_4X6: [f64; 24] = [
+            3.0,
+            9.500000000000004,
+            2.598076211353317,
+            -1.5,
+            -18.186533479473212,
+            -7.0,
+            2.0,
+            -9.526279441628825,
+            5.5,
+            -31.526279441628823,
+            16.5,
+            0.0,
+            9.0,
+            -5.499999999999999,
+            -9.526279441628827,
+            5.5,
+            -9.526279441628825,
+            -11.0,
+            13.0,
+            9.526279441628825,
+            -5.499999999999998,
+            -12.473720558371175,
+            -16.5,
+            11.0,
+        ];
+        /// `dft_ccs.rows_4x6`
+        pub const ROWS_4X6: [f64; 24] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            -7.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            3.0,
+            1.0,
+            -1.732051134109497,
+            12.0,
+            -6.928203582763672,
+            1.0,
+            2.0,
+            6.5,
+            7.7942280769348145,
+            6.5,
+            2.598076343536377,
+            -10.0,
+        ];
+        /// `dft_ccs.inv_4x6` (also `dft_ccs.inv_real_output_4x6` and `dft_ccs.inv_complex_output_4x6`)
+        pub const INV_4X6: [f64; 24] = [
+            -48.0,
+            120.00000762939453,
+            24.0,
+            -72.0,
+            96.0,
+            -7.62939453125e-06,
+            -96.0,
+            72.00000762939453,
+            -24.0,
+            -120.0,
+            48.0,
+            -48.000003814697266,
+            120.0,
+            24.00000762939453,
+            -72.0,
+            96.0,
+            -3.814697265625e-06,
+            -96.0,
+            72.0,
+            -23.99999237060547,
+            -120.0,
+            48.000003814697266,
+            -48.000003814697266,
+            120.0,
+        ];
+        /// `dft_ccs.inv_scale_4x6`
+        pub const INV_SCALE_4X6: [f64; 24] = [
+            -2.0,
+            5.000000476837158,
+            1.0,
+            -3.0,
+            4.0,
+            -3.178914482759865e-07,
+            -4.0,
+            3.000000476837158,
+            -1.0,
+            -5.0,
+            2.0,
+            -2.000000238418579,
+            5.0,
+            1.0000003576278687,
+            -3.0,
+            4.0,
+            -1.5894572413799324e-07,
+            -4.0,
+            3.0,
+            -0.9999997019767761,
+            -5.0,
+            2.000000238418579,
+            -2.000000238418579,
+            5.0,
+        ];
+        /// `dft_ccs.inv_scale_f64_4x6`
+        pub const INV_SCALE_F64_4X6: [f64; 24] = [
+            -1.9999999999999993,
+            5.0,
+            0.9999999999999997,
+            -3.0000000000000004,
+            4.0,
+            5.921189464667501e-16,
+            -3.999999999999999,
+            3.0,
+            -1.0000000000000002,
+            -5.0,
+            1.9999999999999996,
+            -1.9999999999999993,
+            5.000000000000001,
+            1.0,
+            -3.0,
+            3.999999999999999,
+            -8.881784197001252e-16,
+            -3.999999999999999,
+            3.0,
+            -0.9999999999999993,
+            -5.0,
+            2.0,
+            -1.9999999999999993,
+            5.0,
+        ];
+        /// `dft_ccs.f32_4x5`
+        pub const F32_4X5: [f64; 20] = [
+            3.0,
+            -1.8991870880126953,
+            -6.743151664733887,
+            10.399187088012695,
+            2.404141902923584,
+            2.0,
+            0.3327369689941406,
+            8.899187088012695,
+            -7.336751937866211,
+            -3.3991870880126953,
+            9.0,
+            -2.1008129119873047,
+            -6.46563720703125,
+            -14.399187088012695,
+            10.46162223815918,
+            13.0,
+            13.26401138305664,
+            -8.899187088012695,
+            -28.25999641418457,
+            3.3991870880126953,
+        ];
+        /// `dft_ccs.f64_4x5`
+        pub const F64_4X5: [f64; 20] = [
+            3.0,
+            -1.899186938124422,
+            -6.743152326642981,
+            10.399186938124423,
+            2.404141572305874,
+            2.0,
+            0.33273610103163875,
+            8.899186938124423,
+            -7.336752197002157,
+            -3.399186938124422,
+            9.0,
+            -2.100813061875578,
+            -6.465637775217205,
+            -14.399186938124423,
+            10.46162167924669,
+            13.0,
+            13.264011651466049,
+            -8.899186938124423,
+            -28.259995555495536,
+            3.399186938124422,
+        ];
+        /// `dft_ccs.rows_4x5`
+        pub const ROWS_4X5: [f64; 20] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+            -7.0,
+            -4.399187088012695,
+            -3.302197217941284,
+            7.899187088012695,
+            3.2164409160614014,
+            3.0,
+            -4.399187088012695,
+            -3.302197217941284,
+            7.899187088012695,
+            3.2164409160614014,
+            2.0,
+            4.5,
+            3.163440227508545,
+            4.5,
+            -7.245181083679199,
+        ];
+        /// `dft_ccs.inv_4x5`
+        pub const INV_4X5: [f64; 20] = [
+            -40.0,
+            100.0,
+            20.000003814697266,
+            -60.0000114440918,
+            80.0,
+            0.0,
+            -80.0,
+            60.0000114440918,
+            -20.000003814697266,
+            -100.0,
+            40.0,
+            -40.000003814697266,
+            100.00001525878906,
+            19.999996185302734,
+            -60.000003814697266,
+            80.0,
+            0.0,
+            -80.0,
+            60.0,
+            -20.0,
+        ];
+        /// `dft_ccs.inv_scale_4x5`
+        pub const INV_SCALE_4X5: [f64; 20] = [
+            -2.0,
+            5.0,
+            1.000000238418579,
+            -3.0000007152557373,
+            4.0,
+            0.0,
+            -4.0,
+            3.0000007152557373,
+            -1.000000238418579,
+            -5.0,
+            2.0,
+            -2.000000238418579,
+            5.000000953674316,
+            0.9999998211860657,
+            -3.000000238418579,
+            4.0,
+            0.0,
+            -4.0,
+            3.0,
+            -1.0,
+        ];
+        /// `dft_ccs.inv_scale_f64_4x5`
+        pub const INV_SCALE_F64_4X5: [f64; 20] = [
+            -2.0000000000000004,
+            5.000000000000001,
+            0.9999999999999993,
+            -3.000000000000001,
+            4.000000000000001,
+            0.0,
+            -4.000000000000001,
+            3.000000000000001,
+            -0.9999999999999993,
+            -5.000000000000001,
+            2.0000000000000004,
+            -2.000000000000001,
+            5.000000000000001,
+            1.0000000000000007,
+            -3.000000000000001,
+            4.0,
+            7.105427357601002e-16,
+            -4.0,
+            3.0,
+            -1.0000000000000007,
+        ];
+        /// `dft_ccs.f32_3x6`
+        pub const F32_3X6: [f64; 18] = [
+            1.0,
+            3.0,
+            -5.19615364074707,
+            -8.0,
+            -20.784610748291016,
+            3.0,
+            7.0,
+            -2.0647654253025394e-07,
+            -1.1920928955078125e-07,
+            -11.0,
+            19.05255889892578,
+            0.0,
+            8.660253524780273,
+            2.0647654253025394e-07,
+            -1.1920928955078125e-07,
+            -11.0,
+            -19.05255889892578,
+            0.0,
+        ];
+        /// `dft_ccs.f64_3x6`
+        pub const F64_3X6: [f64; 18] = [
+            1.0,
+            3.0000000000000027,
+            -5.196152422706631,
+            -8.0,
+            -20.784609690826528,
+            3.0,
+            7.0,
+            7.691850745534255e-16,
+            4.440892098500626e-16,
+            -11.0,
+            19.05255888325765,
+            0.0,
+            8.660254037844386,
+            -7.691850745534255e-16,
+            4.440892098500626e-16,
+            -11.0,
+            -19.05255888325765,
+            0.0,
+        ];
+        /// `dft_ccs.rows_3x6`
+        pub const ROWS_3X6: [f64; 18] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            -7.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            3.0,
+            1.0,
+            -1.732051134109497,
+            12.0,
+            -6.928203582763672,
+            1.0,
+        ];
+        /// `dft_ccs.inv_3x6`
+        pub const INV_3X6: [f64; 18] = [
+            -36.0,
+            90.0,
+            18.000001907348633,
+            -53.999996185302734,
+            72.0,
+            -3.814697265625e-06,
+            -72.0,
+            54.0,
+            -17.999998092651367,
+            -90.0,
+            36.0,
+            -36.000003814697266,
+            90.0,
+            18.000003814697266,
+            -54.0,
+            72.0,
+            0.0,
+            -72.0,
+        ];
+        /// `dft_ccs.inv_scale_3x6`
+        pub const INV_SCALE_3X6: [f64; 18] = [
+            -2.0,
+            5.0,
+            1.0000001192092896,
+            -2.999999761581421,
+            4.0,
+            -2.119276274470394e-07,
+            -4.0,
+            3.0,
+            -0.9999998807907104,
+            -5.0,
+            2.0,
+            -2.000000238418579,
+            5.0,
+            1.000000238418579,
+            -3.0,
+            4.0,
+            0.0,
+            -4.0,
+        ];
+        /// `dft_ccs.inv_scale_f64_3x6`
+        pub const INV_SCALE_F64_3X6: [f64; 18] = [
+            -1.9999999999999991,
+            5.0,
+            0.9999999999999996,
+            -2.999999999999999,
+            4.0,
+            -9.86864910777917e-16,
+            -3.999999999999999,
+            3.0,
+            -1.0000000000000004,
+            -4.999999999999999,
+            1.9999999999999996,
+            -2.000000000000001,
+            5.0,
+            0.9999999999999996,
+            -3.0,
+            4.0,
+            0.0,
+            -4.0,
+        ];
+        /// `dft_ccs.f32_3x5`
+        pub const F32_3X5: [f64; 15] = [
+            1.0,
+            -6.399187088012695,
+            -9.906591415405273,
+            5.899187088012695,
+            9.649322509765625,
+            7.0,
+            6.798374176025391,
+            0.0,
+            -17.79837417602539,
+            0.0,
+            8.660253524780273,
+            6.798374176025391,
+            0.0,
+            -17.79837417602539,
+            0.0,
+        ];
+        /// `dft_ccs.f64_3x5`
+        pub const F64_3X5: [f64; 15] = [
+            1.0,
+            -6.399186938124422,
+            -9.90659257639514,
+            5.899186938124421,
+            9.649322438664422,
+            7.0,
+            6.798373876248844,
+            0.0,
+            -17.798373876248846,
+            0.0,
+            8.660254037844386,
+            6.798373876248844,
+            0.0,
+            -17.798373876248846,
+            0.0,
+        ];
+        /// `dft_ccs.rows_3x5`
+        pub const ROWS_3X5: [f64; 15] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+            -7.0,
+            -4.399187088012695,
+            -3.302197217941284,
+            7.899187088012695,
+            3.2164409160614014,
+            3.0,
+            -4.399187088012695,
+            -3.302197217941284,
+            7.899187088012695,
+            3.2164409160614014,
+        ];
+        /// `dft_ccs.inv_3x5`
+        pub const INV_3X5: [f64; 15] = [
+            -30.0, 75.0, 15.0, -45.0, 60.0, 0.0, -60.0, 45.0, -15.0, -75.0, 30.0, -30.0, 75.0,
+            15.0, -45.0,
+        ];
+        /// `dft_ccs.inv_scale_3x5`
+        pub const INV_SCALE_3X5: [f64; 15] = [
+            -2.0,
+            5.000000476837158,
+            1.0,
+            -3.000000238418579,
+            4.0,
+            0.0,
+            -4.0,
+            3.000000238418579,
+            -1.0,
+            -5.000000476837158,
+            2.0,
+            -2.0,
+            5.000000476837158,
+            1.0,
+            -3.000000238418579,
+        ];
+        /// `dft_ccs.inv_scale_f64_3x5`
+        pub const INV_SCALE_F64_3X5: [f64; 15] = [
+            -2.0000000000000004,
+            5.0,
+            0.9999999999999992,
+            -3.0,
+            4.0,
+            4.736951571734001e-16,
+            -4.0,
+            3.0,
+            -0.9999999999999992,
+            -5.0,
+            2.0000000000000004,
+            -2.000000000000001,
+            5.0,
+            1.0000000000000002,
+            -3.000000000000001,
+        ];
+        /// `dft_ccs.inv_rows_scale_3x6`
+        pub const INV_ROWS_SCALE_3X6: [f64; 18] = [
+            -2.0,
+            5.0,
+            1.000000238418579,
+            -3.0,
+            4.0,
+            -1.5894572413799324e-07,
+            -4.0,
+            3.0,
+            -0.9999998807907104,
+            -5.0,
+            1.9999998807907104,
+            -2.000000238418579,
+            5.0,
+            1.000000238418579,
+            -3.0,
+            4.0,
+            0.0,
+            -4.0,
+        ];
+        /// `dft_ccs.nz2_4x6`
+        pub const NZ2_4X6: [f64; 24] = [
+            -2.0,
+            2.0,
+            -3.4641027450561523,
+            -20.0,
+            -13.856406211853027,
+            2.0,
+            5.0,
+            -0.7320513725280762,
+            -2.732051372528076,
+            -16.928203582763672,
+            3.0717968940734863,
+            1.0,
+            7.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            -1.0,
+            12.0,
+            2.732051372528076,
+            -0.7320513725280762,
+            -3.0717968940734863,
+            -16.928203582763672,
+            0.0,
+        ];
+        /// `dft_ccs.nz2_rows_4x6`
+        pub const NZ2_ROWS_4X6: [f64; 24] = [
+            5.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            -7.0,
+            1.0,
+            -1.7320513725280762,
+            -10.0,
+            -6.928203105926514,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        /// `dft_ccs.inv_nz2_4x6`
+        pub const INV_NZ2_4X6: [f64; 24] = [
+            -48.0,
+            120.00000762939453,
+            24.0,
+            -72.0,
+            96.0,
+            -7.62939453125e-06,
+            -96.0,
+            72.00000762939453,
+            -24.0,
+            -120.0,
+            48.0,
+            -48.000003814697266,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        /// `dft_ccs.inv_nz2_rows_4x6`
+        pub const INV_NZ2_ROWS_4X6: [f64; 24] = [
+            -12.0,
+            30.0,
+            6.000000953674316,
+            -18.0,
+            24.0,
+            -9.5367431640625e-07,
+            -24.0,
+            18.0,
+            -5.999999046325684,
+            -30.0,
+            11.999999046325684,
+            -12.000000953674316,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        /// `dft_ccs.nz2_3x5`
+        pub const NZ2_3X5: [f64; 15] = [
+            -2.0,
+            -2.0,
+            -6.604394435882568,
+            -2.0,
+            6.432881832122803,
+            8.5,
+            1.7389941215515137,
+            2.1587090492248535,
+            -11.063261032104492,
+            -5.232676029205322,
+            6.062177658081055,
+            7.458567142486572,
+            -5.460906505584717,
+            -16.634300231933594,
+            8.449116706848145,
+        ];
+        /// `dft_ccs.nz2_rows_3x5`
+        pub const NZ2_ROWS_3X5: [f64; 15] = [
+            5.0,
+            2.3991870880126953,
+            -3.302197217941284,
+            -9.899187088012695,
+            3.2164409160614014,
+            -7.0,
+            -4.399187088012695,
+            -3.302197217941284,
+            7.899187088012695,
+            3.2164409160614014,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        /// `dft_ccs.inv_nz2_3x5`
+        pub const INV_NZ2_3X5: [f64; 15] = [
+            -30.0, 75.0, 15.0, -45.0, 60.0, 0.0, -60.0, 45.0, -15.0, -75.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        /// `dft_ccs.inv_nz2_rows_3x5`
+        pub const INV_NZ2_ROWS_3X5: [f64; 15] = [
+            -10.0,
+            25.0,
+            4.999999046325684,
+            -15.000000953674316,
+            20.0,
+            0.0,
+            -20.0,
+            15.000000953674316,
+            -4.999999046325684,
+            -25.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        /// `dft_ccs.nz2_complex_output_4x6`
+        pub const NZ2_COMPLEX_OUTPUT_4X6: [f64; 48] = [
+            -2.0,
+            0.0,
+            2.0,
+            -3.4641027450561523,
+            -20.0,
+            -13.856406211853027,
+            2.0,
+            0.0,
+            -20.0,
+            13.856406211853027,
+            2.0,
+            3.4641027450561523,
+            5.0,
+            7.0,
+            -0.7320513725280762,
+            -2.732051372528076,
+            -16.928203582763672,
+            3.0717968940734863,
+            1.0,
+            -1.0,
+            -3.0717968940734863,
+            16.928203582763672,
+            2.732051372528076,
+            0.7320513725280762,
+            12.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            -7.0,
+            2.732051372528076,
+            -0.7320513725280762,
+            -3.0717968940734863,
+            -16.928203582763672,
+            1.0,
+            1.0,
+            -16.928203582763672,
+            -3.0717968940734863,
+            -0.7320513725280762,
+            2.732051372528076,
+        ];
+        /// `dft.idft_default_no_scale`
+        pub const IDFT_DEFAULT_NO_SCALE: [f64; 24] = [
+            12.0, 0.0, 24.0, 0.0, 36.0, 0.0, 48.0, 0.0, 60.0, 0.0, 72.0, 0.0, 84.0, 0.0, 96.0, 0.0,
+            108.0, 0.0, 120.0, 0.0, 132.0, 0.0, 156.0, 0.0,
+        ];
+        /// `dft.idft_scale_real_fixture_default`
+        pub const IDFT_SCALE_REAL_FIXTURE_DEFAULT: [f64; 12] = [
+            67.0,
+            -51.0,
+            -5.0,
+            33.0,
+            -51.17691421508789,
+            25.856407165527344,
+            -41.033321380615234,
+            -12.0,
+            11.17691421508789,
+            -1.8564066886901855,
+            49.033321380615234,
+            -12.0,
+        ];
+        /// `dft.idft_scale_real_fixture_scale`
+        pub const IDFT_SCALE_REAL_FIXTURE_SCALE: [f64; 12] = [
+            5.583333492279053,
+            -4.25,
+            -0.4166666865348816,
+            2.75,
+            -4.264742851257324,
+            2.154700756072998,
+            -3.4194436073303223,
+            -1.0,
+            0.9314095377922058,
+            -0.15470056235790253,
+            4.0861101150512695,
+            -1.0,
+        ];
+        /// `dft.idft_real_output_rows_scale`
+        pub const IDFT_REAL_OUTPUT_ROWS_SCALE: [f64; 12] = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 13.0,
+        ];
+        /// `dft.complex_output_nonzero_rows_2`
+        pub const COMPLEX_OUTPUT_NONZERO_ROWS_2: [f64; 24] = [
+            36.0,
+            0.0,
+            -4.0,
+            4.0,
+            -4.0,
+            0.0,
+            -4.0,
+            -4.0,
+            -3.0,
+            -22.516660690307617,
+            0.7320507764816284,
+            2.732050895690918,
+            -1.0,
+            1.7320507764816284,
+            -2.732050895690918,
+            0.7320507764816284,
+            -3.0,
+            22.516660690307617,
+            -2.732050895690918,
+            -0.7320507764816284,
+            -1.0,
+            -1.7320507764816284,
+            0.7320507764816284,
+            -2.732050895690918,
+        ];
+    }
 
     #[test]
     fn get_optimal_dft_size_matches_opencv_in_range() {

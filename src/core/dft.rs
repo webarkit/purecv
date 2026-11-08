@@ -165,21 +165,38 @@ impl DftFloat for f64 {}
 // DFT implementation
 // ---------------------------------------------------------------------------
 
-/// Performs a 2-D Discrete Fourier Transform.
+/// Performs a 1-D or 2-D Discrete Fourier Transform, like OpenCV's
+/// [`cv::dft`](https://github.com/opencv/opencv/blob/4.10.0/modules/core/src/dxt.cpp#L3486-L3534).
 ///
 /// The input matrix must be 1-channel (real) or 2-channel (complex, where
 /// channel 0 is real and channel 1 is imaginary).
 ///
+/// # Output layout
+/// * Forward transform of real input: the 1-channel **CCS** packing of the spectrum, unless
+///   `DFT_COMPLEX_OUTPUT` asks for the full 2-channel spectrum. `DFT_REAL_OUTPUT` changes
+///   nothing here.
+/// * Inverse transform of 1-channel input: the input is read as CCS and the output is 1-channel
+///   real, whatever `DFT_REAL_OUTPUT` or `DFT_COMPLEX_OUTPUT` say.
+/// * Complex input: 2-channel output, or its real part with `DFT_REAL_OUTPUT`.
+///
+/// CCS keeps the non-redundant half of the conjugate-symmetric spectrum `Y` of an `M`-row,
+/// `N`-column real matrix, as in the `dft` entry of the
+/// [OpenCV docs](https://docs.opencv.org/4.10.0/d2/de8/group__core__array.html):
+/// columns `2k-1` and `2k` hold `Re Y(r, k)` and `Im Y(r, k)` for `k = 1 ..= (N-1)/2`;
+/// column 0, and column `N-1` when `N` is even, hold the spectrum columns `0` and `N/2` packed
+/// down the rows as `Re Y(0)`, `Re Y(1)`, `Im Y(1)`, …, plus `Re Y(M/2)` when `M` is even.
+/// A 1×N or N×1 matrix, or each row under `DFT_ROWS`, is packed as a 1-D sequence.
+///
 /// # Arguments
 /// * `src` - Input matrix of type `f32` or `f64`.
 /// * `flags` - Combination of `DFT_*` constants (e.g. `DFT_INVERSE | DFT_SCALE`).
-/// * `nonzero_rows` - When non-zero, only the first `nonzero_rows` rows of the
-///   input are non-zero. This can speed up the transform. Pass `0` to process
-///   all rows.
+/// * `nonzero_rows` - When non-zero, a forward transform reads only the first `nonzero_rows`
+///   rows of real input (the rest count as zero), and an inverse transform of CCS input writes
+///   only the first `nonzero_rows` output rows (the rest are zero). Pass `0` to process all
+///   rows.
 ///
 /// # Returns
-/// A matrix containing the DFT result. Output is 2-channel (complex) unless
-/// `DFT_REAL_OUTPUT` is specified.
+/// A matrix containing the DFT result, laid out as above.
 pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Result<Matrix<T>> {
     let inverse = (flags & DFT_INVERSE) != 0;
     let scale = (flags & DFT_SCALE) != 0;
@@ -223,6 +240,24 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
     } else {
         rows
     };
+    // DFT_SCALE divides by the element count, or by the row length with DFT_ROWS.
+    let inv_n = if scale {
+        let n = if rows_only { cols } else { rows * cols };
+        T::from_usize(n).map(|n| T::one() / n)
+    } else {
+        None
+    };
+    // The length of the column transforms; 1 when every row is transformed on its own.
+    let col_len = if rows_only { 1 } else { rows };
+
+    let mut planner = FftPlanner::<T>::new();
+
+    if inverse && !is_complex_input {
+        return Ok(ccs_inverse(src, col_len, active_rows, inv_n, &mut planner));
+    }
+
+    // Real input gives CCS unless DFT_COMPLEX_OUTPUT asks for the full spectrum.
+    let ccs_output = !is_complex_input && !inverse && !want_complex_output;
 
     // Build the complex buffer from source
     let mut buf = vec![Complex::<T>::default(); rows * cols];
@@ -243,55 +278,55 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
         }
     }
 
-    let mut planner = FftPlanner::<T>::new();
-
-    // Row-wise FFTs
+    // Row-wise FFTs; zero rows of real input stay zero.
     let row_fft = if inverse {
         planner.plan_fft_inverse(cols)
     } else {
         planner.plan_fft_forward(cols)
     };
-
-    for r in 0..rows {
-        let row_slice = &mut buf[r * cols..(r + 1) * cols];
-        row_fft.process(row_slice);
+    let fft_rows = if is_complex_input { rows } else { active_rows };
+    for row in buf[..fft_rows * cols].chunks_exact_mut(cols) {
+        row_fft.process(row);
     }
 
-    // Column-wise FFTs (unless DFT_ROWS)
-    if !rows_only && rows > 1 {
+    // Column-wise FFTs (unless DFT_ROWS). CCS reads only the columns 0 ..= cols/2.
+    if col_len > 1 {
         let col_fft = if inverse {
             planner.plan_fft_inverse(rows)
         } else {
             planner.plan_fft_forward(rows)
         };
+        let fft_cols = if ccs_output { cols / 2 + 1 } else { cols };
+        column_ffts(&mut buf, rows, cols, fft_cols, &*col_fft);
+    }
 
-        let mut col_buf = vec![Complex::<T>::default(); rows];
-        for c in 0..cols {
-            // Extract column
-            for r in 0..rows {
-                col_buf[r] = buf[r * cols + c];
-            }
-            col_fft.process(&mut col_buf);
-            // Write back
-            for r in 0..rows {
-                buf[r * cols + c] = col_buf[r];
+    if ccs_output {
+        let mut dst_data = vec![T::default(); rows * cols];
+        let block = col_len * cols;
+        for (spec, out) in buf
+            .chunks_exact(block)
+            .zip(dst_data.chunks_exact_mut(block))
+        {
+            pack_ccs(spec, col_len, cols, out);
+        }
+        if let Some(inv_n) = inv_n {
+            for v in &mut dst_data {
+                *v = *v * inv_n;
             }
         }
+        return Ok(Matrix {
+            rows,
+            cols,
+            channels: 1,
+            data: dst_data,
+        });
     }
 
     // Scale if requested
-    if scale {
-        let n = if rows_only {
-            T::from_usize(cols).unwrap_or_default()
-        } else {
-            T::from_usize(rows * cols).unwrap_or_default()
-        };
-        if n != T::default() {
-            let inv_n = T::from_f64(1.0).unwrap_or_default() / n;
-            for v in &mut buf {
-                v.re = v.re * inv_n;
-                v.im = v.im * inv_n;
-            }
+    if let Some(inv_n) = inv_n {
+        for v in &mut buf {
+            v.re = v.re * inv_n;
+            v.im = v.im * inv_n;
         }
     }
 
@@ -309,7 +344,7 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
         });
     }
 
-    // 2-channel complex output (default)
+    // 2-channel complex output (complex input, or DFT_COMPLEX_OUTPUT)
     let mut dst_data = vec![T::default(); rows * cols * 2];
     for (i, v) in buf.iter().enumerate() {
         dst_data[i * 2] = v.re;
@@ -323,11 +358,151 @@ pub fn dft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Res
     })
 }
 
+/// Runs `fft` down each of the first `fft_cols` columns of the row-major `rows × cols` `buf`.
+fn column_ffts<T: DftFloat>(
+    buf: &mut [Complex<T>],
+    rows: usize,
+    cols: usize,
+    fft_cols: usize,
+    fft: &dyn rustfft::Fft<T>,
+) {
+    let mut col_buf = vec![Complex::<T>::default(); rows];
+    for c in 0..fft_cols {
+        for (r, v) in col_buf.iter_mut().enumerate() {
+            *v = buf[r * cols + c];
+        }
+        fft.process(&mut col_buf);
+        for (r, v) in col_buf.iter().enumerate() {
+            buf[r * cols + c] = *v;
+        }
+    }
+}
+
+/// Packs spectrum column `k` of `spec` down column `d` of `out` in 1-D CCS order:
+/// `Re Y(0)`, `Re Y(1)`, `Im Y(1)`, …, then `Re Y(rows/2)` when `rows` is even.
+fn pack_ccs_column<T: DftFloat>(
+    spec: &[Complex<T>],
+    rows: usize,
+    cols: usize,
+    k: usize,
+    d: usize,
+    out: &mut [T],
+) {
+    out[d] = spec[k].re;
+    for m in 1..=(rows - 1) / 2 {
+        let v = spec[m * cols + k];
+        out[(2 * m - 1) * cols + d] = v.re;
+        out[2 * m * cols + d] = v.im;
+    }
+    if rows.is_multiple_of(2) {
+        out[(rows - 1) * cols + d] = spec[(rows / 2) * cols + k].re;
+    }
+}
+
+/// Packs the `rows × cols` spectrum `spec` of a real matrix into OpenCV's CCS layout (see
+/// [`dft`]). With `rows == 1` this is the 1-D packing of a single row.
+fn pack_ccs<T: DftFloat>(spec: &[Complex<T>], rows: usize, cols: usize, out: &mut [T]) {
+    for (row, dst) in spec.chunks_exact(cols).zip(out.chunks_exact_mut(cols)) {
+        for k in 1..=(cols - 1) / 2 {
+            dst[2 * k - 1] = row[k].re;
+            dst[2 * k] = row[k].im;
+        }
+    }
+    pack_ccs_column(spec, rows, cols, 0, 0, out);
+    if cols.is_multiple_of(2) {
+        pack_ccs_column(spec, rows, cols, cols / 2, cols - 1, out);
+    }
+}
+
+/// The inverse of [`pack_ccs_column`]: fills spectrum column `k` of `spec` from column `d` of
+/// the CCS `src`, completing it by conjugate symmetry `Y(rows - m) = conj Y(m)`.
+fn unpack_ccs_column<T: DftFloat>(
+    src: &[T],
+    rows: usize,
+    cols: usize,
+    d: usize,
+    k: usize,
+    spec: &mut [Complex<T>],
+) {
+    spec[k] = Complex::new(src[d], T::zero());
+    for m in 1..=(rows - 1) / 2 {
+        let v = Complex::new(src[(2 * m - 1) * cols + d], src[2 * m * cols + d]);
+        spec[m * cols + k] = v;
+        spec[(rows - m) * cols + k] = v.conj();
+    }
+    if rows.is_multiple_of(2) {
+        spec[(rows / 2) * cols + k] = Complex::new(src[(rows - 1) * cols + d], T::zero());
+    }
+}
+
+/// Unpacks the CCS `src` into the spectrum columns `0 ..= cols/2` of `spec`. The other columns
+/// follow from conjugate symmetry along each row once the column transforms are done.
+fn unpack_ccs<T: DftFloat>(src: &[T], rows: usize, cols: usize, spec: &mut [Complex<T>]) {
+    for (row, s) in spec.chunks_exact_mut(cols).zip(src.chunks_exact(cols)) {
+        for k in 1..=(cols - 1) / 2 {
+            row[k] = Complex::new(s[2 * k - 1], s[2 * k]);
+        }
+    }
+    unpack_ccs_column(src, rows, cols, 0, 0, spec);
+    if cols.is_multiple_of(2) {
+        unpack_ccs_column(src, rows, cols, cols - 1, cols / 2, spec);
+    }
+}
+
+/// Inverse transform of 1-channel CCS input to 1-channel real output, as OpenCV's
+/// `InvCCSToReal`: the column transforms read every row, then only the first `active_rows`
+/// output rows are computed and the rest stay zero. `col_len` is 1 under `DFT_ROWS`.
+fn ccs_inverse<T: DftFloat>(
+    src: &Matrix<T>,
+    col_len: usize,
+    active_rows: usize,
+    inv_n: Option<T>,
+    planner: &mut FftPlanner<T>,
+) -> Matrix<T> {
+    let (rows, cols) = (src.rows, src.cols);
+    let mut buf = vec![Complex::<T>::default(); rows * cols];
+    for (spec, s) in buf
+        .chunks_exact_mut(col_len * cols)
+        .zip(src.data.chunks_exact(col_len * cols))
+    {
+        unpack_ccs(s, col_len, cols, spec);
+    }
+    if col_len > 1 {
+        let col_fft = planner.plan_fft_inverse(rows);
+        column_ffts(&mut buf, rows, cols, cols / 2 + 1, &*col_fft);
+    }
+
+    let row_fft = planner.plan_fft_inverse(cols);
+    let scale = inv_n.unwrap_or_else(T::one);
+    let mut dst_data = vec![T::default(); rows * cols];
+    for (row, dst) in buf
+        .chunks_exact_mut(cols)
+        .zip(dst_data.chunks_exact_mut(cols))
+        .take(active_rows)
+    {
+        // Each row is now the spectrum of a real row: Y(cols - k) = conj Y(k).
+        for k in cols / 2 + 1..cols {
+            row[k] = row[cols - k].conj();
+        }
+        row_fft.process(row);
+        for (d, v) in dst.iter_mut().zip(row.iter()) {
+            *d = v.re * scale;
+        }
+    }
+    Matrix {
+        rows,
+        cols,
+        channels: 1,
+        data: dst_data,
+    }
+}
+
 /// Computes the Inverse Discrete Fourier Transform of a 1D or 2D array.
 ///
 /// This is `dft(src, flags | DFT_INVERSE, nonzero_rows)`, as in OpenCV. The output is **not**
 /// scaled unless `DFT_SCALE` is passed in `flags`; `DFT_SCALE` divides by the element count
-/// (by the row length with `DFT_ROWS`).
+/// (by the row length with `DFT_ROWS`). A 1-channel `src` is read as the CCS packing that
+/// [`dft`] returns for real input, and the output is 1-channel real.
 pub fn idft<T: DftFloat>(src: &Matrix<T>, flags: i32, nonzero_rows: usize) -> Result<Matrix<T>> {
     dft(src, flags | DFT_INVERSE, nonzero_rows)
 }
@@ -488,6 +663,38 @@ mod tests {
                 "Scale mismatch at index {}",
                 i
             );
+        }
+    }
+
+    /// CCS and its inverse agree with the full complex spectrum on larger shapes than the
+    /// parity fixtures: every packed value appears in the `DFT_COMPLEX_OUTPUT` spectrum, and
+    /// `idft(ccs, DFT_SCALE)` returns the input.
+    #[test]
+    fn test_ccs_matches_complex_spectrum_and_round_trips() {
+        for (rows, cols) in [(7, 9), (8, 10), (8, 9), (7, 10), (16, 1), (1, 15), (2, 2)] {
+            let data = (0..rows * cols)
+                .map(|i| ((i * 37 + 11) % 23) as f64 - 11.0)
+                .collect();
+            let src = Matrix::from_vec(rows, cols, 1, data);
+            let ccs = dft(&src, 0, 0).unwrap();
+            let full = dft(&src, DFT_COMPLEX_OUTPUT, 0).unwrap();
+            let spec: alloc::vec::Vec<Complex<f64>> = full
+                .data
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&[re, im]| Complex::new(re, im))
+                .collect();
+            let mut packed = vec![0.0f64; rows * cols];
+            pack_ccs(&spec, rows, cols, &mut packed);
+            for (i, (a, b)) in ccs.data.iter().zip(&packed).enumerate() {
+                assert!((a - b).abs() < 1e-9, "{rows}x{cols} CCS[{i}]: {a} vs {b}");
+            }
+            let back = idft(&ccs, DFT_SCALE, 0).unwrap();
+            assert_eq!(back.channels, 1);
+            for (i, (a, b)) in back.data.iter().zip(&src.data).enumerate() {
+                assert!((a - b).abs() < 1e-9, "{rows}x{cols} back[{i}]: {a} vs {b}");
+            }
         }
     }
 
