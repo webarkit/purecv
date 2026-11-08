@@ -258,7 +258,9 @@ mod tests {
     fn border_interpolate_matches_the_stepwise_fold() {
         for border in ALL_BORDERS {
             for len in 1..=24 {
-                for p in -500..=500 {
+                // Miri interprets ~1000x slower; ±120 still crosses two periods of every len <= 24.
+                let reach = if cfg!(miri) { 120 } else { 500 };
+                for p in -reach..=reach {
                     assert_eq!(
                         border_interpolate(p, len, border),
                         border_interpolate_loop(p, len, border),
@@ -301,15 +303,40 @@ mod tests {
 
     #[test]
     fn border_interpolate_extreme_indices_do_not_overflow() {
-        let extremes = (0..40)
+        // The step by step fold costs about |p| / len iterations, so it is only the reference
+        // for long axes; a short axis is checked through its period instead (cheap under Miri).
+        let extremes = (0..4)
             .flat_map(|d| [i32::MIN + d, i32::MAX - d, -d, d])
             .collect::<Vec<_>>();
         for border in [BorderTypes::Reflect, BorderTypes::Reflect101] {
-            for len in [1000, 65_536, 1 << 20, i32::MAX / 2 + 1, i32::MAX] {
+            for len in [1 << 20, i32::MAX / 2 + 1, i32::MAX] {
                 for &p in &extremes {
                     let got = border_interpolate(p, len, border);
                     assert!((0..len).contains(&got), "{border:?} p={p} len={len}: {got}");
                     assert_eq!(got, fold_i64(p, len, border), "{border:?} p={p} len={len}");
+                }
+            }
+            for len in [2, 3, 1000, 65_536] {
+                let period = if border == BorderTypes::Reflect {
+                    2 * len
+                } else {
+                    2 * len - 2
+                };
+                for &p in &extremes {
+                    let got = border_interpolate(p, len, border);
+                    assert!((0..len).contains(&got), "{border:?} p={p} len={len}: {got}");
+                    // One period inwards (or outwards, at the top of the range) is the same pixel.
+                    let q = if p > 0 { p - period } else { p + period };
+                    assert_eq!(
+                        got,
+                        border_interpolate(q, len, border),
+                        "{border:?} p={p} len={len}"
+                    );
+                    assert_eq!(
+                        got,
+                        border_interpolate(p.rem_euclid(period), len, border),
+                        "{border:?} p={p} len={len}"
+                    );
                 }
             }
         }
