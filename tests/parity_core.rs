@@ -2619,7 +2619,8 @@ fn norm_every_depth_matches_opencv() {
 }
 
 /// `core_stats.py`, `norm_types.mask_rules`: the mask is one 8-bit channel of the source's
-/// size; any non-zero byte selects; an all-zero mask gives 0.
+/// size; any non-zero byte selects; an all-zero mask gives 0; an empty (0×0) mask is no
+/// mask (`mask_empty_*` equal the unmasked `norm_types.f32` rows).
 #[test]
 fn norm_mask_rules_match_opencv() {
     let a3 = Matrix::from_vec(
@@ -2631,10 +2632,51 @@ fn norm_mask_rules_match_opencv() {
         ],
     );
     let wrong_size = Matrix::from_vec(2, 3, 1, vec![1u8; 6]);
-    assert!(norm(&a3, NormTypes::L2, Some(&wrong_size)).is_err());
-    assert!(norm_diff(&a3, &a3, NormTypes::L2, Some(&wrong_size)).is_err());
+    assert!(matches!(
+        norm(&a3, NormTypes::L2, Some(&wrong_size)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
+    assert!(matches!(
+        norm_diff(&a3, &a3, NormTypes::L2, Some(&wrong_size)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
     let three_channel = Matrix::from_vec(2, 2, 3, vec![1u8; 12]);
-    assert!(norm(&a3, NormTypes::L2, Some(&three_channel)).is_err());
+    assert!(matches!(
+        norm(&a3, NormTypes::L2, Some(&three_channel)),
+        Err(PureCvError::InvalidDimensions(_))
+    ));
+    // `mask_empty_l2`, `mask_empty_inf`, `diff_mask_empty_l2`, `relative_mask_empty_l1`,
+    // `hamming_mask_empty`
+    let empty = Matrix::<u8>::new(0, 0, 1);
+    let b3 = Matrix::from_vec(
+        2,
+        2,
+        3,
+        vec![
+            1.0f32, 1.0, -0.25, 12.0, 1.5, -2.5, 0.75, 7.25, 0.2, 0.3, -65.5, 2.0,
+        ],
+    );
+    assert_norm(
+        norm(&a3, NormTypes::L2, Some(&empty)).unwrap(),
+        1002.5092144214972,
+        1e-12,
+        "mask_empty_l2",
+    );
+    assert_eq!(norm(&a3, NormTypes::Inf, Some(&empty)).unwrap(), 1000.25);
+    assert_norm(
+        norm_diff(&a3, &b3, NormTypes::L2, Some(&empty)).unwrap(),
+        1008.1842254766879,
+        1e-12,
+        "diff_mask_empty_l2",
+    );
+    assert_norm(
+        norm_relative(&a3, &b3, NormTypes::L1, Some(&empty)).unwrap(),
+        12.323076921397387,
+        1e-12,
+        "relative_mask_empty_l1",
+    );
+    let bits = row(&[11u8, 255, 0, 128]);
+    assert_eq!(norm(&bits, NormTypes::Hamming, Some(&empty)).unwrap(), 12.0);
     let zeros = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
     assert_eq!(norm(&a3, NormTypes::L2, Some(&zeros)).unwrap(), 0.0);
     assert_eq!(norm(&a3, NormTypes::Inf, Some(&zeros)).unwrap(), 0.0);
@@ -2697,25 +2739,36 @@ fn norm_hamming_matches_opencv() {
 /// Hamming needs one `u8` channel.
 #[test]
 fn norm_hamming_rejects_non_u8() {
+    let invalid = |r: Result<f64>| matches!(r, Err(PureCvError::InvalidInput(_)));
     for t in [NormTypes::Hamming, NormTypes::Hamming2] {
-        assert!(norm(&row(&[1i8, 2]), t, None).is_err());
-        assert!(norm(&row(&[1u16, 2]), t, None).is_err());
-        assert!(norm(&row(&[1i16, 2]), t, None).is_err());
-        assert!(norm(&row(&[1i32, 2]), t, None).is_err());
-        assert!(norm(&row(&[1.0f32, 2.0]), t, None).is_err());
-        assert!(norm(&row(&[1.0f64, 2.0]), t, None).is_err());
-        assert!(norm_diff(&row(&[1.0f32]), &row(&[2.0f32]), t, None).is_err());
-        assert!(norm_relative(&row(&[1i16]), &row(&[2i16]), t, None).is_err());
+        assert!(invalid(norm(&row(&[1i8, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1u16, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1i16, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1i32, 2]), t, None)));
+        assert!(invalid(norm(&row(&[1.0f32, 2.0]), t, None)));
+        assert!(invalid(norm(&row(&[1.0f64, 2.0]), t, None)));
+        assert!(invalid(norm_diff(
+            &row(&[1.0f32]),
+            &row(&[2.0f32]),
+            t,
+            None
+        )));
+        assert!(invalid(norm_relative(
+            &row(&[1i16]),
+            &row(&[2i16]),
+            t,
+            None
+        )));
         let three = Matrix::from_vec(2, 1, 3, vec![11u8, 255, 0, 85, 170, 195]);
-        assert!(norm(&three, t, None).is_err());
+        assert!(invalid(norm(&three, t, None)));
         let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
-        assert!(norm_diff(&two, &two, t, None).is_err());
+        assert!(invalid(norm_diff(&two, &two, t, None)));
     }
     // `norm.minmax_as_norm_type`: MinMax and Relative are not norm types
     let f = row(&NORM_SRC);
-    assert!(norm(&f, NormTypes::MinMax, None).is_err());
-    assert!(norm(&f, NormTypes::Relative, None).is_err());
-    assert!(norm_diff(&f, &f, NormTypes::Relative, None).is_err());
+    assert!(invalid(norm(&f, NormTypes::MinMax, None)));
+    assert!(invalid(norm(&f, NormTypes::Relative, None)));
+    assert!(invalid(norm_diff(&f, &f, NormTypes::Relative, None)));
 }
 
 /// `core_stats.py`, `norm_types.diff`: `u8` differences are taken without overflow
@@ -2770,19 +2823,41 @@ fn norm_diff_matches_opencv() {
     assert_eq!(norm_diff(&e8, &e8, NormTypes::Hamming, None).unwrap(), 0.0);
 }
 
+/// purecv's own behaviour, not OpenCV's: on `i32` OpenCV subtracts and takes `abs` in `int`,
+/// which wraps on x86 (`core_stats.py`, `norm_types.diff.i32_int_min_single_inf` 2147483647,
+/// `i32_int_min_single_l1` −1, `i32_extremes_inf` 1, `i32_extremes_l1` 2). purecv computes
+/// exactly; the wrap is not ported.
+#[test]
+fn norm_i32_is_exact_where_opencv_wraps() {
+    let a = row(&[i32::MIN, i32::MAX, 0]);
+    let b = row(&[i32::MAX, i32::MIN, 0]);
+    assert_eq!(norm(&a, NormTypes::Inf, None).unwrap(), 2147483648.0);
+    assert_eq!(norm(&a, NormTypes::L1, None).unwrap(), 4294967295.0);
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::Inf, None).unwrap(),
+        4294967295.0
+    );
+    assert_eq!(
+        norm_diff(&a, &b, NormTypes::L1, None).unwrap(),
+        8589934590.0
+    );
+}
+
 /// `core_stats.py`, `norm_types.diff.{shape_mismatch,transposed_shape,channel_mismatch}`:
 /// OpenCV asserts `sameSize` and equal types; with one `T` a channel mismatch is the only
 /// type mismatch left.
 #[test]
 fn norm_diff_rejects_shape_mismatch() {
+    let shape = |r: Result<f64>| matches!(r, Err(PureCvError::InvalidDimensions(_)));
+    let channels = |r: Result<f64>| matches!(r, Err(PureCvError::IncompatibleChannels(_)));
     let a = row(&[0u8, 255, 10, 200]);
-    assert!(norm_diff(&a, &row(&[0u8; 3]), NormTypes::L2, None).is_err());
+    assert!(shape(norm_diff(&a, &row(&[0u8; 3]), NormTypes::L2, None)));
     let column = Matrix::from_vec(4, 1, 1, vec![0u8, 255, 10, 200]);
-    assert!(norm_diff(&a, &column, NormTypes::L2, None).is_err());
+    assert!(shape(norm_diff(&a, &column, NormTypes::L2, None)));
     let one = Matrix::from_vec(2, 2, 1, vec![0u8; 4]);
     let two = Matrix::from_vec(2, 2, 2, vec![0u8; 8]);
-    assert!(norm_diff(&one, &two, NormTypes::L2, None).is_err());
-    assert!(norm_relative(&one, &two, NormTypes::L2, None).is_err());
+    assert!(channels(norm_diff(&one, &two, NormTypes::L2, None)));
+    assert!(channels(norm_relative(&one, &two, NormTypes::L2, None)));
 }
 
 /// `core_stats.py`, `norm_types.<depth>.relative_multi{,_masked}_*` and

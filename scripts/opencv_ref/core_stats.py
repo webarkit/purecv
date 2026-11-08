@@ -95,6 +95,7 @@ def norm_types() -> dict:
 
     # The mask must be one 8-bit channel of the source's size.
     a3 = np.array(NORM_DEPTHS["f32"][1], dtype=np.float32).reshape(2, 2, 3)
+    b3_f32 = np.array(NORM_DEPTHS_B["f32"], dtype=np.float32).reshape(2, 2, 3)
     out["mask_rules"] = {
         "mask_wrong_size": attempt(lambda: cv2.norm(a3, cv2.NORM_L2, np.ones((2, 3), np.uint8))),
         "mask_three_channel": attempt(lambda: cv2.norm(a3, cv2.NORM_L2, np.ones((2, 2, 3), np.uint8))),
@@ -103,6 +104,20 @@ def norm_types() -> dict:
         "mask_255_l1": attempt(lambda: cv2.norm(a3, cv2.NORM_L1, pixel_mask * 255)),
         "diff_mask_wrong_size": attempt(
             lambda: cv2.norm(a3, a3, cv2.NORM_L2, np.ones((2, 3), np.uint8))
+        ),
+        # an empty mask (0x0) is no mask in cv::norm (`mask.empty()`)
+        "mask_empty_l2": attempt(lambda: cv2.norm(a3, cv2.NORM_L2, mask=np.zeros((0, 0), np.uint8))),
+        "mask_empty_inf": attempt(lambda: cv2.norm(a3, cv2.NORM_INF, mask=np.zeros((0, 0), np.uint8))),
+        "diff_mask_empty_l2": attempt(
+            lambda: cv2.norm(a3, b3_f32, cv2.NORM_L2, mask=np.zeros((0, 0), np.uint8))
+        ),
+        "relative_mask_empty_l1": attempt(
+            lambda: cv2.norm(a3, b3_f32, cv2.NORM_L1 | cv2.NORM_RELATIVE, mask=np.zeros((0, 0), np.uint8))
+        ),
+        "hamming_mask_empty": attempt(
+            lambda: cv2.norm(
+                np.array([[11, 255, 0, 128]], np.uint8), cv2.NORM_HAMMING, mask=np.zeros((0, 0), np.uint8)
+            )
         ),
     }
 
@@ -224,7 +239,7 @@ def main() -> None:
     results["norm_types"] = norm_types()
 
     # --- normalize
-    s32 =np.array([[10.0, 20.0, 30.0, 250.0]], dtype=np.float32)
+    s32 = np.array([[10.0, 20.0, 30.0, 250.0]], dtype=np.float32)
     s8 = np.array([[10, 20, 30, 250]], dtype=np.uint8)
     nmask = np.array([[1, 1, 0, 1]], dtype=np.uint8)
     dst_prefilled = np.full((1, 4), 7, dtype=np.uint8)

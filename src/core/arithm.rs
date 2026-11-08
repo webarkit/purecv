@@ -1245,24 +1245,31 @@ fn check_norm_type<T: DataType>(func: &str, norm_type: NormTypes, channels: usiz
     }
 }
 
-/// Checks that `mask` is one 8-bit channel of `rows`×`cols`, as OpenCV asserts.
-fn check_norm_mask(func: &str, rows: usize, cols: usize, mask: Option<&Matrix<u8>>) -> Result<()> {
-    if let Some(m) = mask {
-        if m.rows != rows || m.cols != cols || m.channels != 1 {
-            cv_bail!(
-                tags::CORE,
-                InvalidDimensions,
-                "{}: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
-                func,
-                rows,
-                cols,
-                m.rows,
-                m.cols,
-                m.channels
-            );
-        }
+/// Checks that `mask` is one 8-bit channel of `rows`×`cols`, as OpenCV asserts, and returns
+/// its bytes. A mask without elements is no mask, as OpenCV's `mask.empty()` tests.
+fn norm_mask<'a>(
+    func: &str,
+    rows: usize,
+    cols: usize,
+    mask: Option<&'a Matrix<u8>>,
+) -> Result<Option<&'a [u8]>> {
+    let Some(m) = mask.filter(|m| !m.data.is_empty()) else {
+        return Ok(None);
+    };
+    if m.rows != rows || m.cols != cols || m.channels != 1 {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "{}: mask must be a single-channel {}×{} matrix, got {}×{}×{}",
+            func,
+            rows,
+            cols,
+            m.rows,
+            m.cols,
+            m.channels
+        );
     }
-    Ok(())
+    Ok(Some(m.data.as_slice()))
 }
 
 #[inline]
@@ -1415,7 +1422,13 @@ fn hamming_norm<T: ToPrimitive>(
 /// Every channel takes part. A `mask` is a single-channel `u8` matrix of the source's
 /// rows and columns: a non-zero byte selects every channel of its pixel. For the Hamming
 /// norms OpenCV ANDs the mask into the bytes instead, so a mask byte of 1 keeps only bit 0;
-/// purecv does the same. An empty source has norm 0.
+/// purecv does the same. A mask without elements (0×0) is no mask, as in OpenCV. An empty
+/// source has norm 0.
+///
+/// On `i32`, OpenCV takes absolute values in `int`, which wraps on x86: a source holding
+/// `i32::MIN` gives `Inf` 2147483647 in OpenCV and 2147483648 here, and its `L1` can come
+/// out negative (−1 for `[i32::MIN, i32::MAX, 0]`). purecv computes these exactly and does
+/// not port the wrap.
 ///
 /// # Errors
 /// `InvalidInput` for `Hamming`/`Hamming2` on anything but one `u8` channel and for
@@ -1435,9 +1448,8 @@ where
     T: DataType + ToPrimitive + Default + Copy + Sync + Send + SimdElement,
 {
     check_norm_type::<T>("norm", norm_type, src.channels)?;
-    check_norm_mask("norm", src.rows, src.cols, mask)?;
+    let m = norm_mask("norm", src.rows, src.cols, mask)?;
     let cn = src.channels;
-    let m = mask.map(|m| m.data.as_slice());
     match norm_type {
         NormTypes::Inf => Ok(fold_norm(&src.data, cn, m, f64::max, |x: T| {
             x.to_f64().unwrap_or(0.0).abs()
@@ -1490,6 +1502,11 @@ where
 /// Differences never overflow: `u8` 0 and 255 differ by 255. For `f32` the difference is
 /// rounded to `f32` first, as OpenCV subtracts in `float`.
 ///
+/// On `i32`, OpenCV subtracts and takes absolute values in `int`, which wraps on x86 when
+/// the difference leaves the `int` range: `[i32::MIN, i32::MAX, 0]` against
+/// `[i32::MAX, i32::MIN, 0]` gives `Inf` 1 and `L1` 2 in OpenCV. purecv computes the exact
+/// difference (`Inf` 4294967295 there) and does not port the wrap; see also [`norm`].
+///
 /// # Errors
 /// `InvalidDimensions` when the sources differ in rows or columns (OpenCV's `sameSize`)
 /// or the mask has the wrong shape; `IncompatibleChannels` when their channel counts differ
@@ -1533,9 +1550,8 @@ where
         );
     }
     check_norm_type::<T>("norm_diff", norm_type, src1.channels)?;
-    check_norm_mask("norm_diff", src1.rows, src1.cols, mask)?;
+    let m = norm_mask("norm_diff", src1.rows, src1.cols, mask)?;
     let (a, b, cn) = (&src1.data, &src2.data, src1.channels);
-    let m = mask.map(|m| m.data.as_slice());
     match norm_type {
         NormTypes::Inf => Ok(fold_norm_diff(a, b, cn, m, f64::max, |x: T, y: T| {
             norm_diff_value(x, y).abs()
