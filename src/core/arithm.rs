@@ -4099,7 +4099,20 @@ where
 /// # Returns
 /// The compactness of the best clustering.
 ///
-/// Mirrors OpenCV's `cv::kmeans`.
+/// Mirrors OpenCV's `cv::kmeans`: centers and distances are computed in `f32`,
+/// `criteria.max_count` is clamped to `[2, 100]` (100 without `COUNT`), the
+/// iteration stops when no center moves by more than `epsilon` (a squared
+/// Euclidean comparison; `f32::EPSILON` without `EPS`), and `K = 1` runs one
+/// attempt of two iterations. Random and kmeans++ centers draw from the
+/// calling thread's generator in OpenCV's order, so after
+/// [`set_rng_seed`](crate::core::set_rng_seed) the result is the one OpenCV
+/// gives after `cv::setRNGSeed` with the same seed. Without the `std` feature
+/// each call starts from the default state of `cv::RNG`.
+///
+/// # Errors
+/// `InvalidInput` if `k` is outside `[1, rows]`, or with
+/// `KMEANS_USE_INITIAL_LABELS` if `best_labels` does not hold one label in
+/// `[0, k)` per sample; `InvalidDimensions` if `data` is malformed.
 pub fn kmeans(
     data: &Matrix<f32>,
     k: i32,
@@ -4110,6 +4123,8 @@ pub fn kmeans(
     centers: &mut Option<Matrix<f32>>,
 ) -> Result<f64> {
     use crate::core::types::{TermType, KMEANS_PP_CENTERS, KMEANS_USE_INITIAL_LABELS};
+    /// `SPP_TRIALS`: candidate centers per kmeans++ step.
+    const SPP_TRIALS: usize = 3;
 
     let n = data.rows; // number of samples
     let dims = data.cols * data.channels; // dimensionality
@@ -4124,101 +4139,172 @@ pub fn kmeans(
         );
     }
     let k = k as usize;
-
-    let max_iter = if criteria.max_count > 0 {
-        criteria.max_count as usize
-    } else {
-        100
-    };
-    let eps = if criteria.epsilon > 0.0 {
-        criteria.epsilon
-    } else {
-        1e-6
-    };
-    let check_eps = matches!(criteria.type_, TermType::Eps | TermType::Both);
-    let check_count = matches!(criteria.type_, TermType::Count | TermType::Both);
-
-    let attempts = if attempts < 1 { 1 } else { attempts as usize };
+    if dims == 0 || data.data.len() != n * dims {
+        cv_bail!(
+            tags::CORE,
+            InvalidDimensions,
+            "kmeans: {} elements do not form {} samples of {} values",
+            data.data.len(),
+            n,
+            dims
+        );
+    }
+    let samples = &data.data[..];
     let use_initial = (flags & KMEANS_USE_INITIAL_LABELS) != 0;
     let pp_centers = (flags & KMEANS_PP_CENTERS) != 0;
 
-    // Flatten data to f64 for computation
-    let samples: Vec<f64> = data.data.iter().map(|&v| v as f64).collect();
-
-    let mut best_compactness = f64::MAX;
-    let mut best_lab: Vec<i32> = vec![0; n];
-    let mut best_ctr: Vec<f64> = vec![0.0; k * dims];
-
-    // Use the RNG from crate::core::rng
-    // We use a simple thread-local seeded approach via the existing PRNG.
-    // For each attempt we re-seed to get different initial centers.
-
-    for attempt in 0..attempts {
-        // ---- Initialise labels/centers ----
-        let mut labels: Vec<i32> = vec![0; n];
-        let mut ctr = vec![0.0f64; k * dims]; // k × dims
-
-        if use_initial && attempt == 0 {
-            // Use user-supplied labels (first attempt only)
-            if best_labels.data.len() == n {
-                labels.copy_from_slice(&best_labels.data);
-                // Clamp to valid range
-                for l in labels.iter_mut() {
-                    if *l < 0 || (*l as usize) >= k {
-                        *l = 0;
-                    }
-                }
-            }
-            // Compute centers from labels
-            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
-        } else if pp_centers {
-            kmeans_pp_init(&samples, &mut ctr, n, dims, k, attempt as u64);
-            // Assign labels from centers
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
-        } else {
-            // Random centers: pick k distinct sample indices
-            kmeans_random_init(&samples, &mut ctr, n, dims, k, attempt as u64);
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
+    let mut labels = vec![0i32; n];
+    if use_initial {
+        if best_labels.data.len() != n {
+            cv_bail!(
+                tags::CORE,
+                InvalidInput,
+                "kmeans: KMEANS_USE_INITIAL_LABELS needs {} labels, got {}",
+                n,
+                best_labels.data.len()
+            );
         }
-
-        // ---- Lloyd iterations ----
-        for iter in 0..max_iter {
-            let old_ctr = ctr.clone();
-
-            // Update centers
-            kmeans_compute_centers(&samples, &labels, &mut ctr, n, dims, k);
-
-            // Handle empty clusters: steal farthest point from largest cluster
-            kmeans_handle_empty(&samples, &mut labels, &mut ctr, n, dims, k);
-
-            // Re-assign
-            kmeans_assign(&samples, &ctr, &mut labels, n, dims, k);
-
-            // Check convergence (max center movement)
-            if check_eps {
-                let mut max_shift = 0.0f64;
-                for i in 0..k * dims {
-                    let d = ctr[i] - old_ctr[i];
-                    max_shift = max_shift.max(d * d);
-                }
-                if max_shift.sqrt() < eps {
-                    break;
-                }
+        for (dst, &l) in labels.iter_mut().zip(&best_labels.data) {
+            if l < 0 || l as usize >= k {
+                cv_bail!(
+                    tags::CORE,
+                    InvalidInput,
+                    "kmeans: initial label {} is outside [0, {})",
+                    l,
+                    k
+                );
             }
-            if check_count && iter + 1 >= max_iter {
-                break;
-            }
-        }
-
-        // Compute compactness
-        let compactness = kmeans_compactness(&samples, &ctr, &labels, n, dims);
-
-        if compactness < best_compactness {
-            best_compactness = compactness;
-            best_lab.copy_from_slice(&labels);
-            best_ctr.copy_from_slice(&ctr);
+            *dst = l;
         }
     }
+
+    // Criteria as OpenCV normalises them: the squared epsilon (FLT_EPSILON without EPS)
+    // and maxCount clamped to [2, 100] (100 without COUNT).
+    let has_eps = matches!(criteria.type_, TermType::Eps | TermType::Both);
+    let has_count = matches!(criteria.type_, TermType::Count | TermType::Both);
+    let mut eps = if has_eps {
+        criteria.epsilon.max(0.0)
+    } else {
+        f32::EPSILON as f64
+    };
+    eps *= eps;
+    let mut max_count = if has_count {
+        criteria.max_count.clamp(2, 100) as usize
+    } else {
+        100
+    };
+    let mut attempts = attempts.max(1) as usize;
+    if k == 1 {
+        attempts = 1;
+        max_count = 2;
+    }
+
+    // Bounding box of the samples, for the random centers.
+    let mut bounds = vec![(0.0f32, 0.0f32); dims];
+    if !pp_centers {
+        for (b, &v) in bounds.iter_mut().zip(&samples[..dims]) {
+            *b = (v, v);
+        }
+        for sample in samples.chunks_exact(dims).skip(1) {
+            for (b, &v) in bounds.iter_mut().zip(sample) {
+                if v < b.0 {
+                    b.0 = v;
+                }
+                if b.1 < v {
+                    b.1 = v;
+                }
+            }
+        }
+    }
+
+    let mut ctr = vec![0.0f32; k * dims];
+    let mut old_ctr = vec![0.0f32; k * dims];
+    let mut counters = vec![0usize; k];
+    let mut dists = vec![0.0f64; n];
+    let mut best_compactness = f64::MAX;
+    let mut best_lab = vec![0i32; n];
+    let mut best_ctr = vec![0.0f32; k * dims];
+
+    crate::core::rng::with_the_rng(|rng| -> Result<()> {
+        for a in 0..attempts {
+            let compactness;
+            let mut iter = 0usize;
+            loop {
+                let mut max_center_shift = if iter == 0 { f64::MAX } else { 0.0 };
+                core::mem::swap(&mut ctr, &mut old_ctr);
+
+                if iter == 0 && (a > 0 || !use_initial) {
+                    if pp_centers {
+                        kmeans_pp_centers(samples, &mut ctr, dims, k, rng, SPP_TRIALS)?;
+                    } else {
+                        // generateRandomCenter
+                        let margin = 1.0f32 / dims as f32;
+                        for center in ctr.chunks_exact_mut(dims) {
+                            for (c, &(lo, hi)) in center.iter_mut().zip(&bounds) {
+                                *c = (rng.next_f32() * (1.0 + margin * 2.0) - margin) * (hi - lo)
+                                    + lo;
+                            }
+                        }
+                    }
+                } else {
+                    kmeans_update_centers(samples, &mut labels, &mut ctr, &mut counters, dims)?;
+                    if iter > 0 {
+                        for (center, old) in ctr.chunks_exact(dims).zip(old_ctr.chunks_exact(dims))
+                        {
+                            let mut dist = 0.0f64;
+                            for (&c, &o) in center.iter().zip(old) {
+                                let t = (c - o) as f64;
+                                dist += t * t;
+                            }
+                            if max_center_shift < dist {
+                                max_center_shift = dist;
+                            }
+                        }
+                    }
+                }
+
+                iter += 1;
+                if iter == max_count.max(2) || max_center_shift <= eps {
+                    // The last iteration keeps the labels, so no cluster becomes empty.
+                    for ((d, sample), &l) in dists
+                        .iter_mut()
+                        .zip(samples.chunks_exact(dims))
+                        .zip(&labels)
+                    {
+                        let l = l as usize;
+                        *d = kmeans_norm_l2_sqr(sample, &ctr[l * dims..(l + 1) * dims]) as f64;
+                    }
+                    compactness = kmeans_sum(&dists);
+                    break;
+                }
+                // Assign every sample to its nearest center (the first one on ties).
+                for ((d, sample), l) in dists
+                    .iter_mut()
+                    .zip(samples.chunks_exact(dims))
+                    .zip(labels.iter_mut())
+                {
+                    let mut k_best = 0;
+                    let mut min_dist = f64::MAX;
+                    for (j, center) in ctr.chunks_exact(dims).enumerate() {
+                        let dist = kmeans_norm_l2_sqr(sample, center) as f64;
+                        if min_dist > dist {
+                            min_dist = dist;
+                            k_best = j;
+                        }
+                    }
+                    *d = min_dist;
+                    *l = k_best as i32;
+                }
+            }
+
+            if compactness < best_compactness {
+                best_compactness = compactness;
+                best_lab.copy_from_slice(&labels);
+                best_ctr.copy_from_slice(&ctr);
+            }
+        }
+        Ok(())
+    })?;
 
     // Write outputs
     best_labels.rows = n;
@@ -4230,263 +4316,180 @@ pub fn kmeans(
         c.rows = k;
         c.cols = data.cols;
         c.channels = data.channels;
-        c.data = best_ctr.iter().map(|&v| v as f32).collect();
+        c.data = best_ctr;
     }
 
     Ok(best_compactness)
 }
 
-/// Assign each sample to its nearest center.
-fn kmeans_assign(
-    samples: &[f64],
-    centers: &[f64],
+/// `hal::normL2Sqr_` on `f32`: the squared distance, accumulated in `f32` in order (the
+/// generic path; OpenCV's SIMD build sums blocks of 16 lanes first when `dims >= 16`).
+fn kmeans_norm_l2_sqr(a: &[f32], b: &[f32]) -> f32 {
+    let mut d = 0.0f32;
+    for (&x, &y) in a.iter().zip(b) {
+        let t = x - y;
+        d += t * t;
+    }
+    d
+}
+
+/// `cv::sum` of a one-channel `CV_64F` row: four values per step, then the tail.
+fn kmeans_sum(v: &[f64]) -> f64 {
+    let (quads, tail) = v.as_chunks::<4>();
+    let mut s = 0.0f64;
+    for q in quads {
+        s += q[0] + q[1] + q[2] + q[3];
+    }
+    for &x in tail {
+        s += x;
+    }
+    s
+}
+
+/// The "compute centers" step of `cv::kmeans`: sums each cluster in `f32`, moves the
+/// farthest sample of the largest cluster into every empty cluster, then scales by the
+/// reciprocal of the cluster size.
+fn kmeans_update_centers(
+    samples: &[f32],
     labels: &mut [i32],
-    n: usize,
+    ctr: &mut [f32],
+    counters: &mut [usize],
     dims: usize,
-    k: usize,
-) {
-    for i in 0..n {
-        let s = &samples[i * dims..(i + 1) * dims];
-        let mut best_dist = f64::MAX;
-        let mut best_k = 0usize;
-        for j in 0..k {
-            let c = &centers[j * dims..(j + 1) * dims];
-            let mut dist = 0.0f64;
-            for d in 0..dims {
-                let diff = s[d] - c[d];
-                dist += diff * diff;
-            }
-            if dist < best_dist {
-                best_dist = dist;
-                best_k = j;
+) -> Result<()> {
+    let k = counters.len();
+    ctr.fill(0.0);
+    counters.fill(0);
+    for (sample, &l) in samples.chunks_exact(dims).zip(labels.iter()) {
+        let l = l as usize;
+        for (c, &s) in ctr[l * dims..(l + 1) * dims].iter_mut().zip(sample) {
+            *c += s;
+        }
+        counters[l] += 1;
+    }
+
+    let mut base = vec![0.0f32; dims];
+    for kk in 0..k {
+        if counters[kk] != 0 {
+            continue;
+        }
+        let mut max_k = 0;
+        for k1 in 1..k {
+            if counters[max_k] < counters[k1] {
+                max_k = k1;
             }
         }
-        labels[i] = best_k as i32;
+        let scale = 1.0f32 / counters[max_k] as f32;
+        for (b, &c) in base.iter_mut().zip(&ctr[max_k * dims..(max_k + 1) * dims]) {
+            *b = c * scale;
+        }
+        let mut max_dist = 0.0f64;
+        let mut farthest = None;
+        for (i, (sample, &l)) in samples.chunks_exact(dims).zip(labels.iter()).enumerate() {
+            if l as usize != max_k {
+                continue;
+            }
+            let dist = kmeans_norm_l2_sqr(sample, &base) as f64;
+            if max_dist <= dist {
+                max_dist = dist;
+                farthest = Some(i);
+            }
+        }
+        let Some(fi) = farthest else {
+            cv_bail!(
+                tags::CORE,
+                InternalError,
+                "kmeans: can't update cluster center (check input for huge or NaN values)"
+            );
+        };
+        counters[max_k] -= 1;
+        counters[kk] += 1;
+        labels[fi] = kk as i32;
+        for j in 0..dims {
+            let s = samples[fi * dims + j];
+            ctr[max_k * dims + j] -= s;
+            ctr[kk * dims + j] += s;
+        }
     }
+
+    for (center, &count) in ctr.chunks_exact_mut(dims).zip(counters.iter()) {
+        if count == 0 {
+            cv_bail!(tags::CORE, InternalError, "kmeans: a cluster is empty");
+        }
+        let scale = 1.0f32 / count as f32;
+        for c in center.iter_mut() {
+            *c *= scale;
+        }
+    }
+    Ok(())
 }
 
-/// Compute cluster centers from current labels.
-fn kmeans_compute_centers(
-    samples: &[f64],
-    labels: &[i32],
-    centers: &mut [f64],
-    n: usize,
+/// `generateCentersPP`: kmeans++ (Arthur & Vassilvitskii, 2007) with `trials` candidates
+/// per center, drawing from `rng` in OpenCV's order.
+fn kmeans_pp_centers(
+    samples: &[f32],
+    out: &mut [f32],
     dims: usize,
     k: usize,
-) {
-    centers.iter_mut().for_each(|v| *v = 0.0);
-    let mut counts = vec![0usize; k];
-    for i in 0..n {
-        let lbl = labels[i] as usize;
-        counts[lbl] += 1;
-        let s = &samples[i * dims..(i + 1) * dims];
-        let c = &mut centers[lbl * dims..(lbl + 1) * dims];
-        for d in 0..dims {
-            c[d] += s[d];
-        }
-    }
-    for j in 0..k {
-        if counts[j] > 0 {
-            let c = &mut centers[j * dims..(j + 1) * dims];
-            let cnt = counts[j] as f64;
-            for val in c.iter_mut().take(dims) {
-                *val /= cnt;
-            }
-        }
-    }
-}
+    rng: &mut crate::core::rng::Rng,
+    trials: usize,
+) -> Result<()> {
+    let n = samples.len() / dims;
+    let row = |i: usize| &samples[i * dims..(i + 1) * dims];
+    let mut centers = vec![0usize; k];
+    let mut dist = vec![0.0f32; n];
+    let mut tdist = vec![0.0f32; n];
+    let mut tdist2 = vec![0.0f32; n];
+    let mut sum0 = 0.0f64;
 
-/// Handle empty clusters by stealing the farthest point from the largest cluster.
-fn kmeans_handle_empty(
-    samples: &[f64],
-    labels: &mut [i32],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-) {
-    let mut counts = vec![0usize; k];
-    for l in labels.iter() {
-        counts[*l as usize] += 1;
+    centers[0] = (rng.next_u32() % n as u32) as usize;
+    for (i, d) in dist.iter_mut().enumerate() {
+        *d = kmeans_norm_l2_sqr(row(i), row(centers[0]));
+        sum0 += *d as f64;
     }
 
-    for j in 0..k {
-        if counts[j] == 0 {
-            // Find the largest cluster
-            let largest = counts
-                .iter()
-                .enumerate()
-                .max_by_key(|&(_, &c)| c)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-
-            // Find farthest point in largest cluster from its center
-            let mut farthest_idx = 0usize;
-            let mut farthest_dist = 0.0f64;
-            for i in 0..n {
-                if labels[i] as usize != largest {
-                    continue;
+    for center in centers.iter_mut().skip(1) {
+        let mut best_sum = f64::MAX;
+        let mut best_center = None;
+        for _ in 0..trials {
+            let mut p = rng.next_f64() * sum0;
+            let mut ci = 0;
+            while ci < n - 1 {
+                p -= dist[ci] as f64;
+                if p <= 0.0 {
+                    break;
                 }
-                let s = &samples[i * dims..(i + 1) * dims];
-                let c = &centers[largest * dims..(largest + 1) * dims];
-                let mut dist = 0.0f64;
-                for d in 0..dims {
-                    let diff = s[d] - c[d];
-                    dist += diff * diff;
-                }
-                if dist > farthest_dist {
-                    farthest_dist = dist;
-                    farthest_idx = i;
-                }
+                ci += 1;
             }
-
-            // Move that sample to the empty cluster
-            labels[farthest_idx] = j as i32;
-            counts[j] += 1;
-            counts[largest] -= 1;
-
-            // Copy sample as new center
-            let s = &samples[farthest_idx * dims..(farthest_idx + 1) * dims];
-            centers[j * dims..(j + 1) * dims].copy_from_slice(s);
-
-            // Recompute largest cluster center
-            kmeans_compute_centers_single(samples, labels, centers, n, dims, largest);
-        }
-    }
-}
-
-/// Recompute a single cluster center.
-fn kmeans_compute_centers_single(
-    samples: &[f64],
-    labels: &[i32],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    cluster: usize,
-) {
-    let c = &mut centers[cluster * dims..(cluster + 1) * dims];
-    c.iter_mut().for_each(|v| *v = 0.0);
-    let mut cnt = 0usize;
-    for i in 0..n {
-        if labels[i] as usize == cluster {
-            cnt += 1;
-            let s = &samples[i * dims..(i + 1) * dims];
-            for d in 0..dims {
-                c[d] += s[d];
+            for (i, (t, &d)) in tdist2.iter_mut().zip(&dist).enumerate() {
+                let c = kmeans_norm_l2_sqr(row(i), row(ci));
+                *t = if d < c { d } else { c };
+            }
+            let mut s = 0.0f64;
+            for &t in &tdist2 {
+                s += t as f64;
+            }
+            if s < best_sum {
+                best_sum = s;
+                best_center = Some(ci);
+                core::mem::swap(&mut tdist, &mut tdist2);
             }
         }
+        let Some(bc) = best_center else {
+            cv_bail!(
+                tags::CORE,
+                InternalError,
+                "kmeans: can't update cluster center (check input for huge or NaN values)"
+            );
+        };
+        *center = bc;
+        sum0 = best_sum;
+        core::mem::swap(&mut dist, &mut tdist);
     }
-    if cnt > 0 {
-        let cnt_f = cnt as f64;
-        for v in c.iter_mut() {
-            *v /= cnt_f;
-        }
+
+    for (dst, &c) in out.chunks_exact_mut(dims).zip(&centers) {
+        dst.copy_from_slice(row(c));
     }
-}
-
-/// Compute compactness (sum of squared distances to assigned centers).
-fn kmeans_compactness(
-    samples: &[f64],
-    centers: &[f64],
-    labels: &[i32],
-    n: usize,
-    dims: usize,
-) -> f64 {
-    let mut sum = 0.0f64;
-    for i in 0..n {
-        let lbl = labels[i] as usize;
-        let s = &samples[i * dims..(i + 1) * dims];
-        let c = &centers[lbl * dims..(lbl + 1) * dims];
-        for d in 0..dims {
-            let diff = s[d] - c[d];
-            sum += diff * diff;
-        }
-    }
-    sum
-}
-
-/// Random center initialization: pick k distinct sample indices.
-fn kmeans_random_init(
-    samples: &[f64],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-    seed: u64,
-) {
-    // Simple Fisher-Yates-style selection using a basic LCG
-    let mut rng_state: u64 = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let mut indices: Vec<usize> = (0..n).collect();
-    for i in 0..k {
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let j = i + (rng_state as usize % (n - i));
-        indices.swap(i, j);
-        let idx = indices[i];
-        centers[i * dims..(i + 1) * dims].copy_from_slice(&samples[idx * dims..(idx + 1) * dims]);
-    }
-}
-
-/// K-means++ center initialization.
-fn kmeans_pp_init(
-    samples: &[f64],
-    centers: &mut [f64],
-    n: usize,
-    dims: usize,
-    k: usize,
-    seed: u64,
-) {
-    let mut rng_state: u64 = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-
-    // Pick first center uniformly at random
-    rng_state = rng_state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let first = rng_state as usize % n;
-    centers[0..dims].copy_from_slice(&samples[first * dims..(first + 1) * dims]);
-
-    let mut min_dists = vec![f64::MAX; n];
-
-    for c_idx in 1..k {
-        // Update min distances to the latest center
-        let prev = c_idx - 1;
-        let prev_center = &centers[prev * dims..(prev + 1) * dims];
-        let mut total_dist = 0.0f64;
-        for i in 0..n {
-            let s = &samples[i * dims..(i + 1) * dims];
-            let mut dist = 0.0f64;
-            for d in 0..dims {
-                let diff = s[d] - prev_center[d];
-                dist += diff * diff;
-            }
-            if dist < min_dists[i] {
-                min_dists[i] = dist;
-            }
-            total_dist += min_dists[i];
-        }
-
-        // Weighted random selection proportional to D²
-        rng_state = rng_state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let threshold = (rng_state as f64 / u64::MAX as f64) * total_dist;
-        let mut cumulative = 0.0f64;
-        let mut chosen = 0usize;
-        for (i, &d) in min_dists.iter().enumerate().take(n) {
-            cumulative += d;
-            if cumulative >= threshold {
-                chosen = i;
-                break;
-            }
-        }
-        centers[c_idx * dims..(c_idx + 1) * dims]
-            .copy_from_slice(&samples[chosen * dims..(chosen + 1) * dims]);
-    }
+    Ok(())
 }
 
 /// Performs a look-up table transform of a matrix.

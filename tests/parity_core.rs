@@ -5197,13 +5197,11 @@ fn kmeans_converges_to_opencv_partition() {
     assert!(kmeans(&data, 13, &mut l1, criteria, 1, KMEANS_PP_CENTERS, &mut c1).is_err());
 }
 
-/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` (seeded 42)
-/// and reaches compactness 9.5 on this fixture with 1, 3 and 5 attempts
-/// (`random_centers_attempts1`, `random_centers_attempts3`, `random_centers_attempts5`).
-/// purecv picks k samples with an LCG seeded by the attempt index and stays in a local
-/// minimum (198.75) for 3 attempts.
+/// OpenCV draws random centers uniformly inside the bounding box from `theRNG()` and reaches
+/// compactness 9.5 on this fixture with 1, 3 and 5 attempts. This test sets no seed: a test
+/// runs on its own thread, whose generator starts at the default state, like a fresh OpenCV
+/// thread (`core_kmeans.py`, `default_state_random_attempts3`).
 #[test]
-#[ignore = "diverges from OpenCV 4.10.0, see #221"]
 fn kmeans_random_centers_three_attempts_find_the_global_partition() {
     let data = kmeans_data();
     let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
@@ -5220,6 +5218,211 @@ fn kmeans_random_centers_three_attempts_find_the_global_partition() {
     )
     .unwrap();
     assert!((c - 9.5).abs() < 1e-9, "compactness {c}");
+}
+
+/// The chain fixture of `core_kmeans.py` (`CHAIN`), on the diagonal `(v, v)`: sample 0 starts
+/// alone in cluster 0 and Lloyd's iteration moves one chain sample into it per iteration, so
+/// it needs 103 iterations to converge.
+const KMEANS_CHAIN: [f32; 104] = [
+    0.00, 15.89, 17.83, 22.11, 23.59, 25.02, 26.00, 26.80, 27.45, 28.00, 28.48, 28.89, 29.25,
+    29.58, 29.88, 30.15, 30.40, 30.63, 30.85, 31.05, 31.24, 31.42, 31.59, 31.75, 31.90, 32.05,
+    32.19, 32.32, 32.46, 32.58, 32.71, 32.82, 32.94, 33.05, 33.16, 33.27, 33.38, 33.48, 33.58,
+    33.68, 33.78, 33.88, 33.97, 34.07, 34.16, 34.26, 34.35, 34.44, 34.53, 34.62, 34.71, 34.80,
+    34.89, 34.98, 35.07, 35.16, 35.25, 35.34, 35.44, 35.53, 35.62, 35.71, 35.81, 35.90, 36.00,
+    36.10, 36.20, 36.30, 36.41, 36.51, 36.62, 36.73, 36.84, 36.96, 37.08, 37.20, 37.33, 37.46,
+    37.59, 37.74, 37.88, 38.04, 38.20, 38.37, 38.54, 38.73, 38.93, 39.15, 39.38, 39.62, 39.89,
+    40.19, 40.51, 40.87, 41.27, 41.73, 42.27, 42.90, 43.66, 44.61, 45.86, 47.58, 50.24, 100.00,
+];
+
+fn kmeans_chain_data() -> Matrix<f32> {
+    let data = KMEANS_CHAIN.iter().flat_map(|&v| [v, v]).collect();
+    Matrix::from_vec(KMEANS_CHAIN.len(), 2, 1, data)
+}
+
+/// `CHAIN_INIT`: sample 0 in cluster 0, the rest in cluster 1.
+fn kmeans_chain_init() -> Matrix<i32> {
+    let mut labels = vec![1; KMEANS_CHAIN.len()];
+    labels[0] = 0;
+    Matrix::from_vec(KMEANS_CHAIN.len(), 1, 1, labels)
+}
+
+/// `first` zeros followed by ones: the label pattern of the chain after some iterations.
+fn kmeans_chain_labels(first: usize) -> Vec<i32> {
+    (0..KMEANS_CHAIN.len())
+        .map(|i| (i >= first) as i32)
+        .collect()
+}
+
+/// Runs `kmeans` and returns (compactness, labels, centers).
+fn kmeans_run(
+    data: &Matrix<f32>,
+    k: i32,
+    labels: Option<Matrix<i32>>,
+    criteria: TermCriteria,
+    attempts: i32,
+    flags: i32,
+) -> (f64, Vec<i32>, Vec<f32>) {
+    let mut labels = labels.unwrap_or_else(|| Matrix::<i32>::new(0, 0, 0));
+    let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+    let c = kmeans(
+        data,
+        k,
+        &mut labels,
+        criteria,
+        attempts,
+        flags,
+        &mut centers,
+    )
+    .unwrap();
+    (c, labels.data, centers.unwrap().data)
+}
+
+/// With `cv2.setRNGSeed(42)` before each call, OpenCV's raw (unsorted) labels and centers
+/// depend on the order of the `theRNG()` draws in `generateRandomCenter` and
+/// `generateCentersPP` (`core_kmeans.py`, `seed42_*`).
+#[test]
+fn kmeans_seeded_matches_opencv() {
+    let data = kmeans_data();
+    let criteria = TermCriteria::new(TermType::Both, 100, 1e-4);
+    let init = Matrix::from_vec(12, 1, 1, vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+    let random = (
+        vec![1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 0, 0],
+        vec![0.75f32, 10.5, 0.5, 0.5, 10.5, 10.75],
+    );
+    let pp = (
+        vec![2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0],
+        vec![0.75f32, 10.5, 10.5, 10.75, 0.5, 0.5],
+    );
+    let initial = (
+        vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2],
+        vec![0.5f32, 0.5, 10.5, 10.75, 0.75, 10.5],
+    );
+    for attempts in [1, 3, 5] {
+        for (flags, labels, expected) in [
+            (KMEANS_RANDOM_CENTERS, None, &random),
+            (KMEANS_PP_CENTERS, None, &pp),
+            (KMEANS_USE_INITIAL_LABELS, Some(init.clone()), &initial),
+        ] {
+            set_rng_seed(42);
+            let (c, l, ctr) = kmeans_run(&data, 3, labels, criteria, attempts, flags);
+            assert_eq!(c, 9.5, "flags {flags}, attempts {attempts}");
+            assert_eq!(l, expected.0, "flags {flags}, attempts {attempts}");
+            assert_eq!(ctr, expected.1, "flags {flags}, attempts {attempts}");
+        }
+    }
+
+    // The chain with K = 3 does not reach a unique partition, so the draws decide it.
+    let chain = kmeans_chain_data();
+    set_rng_seed(42);
+    let (c, l, ctr) = kmeans_run(&chain, 3, None, criteria, 1, KMEANS_RANDOM_CENTERS);
+    // seed42_chain_k3_random_attempts1
+    let mut labels = vec![1; 104];
+    labels[..11].fill(0);
+    labels[103] = 2;
+    assert_eq!(l, labels);
+    assert_eq!(
+        ctr,
+        vec![21.924545, 21.924545, 35.826195, 35.826195, 100.0, 100.0]
+    );
+    assert!((c - 4364.845311412355).abs() <= 1e-9 * c, "{c}");
+    set_rng_seed(42);
+    let (c, l, ctr) = kmeans_run(&chain, 3, None, criteria, 1, KMEANS_PP_CENTERS);
+    // seed42_chain_k3_pp_attempts1
+    let mut labels = vec![0; 104];
+    labels[..18].fill(1);
+    labels[103] = 2;
+    assert_eq!(l, labels);
+    assert_eq!(
+        ctr,
+        vec![36.32035, 36.32035, 24.997221, 24.997221, 100.0, 100.0]
+    );
+    assert!((c - 4353.362039823434).abs() <= 1e-9 * c, "{c}");
+}
+
+/// OpenCV clamps `maxCount` to [2, 100] when `COUNT` is set (`core_kmeans.py`,
+/// `chain_count_only_max*`): 0 and 1 run like 2, 1000 stops like 100 before the chain
+/// converges (103 iterations).
+#[test]
+fn kmeans_max_iter_is_clamped_to_2_100() {
+    let data = kmeans_chain_data();
+    let run = |max_count| {
+        let criteria = TermCriteria::new(TermType::Count, max_count, 0.0);
+        let init = Some(kmeans_chain_init());
+        kmeans_run(&data, 2, init, criteria, 1, KMEANS_USE_INITIAL_LABELS)
+    };
+    let two = (
+        13722.254812880536,
+        kmeans_chain_labels(2),
+        vec![7.945f32, 7.945, 35.502846, 35.502846],
+    );
+    for max_count in [0, 1, 2] {
+        let (c, l, ctr) = run(max_count);
+        assert!((c - two.0).abs() <= 1e-9 * c, "{max_count}: {c}");
+        assert_eq!(l, two.1, "{max_count}");
+        assert_eq!(ctr, two.2, "{max_count}");
+    }
+    let (c, l, ctr) = run(3);
+    assert!((c - 13221.695245653624).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(3));
+    assert_eq!(ctr, vec![11.240001, 11.240001, 35.677822, 35.677822]);
+    for max_count in [100, 1000] {
+        let (c, l, ctr) = run(max_count);
+        assert!(
+            (c - 11100.112100838684).abs() <= 1e-9 * c,
+            "{max_count}: {c}"
+        );
+        assert_eq!(l, kmeans_chain_labels(100), "{max_count}");
+        assert_eq!(ctr, vec![33.934998, 33.934998, 60.920002, 60.920002]);
+    }
+}
+
+/// OpenCV stops when the largest squared per-center shift is at most `epsilon²`
+/// (`core_kmeans.py`, `chain_eps_only_*`). On the diagonal a center moves by √2 times its
+/// per-coordinate shift, so ε = 0.15 stops after 44 iterations, later than a per-coordinate
+/// test would. `EPS` alone also caps the iterations at 100.
+#[test]
+fn kmeans_epsilon_compares_squared_shift() {
+    let data = kmeans_chain_data();
+    let run = |eps| {
+        let criteria = TermCriteria::new(TermType::Eps, 0, eps);
+        let init = Some(kmeans_chain_init());
+        kmeans_run(&data, 2, init, criteria, 1, KMEANS_USE_INITIAL_LABELS)
+    };
+    let (c, l, ctr) = run(0.15);
+    assert!((c - 12175.226358621614).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(44));
+    assert_eq!(ctr, vec![29.525455, 29.525455, 38.96767, 38.96767]);
+    let (c, l, ctr) = run(0.0);
+    assert!((c - 11100.112100838684).abs() <= 1e-9 * c, "{c}");
+    assert_eq!(l, kmeans_chain_labels(100));
+    assert_eq!(ctr, vec![33.934998, 33.934998, 60.920002, 60.920002]);
+}
+
+/// With `KMEANS_USE_INITIAL_LABELS`, OpenCV asserts that every label is in `[0, K)`
+/// (`core_kmeans.py`, `label_out_of_range_with_initial_labels`,
+/// `label_minus_one_with_initial_labels`); purecv clamped them to 0. A label count other than
+/// N fails OpenCV's assertion on the labels' shape.
+#[test]
+fn kmeans_out_of_range_initial_labels_is_err() {
+    let data = kmeans_data();
+    let criteria = TermCriteria::new(TermType::Count, 10, 0.0);
+    let mut minus_one = vec![0; 12];
+    minus_one[0] = -1;
+    for labels in [vec![7; 12], minus_one, vec![0; 11]] {
+        let n = labels.len();
+        let mut labels = Matrix::from_vec(n, 1, 1, labels);
+        let mut centers = Some(Matrix::<f32>::new(0, 0, 0));
+        assert!(kmeans(
+            &data,
+            3,
+            &mut labels,
+            criteria,
+            1,
+            KMEANS_USE_INITIAL_LABELS,
+            &mut centers
+        )
+        .is_err());
+    }
 }
 
 // ---------------------------------------------------------------------------------------

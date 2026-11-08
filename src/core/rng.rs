@@ -759,6 +759,34 @@ pub fn rng_generator() -> RngGenerator {
     THREAD_RNG.with(|rng| rng.borrow().generator())
 }
 
+/// Runs `f` with the calling thread's generator as a [`Rng`], OpenCV's `theRNG()`, for
+/// algorithms that draw through `cv::RNG` (such as `kmeans`).
+///
+/// With [`RngGenerator::Xoshiro256StarStar`] selected, `f` gets a [`Rng`] seeded from
+/// the next xoshiro draw, so a seeded thread still gives reproducible results. The
+/// thread-local state is not borrowed while `f` runs.
+#[cfg(feature = "std")]
+pub(crate) fn with_the_rng<R>(f: impl FnOnce(&mut Rng) -> R) -> R {
+    let mut rng = THREAD_RNG.with(|t| match &mut *t.borrow_mut() {
+        ThreadRng::Cv(r) => *r,
+        ThreadRng::Xoshiro(x) => Rng::new(x.next_u64()),
+    });
+    let out = f(&mut rng);
+    THREAD_RNG.with(|t| {
+        if let ThreadRng::Cv(r) = &mut *t.borrow_mut() {
+            *r = rng;
+        }
+    });
+    out
+}
+
+/// Without `std` there is no thread-local generator: `f` gets a fresh [`Rng`] in the
+/// default state, the `theRNG()` of a new OpenCV thread.
+#[cfg(not(feature = "std"))]
+pub(crate) fn with_the_rng<R>(f: impl FnOnce(&mut Rng) -> R) -> R {
+    f(&mut Rng::default())
+}
+
 /// Fills a matrix with uniformly distributed random numbers.
 ///
 /// Each element is drawn independently from the interval `[low, high)`.
